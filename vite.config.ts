@@ -34,6 +34,8 @@ export default defineConfig({
         'react',
         'react-dom',
         'react/jsx-runtime',
+        'tree-sitter',
+        'tree-sitter-rust',
         'typescript',
         'vite',
         'node:crypto',

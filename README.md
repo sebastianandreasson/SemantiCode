@@ -25,7 +25,7 @@ It also writes `.codebase-visualizer/INSTRUCTIONS.md` into the target repo and p
 Current language support:
 
 - TypeScript / JavaScript: files, symbols, imports, and call graph overlays.
-- Rust: first-pass Cargo workspace and target discovery plus Rust-aware file tagging and entrypoint detection.
+- Rust: Cargo workspace and target discovery, Rust symbol extraction, containment edges, first-pass `use` / `mod` dependency edges, and optional call edges via `rust-analyzer` when it is installed.
 
 ## Package surface
 

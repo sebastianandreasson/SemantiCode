@@ -61,6 +61,8 @@
     "@persper/js-callgraph": "^1.3.2",
     "@xyflow/react": "^12.10.2",
     "ignore": "^7.0.5",
+    "tree-sitter": "^0.22.4",
+    "tree-sitter-rust": "^0.24.0",
     "zustand": "^5.0.12"
   }
 }
