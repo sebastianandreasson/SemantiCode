@@ -6,7 +6,14 @@ import react from '@vitejs/plugin-react'
 import { codebaseVisualizerPlugin } from './src/vite'
 
 export default defineConfig({
-  plugins: [react(), codebaseVisualizerPlugin()],
+  plugins: [
+    react(),
+    codebaseVisualizerPlugin({
+      analyzeCalls: true,
+      analyzeImports: true,
+      analyzeSymbols: true,
+    }),
+  ],
   build: {
     lib: {
       entry: {
@@ -20,12 +27,17 @@ export default defineConfig({
     },
     rollupOptions: {
       external: [
+        '@persper/js-callgraph',
+        'ignore',
         'react',
         'react-dom',
         'react/jsx-runtime',
+        'typescript',
         'vite',
         'node:fs/promises',
         'node:http',
+        'node:module',
+        'node:os',
         'node:path',
       ],
     },

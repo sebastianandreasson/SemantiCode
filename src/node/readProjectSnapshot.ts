@@ -13,6 +13,7 @@ import {
   DEFAULT_PROJECT_TAGS,
   PROJECT_SNAPSHOT_SCHEMA_VERSION,
 } from '../schema/snapshot'
+import { enrichProjectSnapshot } from './analysis'
 import { createIgnoreMatcher } from './gitignore'
 
 const DEFAULT_MAX_DEPTH = 12
@@ -51,7 +52,7 @@ export async function readProjectSnapshot(
 
   state.rootIds = await walkDirectory(rootDir, state, 0, null, [])
 
-  return {
+  const snapshot: ProjectSnapshot = {
     schemaVersion: PROJECT_SNAPSHOT_SCHEMA_VERSION,
     rootDir,
     generatedAt: new Date().toISOString(),
@@ -62,6 +63,8 @@ export async function readProjectSnapshot(
     edges: state.edges,
     tags: DEFAULT_PROJECT_TAGS,
   }
+
+  return enrichProjectSnapshot(snapshot, options)
 }
 
 async function walkDirectory(

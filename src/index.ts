@@ -1,6 +1,8 @@
+import '@xyflow/react/dist/style.css'
 import './styles.css'
 
 export { CodebaseVisualizer } from './components/CodebaseVisualizer'
+export { buildStructuralLayout } from './layouts/structuralLayout'
 export {
   createVisualizerStore,
   useVisualizerStore,

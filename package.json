@@ -51,6 +51,7 @@
   "types": "./dist/index.d.ts",
   "dependencies": {
     "@persper/js-callgraph": "^1.3.2",
+    "@xyflow/react": "^12.10.2",
     "ignore": "^7.0.5",
     "zustand": "^5.0.12"
   }

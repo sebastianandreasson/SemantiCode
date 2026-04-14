@@ -111,6 +111,9 @@ export interface ReadProjectSnapshotOptions {
   maxDepth?: number
   maxFileSize?: number
   maxFiles?: number
+  analyzeImports?: boolean
+  analyzeSymbols?: boolean
+  analyzeCalls?: boolean
 }
 
 export const DEFAULT_PROJECT_TAGS: NodeTag[] = [

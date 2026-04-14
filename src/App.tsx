@@ -59,10 +59,11 @@ export default function App() {
     <main className="demo-page">
       <header className="demo-header">
         <p className="demo-kicker">codebase-visualizer</p>
-        <h1>Package scaffold with live workspace scanning</h1>
+        <h1>Filesystem canvas with live graph overlays</h1>
         <p className="demo-copy">
           This demo reads the current project directory through the package Vite
-          plugin and renders a minimal tree plus source preview.
+          plugin, lays the repo out in its stored folder structure, and lets
+          you turn import and call graph overlays on inside the same canvas.
         </p>
       </header>
 
