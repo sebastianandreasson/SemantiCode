@@ -5,8 +5,13 @@ import {
   DEFAULT_SELECTION_STATE,
   DEFAULT_VIEWPORT_STATE,
   type SelectionState,
+  type VisualizerViewMode,
 } from '../schema/layout'
-import { isFileNode, type ProjectSnapshot } from '../schema/snapshot'
+import {
+  isFileNode,
+  isSymbolNode,
+  type ProjectSnapshot,
+} from '../schema/snapshot'
 import {
   DEFAULT_GRAPH_LAYER_VISIBILITY,
   type VisualizerStore,
@@ -23,6 +28,7 @@ const INITIAL_VISUALIZER_STATE: VisualizerStoreState = {
   activeDraftId: null,
   viewport: DEFAULT_VIEWPORT_STATE,
   selection: DEFAULT_SELECTION_STATE,
+  viewMode: 'filesystem',
   graphLayers: DEFAULT_GRAPH_LAYER_VISIBILITY,
 }
 
@@ -51,8 +57,9 @@ export function createVisualizerStore(
       set({ errorMessage })
     },
     setSnapshot: (snapshot) => {
+      const viewMode = get().viewMode
       const currentSelection = get().selection
-      const nextNodeId = getNextSelectedNodeId(snapshot, currentSelection)
+      const nextNodeId = getNextSelectedNodeId(snapshot, currentSelection, viewMode)
 
       set({
         snapshot,
@@ -103,6 +110,15 @@ export function createVisualizerStore(
         selection: {
           ...state.selection,
           ...selection,
+        },
+      }))
+    },
+    setViewMode: (viewMode) => {
+      set((state) => ({
+        viewMode,
+        selection: {
+          ...state.selection,
+          nodeId: getNextSelectedNodeId(snapshotOrNull(state), state.selection, viewMode),
         },
       }))
     },
@@ -167,16 +183,25 @@ export function useVisualizerStore<T>(
 function getNextSelectedNodeId(
   snapshot: ProjectSnapshot | null,
   selection: SelectionState,
+  viewMode: VisualizerViewMode,
 ) {
   if (!snapshot) {
     return null
   }
 
-  if (selection.nodeId && snapshot.nodes[selection.nodeId]) {
+  const selectedNode = selection.nodeId ? snapshot.nodes[selection.nodeId] : null
+
+  if (
+    selectedNode &&
+    ((viewMode === 'filesystem' && selectedNode.kind !== 'symbol') ||
+      (viewMode === 'symbols' && isSymbolNode(selectedNode)))
+  ) {
     return selection.nodeId
   }
 
-  return getFirstFileNodeId(snapshot)
+  return viewMode === 'symbols'
+    ? getFirstSymbolNodeId(snapshot)
+    : getFirstFileNodeId(snapshot)
 }
 
 function getFirstFileNodeId(snapshot: ProjectSnapshot) {
@@ -189,6 +214,18 @@ function getFirstFileNodeId(snapshot: ProjectSnapshot) {
   }
 
   return null
+}
+
+function getFirstSymbolNodeId(snapshot: ProjectSnapshot) {
+  return (
+    Object.values(snapshot.nodes)
+      .filter(isSymbolNode)
+      .sort((left, right) => left.path.localeCompare(right.path))[0]?.id ?? null
+  )
+}
+
+function snapshotOrNull(state: VisualizerStore) {
+  return state.snapshot
 }
 
 function findFirstFileNodeId(

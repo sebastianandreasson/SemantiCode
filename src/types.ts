@@ -31,17 +31,21 @@ export type {
   LayoutAnnotation,
   LayoutGroup,
   LayoutLane,
+  LayoutNodeScope,
   LayoutNodePlacement,
   LayoutSpec,
   LayoutStrategyKind,
   SelectionState,
+  VisualizerViewMode,
   ViewportState,
 } from './schema/layout'
 export type {
   AnalysisState,
   AnalysisStatus,
+  DraftMutationResponse,
   GraphNeighborsResponse,
   LayoutListResponse,
+  LayoutStateResponse,
   LayoutSummary,
   SnapshotResponse,
 } from './schema/api'

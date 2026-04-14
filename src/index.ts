@@ -3,6 +3,7 @@ import './styles.css'
 
 export { CodebaseVisualizer } from './components/CodebaseVisualizer'
 export { buildStructuralLayout } from './layouts/structuralLayout'
+export { buildSymbolLayout } from './layouts/symbolLayout'
 export {
   createVisualizerStore,
   useVisualizerStore,
@@ -11,6 +12,7 @@ export {
 export type {
   AnalysisState,
   AnalysisStatus,
+  DraftMutationResponse,
   CodebaseDirectory,
   CodebaseEntry,
   CodebaseEntryKind,
@@ -25,7 +27,9 @@ export type {
   LayoutAnnotation,
   LayoutGroup,
   LayoutLane,
+  LayoutNodeScope,
   LayoutListResponse,
+  LayoutStateResponse,
   LayoutNodePlacement,
   LayoutSpec,
   LayoutStrategyKind,
@@ -58,6 +62,7 @@ export type {
   ValidationIssueCode,
   ValidationIssueSeverity,
   ValidationResult,
+  VisualizerViewMode,
   ViewportState,
   VisualizerStore,
   VisualizerStoreActions,

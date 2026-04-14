@@ -1,4 +1,6 @@
 export type LayoutStrategyKind = 'structural' | 'rule' | 'agent'
+export type LayoutNodeScope = 'filesystem' | 'symbols' | 'mixed'
+export type VisualizerViewMode = 'filesystem' | 'symbols'
 
 export interface LayoutNodePlacement {
   nodeId: string
@@ -39,6 +41,7 @@ export interface LayoutSpec {
   id: string
   title: string
   strategy: LayoutStrategyKind
+  nodeScope: LayoutNodeScope
   description?: string
   placements: Record<string, LayoutNodePlacement>
   groups: LayoutGroup[]

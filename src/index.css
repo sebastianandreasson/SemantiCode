@@ -42,34 +42,9 @@ pre {
 }
 
 .demo-page {
-  width: min(1280px, calc(100vw - 2rem));
-  margin: 0 auto;
-  padding: 2rem 0 3rem;
-}
-
-.demo-header {
-  padding: 0 0 1.5rem;
-}
-
-.demo-kicker {
-  margin: 0;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-  font-size: 0.76rem;
-  color: #756b5e;
-}
-
-.demo-header h1 {
-  margin: 0.4rem 0 0;
-  max-width: 14ch;
-  font-size: clamp(2.6rem, 6vw, 4.7rem);
-  line-height: 0.95;
-}
-
-.demo-copy {
-  margin: 1rem 0 0;
-  max-width: 46rem;
-  color: #5b5042;
+  width: 100%;
+  min-height: 100vh;
+  padding: 0.625rem;
 }
 
 .demo-status {
@@ -87,7 +62,6 @@ pre {
 
 @media (max-width: 720px) {
   .demo-page {
-    width: min(100vw - 1rem, 1280px);
-    padding-top: 1rem;
+    padding: 0.5rem;
   }
 }

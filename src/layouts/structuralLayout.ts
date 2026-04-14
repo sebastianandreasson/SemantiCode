@@ -20,6 +20,7 @@ export function buildStructuralLayout(snapshot: ProjectSnapshot): LayoutSpec {
     id: `layout:structural:${snapshot.rootDir}`,
     title: 'Folder structure',
     strategy: 'structural',
+    nodeScope: 'filesystem',
     description: 'Default filesystem layout mapped directly from the project tree.',
     placements,
     groups: [],

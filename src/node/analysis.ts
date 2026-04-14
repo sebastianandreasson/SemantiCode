@@ -465,6 +465,14 @@ function getSymbolMetadata(
     }
   }
 
+  if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
+    return {
+      name: node.name.text,
+      kind: isConstDeclaration(node) ? 'constant' : 'variable',
+      range: getSourceRange(node, sourceFile),
+    }
+  }
+
   return null
 }
 
@@ -505,6 +513,13 @@ function getSourceRange(node: ts.Node, sourceFile: ts.SourceFile): SourceRange {
       column: end.character,
     },
   }
+}
+
+function isConstDeclaration(node: ts.VariableDeclaration) {
+  return (
+    ts.isVariableDeclarationList(node.parent) &&
+    (node.parent.flags & ts.NodeFlags.Const) !== 0
+  )
 }
 
 function getScriptKind(path: string) {

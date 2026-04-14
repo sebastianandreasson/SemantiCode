@@ -2,6 +2,7 @@ import type {
   LayoutAnnotation,
   LayoutGroup,
   LayoutLane,
+  LayoutNodeScope,
   LayoutNodePlacement,
   LayoutSpec,
   LayoutStrategyKind,
@@ -20,6 +21,7 @@ export type LayoutDraftStatus = 'draft' | 'accepted' | 'rejected'
 export type ValidationIssueSeverity = 'error' | 'warning'
 
 export interface LayoutPlannerConstraints {
+  nodeScope: LayoutNodeScope
   allowFiles: boolean
   allowDirectories: boolean
   allowSymbols: boolean
@@ -33,6 +35,7 @@ export interface LayoutPlannerConstraints {
 }
 
 export const DEFAULT_LAYOUT_PLANNER_CONSTRAINTS: LayoutPlannerConstraints = {
+  nodeScope: 'mixed',
   allowFiles: true,
   allowDirectories: true,
   allowSymbols: true,
@@ -78,6 +81,7 @@ export interface PlannerExistingLayoutSummary {
   id: string
   title: string
   strategy: LayoutStrategyKind
+  nodeScope: LayoutNodeScope
   description?: string
   updatedAt?: string
 }

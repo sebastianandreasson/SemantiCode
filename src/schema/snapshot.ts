@@ -15,6 +15,7 @@ export type SymbolKind =
   | 'function'
   | 'method'
   | 'class'
+  | 'constant'
   | 'variable'
   | 'module'
   | 'unknown'

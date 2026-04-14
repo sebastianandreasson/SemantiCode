@@ -6,6 +6,7 @@ import type {
   LayoutAnnotation,
   LayoutGroup,
   LayoutLane,
+  LayoutNodeScope,
   LayoutNodePlacement,
   LayoutSpec,
 } from '../schema/layout'
@@ -79,17 +80,21 @@ export function buildLayoutPlannerContext(
   snapshot: ProjectSnapshot,
   options: BuildLayoutPlannerContextOptions,
 ): LayoutPlannerContext {
+  const normalizedExistingLayouts = (options.existingLayouts ?? []).map(
+    normalizeLayoutSpec,
+  )
   const constraints = {
     ...DEFAULT_LAYOUT_PLANNER_CONSTRAINTS,
     ...options.constraints,
   }
   const baseLayout =
-    options.baseLayoutId && options.existingLayouts
-      ? options.existingLayouts.find((layout) => layout.id === options.baseLayoutId) ?? null
+    options.baseLayoutId
+      ? normalizedExistingLayouts.find((layout) => layout.id === options.baseLayoutId) ?? null
       : null
   const visibleNodeIds = normalizeVisibleNodeIds(
     snapshot,
     baseLayout,
+    constraints.nodeScope,
     options.visibleNodeIds,
   )
 
@@ -102,14 +107,12 @@ export function buildLayoutPlannerContext(
       totalNodes: Object.keys(snapshot.nodes).length,
       totalEdges: snapshot.edges.length,
     },
-    nodes: Object.values(snapshot.nodes).map(createPlannerNodeRef),
-    edges: snapshot.edges
-      .filter((edge) => PLANNER_EDGE_KINDS.has(edge.kind))
-      .map(createPlannerEdgeRef),
+    nodes: getScopedNodes(snapshot, constraints.nodeScope).map(createPlannerNodeRef),
+    edges: getScopedEdges(snapshot, constraints.nodeScope).map(createPlannerEdgeRef),
     entryFileIds: [...snapshot.entryFileIds],
     visibleNodeIds,
     availableTags: snapshot.tags.map((tag) => ({ ...tag })),
-    existingLayouts: (options.existingLayouts ?? []).map(summarizeLayout),
+    existingLayouts: normalizedExistingLayouts.map(summarizeLayout),
     baseLayout: baseLayout ? expandExistingLayout(baseLayout) : null,
     prompt: options.prompt,
     constraints,
@@ -338,6 +341,7 @@ export function materializeAgentLayout(
     id: options.id ?? createLayoutId(proposal.title),
     title: proposal.title.trim(),
     strategy: 'agent',
+    nodeScope: context.constraints.nodeScope,
     description: proposal.description?.trim() || undefined,
     placements: Object.fromEntries(
       proposal.placements.map((placement) => [
@@ -426,7 +430,7 @@ export async function loadLayoutDraft(
 ): Promise<LayoutDraft> {
   const rawDraft = await readFile(getDraftFilePath(rootDir, draftId), 'utf8')
 
-  return JSON.parse(rawDraft) as LayoutDraft
+  return normalizeDraft(JSON.parse(rawDraft) as LayoutDraft)
 }
 
 export async function listLayoutDrafts(
@@ -435,7 +439,7 @@ export async function listLayoutDrafts(
   const draftsDirectory = getDraftsDirectory(rootDir)
   const entries = await safeReadJsonFiles<LayoutDraft>(draftsDirectory)
 
-  return entries.sort((left, right) =>
+  return entries.map(normalizeDraft).sort((left, right) =>
     right.updatedAt.localeCompare(left.updatedAt),
   )
 }
@@ -454,7 +458,7 @@ export async function listSavedLayouts(
 
     try {
       const rawLayout = await readFile(join(layoutsDirectory, entry), 'utf8')
-      layouts.push(JSON.parse(rawLayout) as LayoutSpec)
+      layouts.push(normalizeLayoutSpec(JSON.parse(rawLayout) as LayoutSpec))
     } catch {
       continue
     }
@@ -550,6 +554,7 @@ function summarizeLayout(layout: LayoutSpec): PlannerExistingLayoutSummary {
     id: layout.id,
     title: layout.title,
     strategy: layout.strategy,
+    nodeScope: getLayoutNodeScope(layout),
     description: layout.description,
     updatedAt: layout.updatedAt,
   }
@@ -568,19 +573,22 @@ function expandExistingLayout(layout: LayoutSpec): PlannerExistingLayout {
 function normalizeVisibleNodeIds(
   snapshot: ProjectSnapshot,
   baseLayout: LayoutSpec | null,
+  nodeScope: LayoutNodeScope,
   visibleNodeIds?: string[],
 ) {
+  const scopedNodeIds = new Set(getScopedNodes(snapshot, nodeScope).map((node) => node.id))
+
   if (visibleNodeIds) {
-    return visibleNodeIds.filter((nodeId) => Boolean(snapshot.nodes[nodeId]))
+    return visibleNodeIds.filter((nodeId) => scopedNodeIds.has(nodeId))
   }
 
   if (baseLayout) {
     const hiddenNodeIds = new Set(baseLayout.hiddenNodeIds)
 
-    return Object.keys(snapshot.nodes).filter((nodeId) => !hiddenNodeIds.has(nodeId))
+    return Array.from(scopedNodeIds).filter((nodeId) => !hiddenNodeIds.has(nodeId))
   }
 
-  return Object.keys(snapshot.nodes)
+  return Array.from(scopedNodeIds)
 }
 
 function validatePlacement(
@@ -756,6 +764,75 @@ function createDraftId() {
 
 function createLayoutId(title: string) {
   return `agent-${slugify(title)}-${randomUUID().slice(0, 8)}`
+}
+
+function getScopedNodes(
+  snapshot: ProjectSnapshot,
+  nodeScope: LayoutNodeScope,
+) {
+  return Object.values(snapshot.nodes).filter((node) => {
+    if (nodeScope !== 'symbols') {
+      return true
+    }
+
+    return node.kind === 'symbol'
+  })
+}
+
+function getScopedEdges(
+  snapshot: ProjectSnapshot,
+  nodeScope: LayoutNodeScope,
+) {
+  const allowedNodeIds = new Set(
+    getScopedNodes(snapshot, nodeScope).map((node) => node.id),
+  )
+
+  return snapshot.edges.filter((edge) => {
+    if (!PLANNER_EDGE_KINDS.has(edge.kind)) {
+      return false
+    }
+
+    if (!allowedNodeIds.has(edge.source) || !allowedNodeIds.has(edge.target)) {
+      return false
+    }
+
+    if (nodeScope !== 'symbols') {
+      return true
+    }
+
+    if (edge.kind === 'calls') {
+      return true
+    }
+
+    if (edge.kind !== 'contains') {
+      return false
+    }
+
+    const sourceNode = snapshot.nodes[edge.source]
+    const targetNode = snapshot.nodes[edge.target]
+
+    return sourceNode?.kind === 'symbol' && targetNode?.kind === 'symbol'
+  })
+}
+
+function normalizeLayoutSpec(layout: LayoutSpec): LayoutSpec {
+  return {
+    ...layout,
+    nodeScope: getLayoutNodeScope(layout),
+  }
+}
+
+function normalizeDraft(draft: LayoutDraft): LayoutDraft {
+  return {
+    ...draft,
+    layout: draft.layout ? normalizeLayoutSpec(draft.layout) : null,
+  }
+}
+
+function getLayoutNodeScope(
+  layout: Pick<LayoutSpec, 'nodeScope'>,
+): LayoutNodeScope {
+  return layout.nodeScope ?? 'filesystem'
 }
 
 function slugify(value: string) {

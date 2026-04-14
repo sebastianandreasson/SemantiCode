@@ -1,9 +1,14 @@
-import type { LayoutSpec, SelectionState, ViewportState } from './layout'
+import type {
+  LayoutSpec,
+  SelectionState,
+  ViewportState,
+  VisualizerViewMode,
+} from './layout'
 import type { LayoutDraft } from './planner'
 import type { AnalysisState } from './api'
 import type { ProjectSnapshot } from './snapshot'
 
-export type GraphLayerKey = 'filesystem' | 'imports' | 'calls'
+export type GraphLayerKey = 'contains' | 'imports' | 'calls'
 
 export type GraphLayerVisibility = Record<GraphLayerKey, boolean>
 
@@ -17,6 +22,7 @@ export interface VisualizerStoreState {
   activeDraftId: string | null
   viewport: ViewportState
   selection: SelectionState
+  viewMode: VisualizerViewMode
   graphLayers: GraphLayerVisibility
 }
 
@@ -30,6 +36,7 @@ export interface VisualizerStoreActions {
   setActiveDraftId: (draftId: string | null) => void
   setViewport: (viewport: Partial<ViewportState>) => void
   setSelection: (selection: Partial<SelectionState>) => void
+  setViewMode: (viewMode: VisualizerViewMode) => void
   selectNode: (nodeId: string | null) => void
   selectEdge: (edgeId: string | null) => void
   setInspectorTab: (tab: SelectionState['inspectorTab']) => void
@@ -43,7 +50,7 @@ export interface VisualizerStoreActions {
 export type VisualizerStore = VisualizerStoreState & VisualizerStoreActions
 
 export const DEFAULT_GRAPH_LAYER_VISIBILITY: GraphLayerVisibility = {
-  filesystem: true,
+  contains: true,
   imports: false,
   calls: false,
 }
