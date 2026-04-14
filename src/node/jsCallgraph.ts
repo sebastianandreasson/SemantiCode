@@ -51,6 +51,7 @@ export async function buildJsCallGraph(
     .filter((fileNode) =>
       ['js', 'jsx', 'ts', 'tsx', 'mjs', 'cjs'].includes(fileNode.extension),
     )
+    .filter((fileNode) => !isDeclarationFile(fileNode.path))
     .filter(
       (fileNode) =>
         !fileNode.tags.includes('config') &&
@@ -269,6 +270,10 @@ async function createCompiledWorkspace(
     const outputPath = join(tempRoot, outputRelativePath)
     const transpiledContent = transpileForCallgraph(fileNode.path, fileNode.content)
 
+    if (transpiledContent == null) {
+      continue
+    }
+
     await mkdir(dirname(outputPath), { recursive: true })
     await writeFile(outputPath, transpiledContent, 'utf8')
     compiledFileMap.set(normalizePath(resolve(outputPath)), fileNode.id)
@@ -278,22 +283,34 @@ async function createCompiledWorkspace(
 }
 
 function transpileForCallgraph(path: string, source: string) {
-  const result = ts.transpileModule(source, {
-    fileName: path,
-    compilerOptions: {
-      allowJs: true,
-      jsx: ts.JsxEmit.React,
-      module: ts.ModuleKind.CommonJS,
-      target: ts.ScriptTarget.ES5,
-    },
-    reportDiagnostics: false,
-  })
+  try {
+    const result = ts.transpileModule(source, {
+      fileName: path,
+      compilerOptions: {
+        allowJs: true,
+        jsx: ts.JsxEmit.React,
+        module: ts.ModuleKind.CommonJS,
+        target: ts.ScriptTarget.ES2020,
+      },
+      reportDiagnostics: false,
+    })
 
-  return result.outputText
+    return result.outputText
+  } catch (error) {
+    console.warn(
+      `[codebase-visualizer] Skipping JS/TS callgraph transpile for "${path}".`,
+      error,
+    )
+    return null
+  }
 }
 
 function replaceExtensionWithJs(pathValue: string) {
   return pathValue.replace(/\.[^.]+$/, '.js')
+}
+
+function isDeclarationFile(pathValue: string) {
+  return /\.[dD]\.[cm]?[jt]sx?$/.test(pathValue)
 }
 
 function runCallgraph(callgraph: JsCallgraphModule, files: string[]) {

@@ -10,7 +10,16 @@ import {
   type KnownProvider,
 } from '@mariozechner/pi-ai'
 
-import type { AgentEvent, AgentMessage, AgentSessionSummary, AgentToolInvocation } from '../../schema/agent'
+import type {
+  AgentAuthMode,
+  AgentEvent,
+  AgentMessage,
+  AgentSessionSummary,
+  AgentSettingsInput,
+  AgentSettingsState,
+  AgentToolInvocation,
+} from '../../schema/agent'
+import { PiAgentSettingsStore } from './PiAgentSettingsStore'
 
 const DEFAULT_PI_PROVIDER = 'openai'
 const DEFAULT_PI_MODEL_ID = 'gpt-4.1-mini'
@@ -21,6 +30,7 @@ const PI_MODEL_ENV_NAME = 'CODEBASE_VISUALIZER_PI_MODEL'
 interface PiAgentSessionRecord {
   agent: Agent
   activeAssistantMessageId: string | null
+  messages: AgentMessage[]
   summary: AgentSessionSummary
   toolInvocationById: Map<string, AgentToolInvocation>
   unsubscribe: () => void
@@ -35,9 +45,13 @@ export class PiAgentService {
   private readonly logger: Pick<Console, 'error' | 'info' | 'warn'>
   private readonly listeners = new Set<(event: AgentEvent) => void>()
   private readonly sessionsByWorkspaceRootDir = new Map<string, PiAgentSessionRecord>()
+  private readonly settingsStore: PiAgentSettingsStore
 
   constructor(options: PiAgentServiceOptions = {}) {
     this.logger = options.logger ?? console
+    this.settingsStore = new PiAgentSettingsStore({
+      logger: this.logger,
+    })
   }
 
   subscribe(listener: (event: AgentEvent) => void) {
@@ -58,24 +72,29 @@ export class PiAgentService {
       return existingRecord.summary
     }
 
-    const provider = resolveProvider()
-    const model = resolveModel(provider)
-    const hasProviderApiKey = Boolean(getApiKey(provider))
+    await this.settingsStore.applyConfiguredApiKeys()
+    const settings = await this.settingsStore.getSettings()
+    const provider = resolveProvider(settings)
+    const model = resolveModel(provider, settings.modelId)
+    const hasProviderApiKey =
+      settings.authMode === 'api_key' ? Boolean(getApiKey(provider)) : false
     const bootPrompt = process.env[BOOT_PROMPT_ENV_NAME]?.trim() ?? ''
+    const sessionTransport = resolveTransportMode(settings.authMode)
+    const disabledReason = resolveDisabledReason(settings.authMode, provider, settings)
     const summary: AgentSessionSummary = {
+      authMode: settings.authMode,
+      brokerSession: settings.brokerSession,
       id: `pi-session:${randomUUID()}`,
       workspaceRootDir,
       provider,
       modelId: model.id,
-      transport: 'provider',
+      transport: sessionTransport,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      runState: hasProviderApiKey ? 'ready' : 'disabled',
+      runState: disabledReason ? 'disabled' : 'ready',
       bootPromptEnabled: bootPrompt.length > 0,
       hasProviderApiKey,
-      lastError: hasProviderApiKey
-        ? undefined
-        : `No API key found for provider "${provider}".`,
+      lastError: disabledReason,
     }
     const agent = new Agent({
       initialState: {
@@ -93,6 +112,7 @@ export class PiAgentService {
     const record: PiAgentSessionRecord = {
       agent,
       activeAssistantMessageId: null,
+      messages: [],
       summary,
       toolInvocationById: new Map(),
       unsubscribe,
@@ -109,9 +129,9 @@ export class PiAgentService {
       `[codebase-visualizer][pi] Created workspace session ${summary.id} for ${workspaceRootDir} using ${summary.provider}/${summary.modelId}.`,
     )
 
-    if (!hasProviderApiKey) {
+    if (disabledReason) {
       this.logger.warn(
-        `[codebase-visualizer][pi] ${summary.lastError} Set the provider API key in your environment before prompting the agent.`,
+        `[codebase-visualizer][pi] ${summary.lastError}`,
       )
       return summary
     }
@@ -149,6 +169,20 @@ export class PiAgentService {
     return this.sessionsByWorkspaceRootDir.get(workspaceRootDir)?.summary ?? null
   }
 
+  getWorkspaceMessages(workspaceRootDir: string) {
+    return this.sessionsByWorkspaceRootDir.get(workspaceRootDir)?.messages ?? []
+  }
+
+  async getSettings() {
+    return this.settingsStore.getSettings()
+  }
+
+  async saveSettings(settings: AgentSettingsInput) {
+    const nextSettings = await this.settingsStore.saveSettings(settings)
+    await this.disposeAllSessions()
+    return nextSettings
+  }
+
   async promptWorkspaceSession(workspaceRootDir: string, message: string) {
     const record = this.sessionsByWorkspaceRootDir.get(workspaceRootDir)
 
@@ -164,16 +198,19 @@ export class PiAgentService {
     }
 
     const now = new Date().toISOString()
+    const normalizedMessage: AgentMessage = {
+      id: `agent-message:${randomUUID()}`,
+      role: 'user',
+      blocks: [{ kind: 'text', text: message }],
+      createdAt: now,
+      isStreaming: false,
+    }
+
+    record.messages = upsertNormalizedMessage(record.messages, normalizedMessage)
     this.emit({
       type: 'message',
       sessionId: record.summary.id,
-      message: {
-        id: `agent-message:${randomUUID()}`,
-        role: 'user',
-        blocks: [{ kind: 'text', text: message }],
-        createdAt: now,
-        isStreaming: false,
-      },
+      message: normalizedMessage,
     })
 
     await record.agent.prompt(message)
@@ -343,6 +380,7 @@ export class PiAgentService {
       sessionId: record.summary.id,
       message: normalizedMessage,
     })
+    record.messages = upsertNormalizedMessage(record.messages, normalizedMessage)
   }
 
   private finishToolInvocation(
@@ -377,20 +415,60 @@ export class PiAgentService {
   }
 }
 
-function resolveProvider(): KnownProvider {
+function upsertNormalizedMessage(messages: AgentMessage[], nextMessage: AgentMessage) {
+  const existingIndex = messages.findIndex((message) => message.id === nextMessage.id)
+
+  if (existingIndex === -1) {
+    return [...messages, nextMessage]
+  }
+
+  return messages.map((message, index) =>
+    index === existingIndex ? nextMessage : message,
+  )
+}
+
+function resolveProvider(settings?: AgentSettingsState): KnownProvider {
   const envProvider = process.env[PI_PROVIDER_ENV_NAME]?.trim()
 
   if (!envProvider) {
-    return DEFAULT_PI_PROVIDER
+    return (settings?.provider ?? DEFAULT_PI_PROVIDER) as KnownProvider
   }
 
   return envProvider as KnownProvider
 }
 
-function resolveModel(provider: KnownProvider) {
+function resolveTransportMode(authMode: AgentAuthMode): AgentSessionSummary['transport'] {
+  return authMode === 'brokered_oauth' ? 'app' : 'provider'
+}
+
+function resolveDisabledReason(
+  authMode: AgentAuthMode,
+  provider: KnownProvider,
+  settings: AgentSettingsState,
+) {
+  if (authMode === 'brokered_oauth') {
+    if (settings.brokerSession.state === 'unconfigured') {
+      return 'Brokered OAuth is selected, but no broker backend is configured yet.'
+    }
+
+    if (settings.brokerSession.state === 'signed_out') {
+      return 'Brokered OAuth is selected, but you are not signed in yet.'
+    }
+
+    return 'Brokered OAuth support is not implemented yet.'
+  }
+
+  if (!getApiKey(provider)) {
+    return `No API key found for provider "${provider}".`
+  }
+
+  return undefined
+}
+
+function resolveModel(provider: KnownProvider, preferredModelId?: string) {
   const envModelId = process.env[PI_MODEL_ENV_NAME]?.trim()
-  const preferredModelId = envModelId || DEFAULT_PI_MODEL_ID
-  const exactModel = tryGetModel(provider, preferredModelId)
+  const desiredModelId = envModelId || preferredModelId || DEFAULT_PI_MODEL_ID
+  const exactModel = tryGetModel(provider, desiredModelId)
 
   if (exactModel) {
     return exactModel

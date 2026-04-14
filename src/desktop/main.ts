@@ -212,6 +212,7 @@ async function openWorkspace(window: BrowserWindow, workspaceRootDir: string) {
 
   activeWorkspaceRootDir = workspaceRootDir
   serverHandle = await startStandaloneServer({
+    agentRuntime: piAgentService,
     rootDir: workspaceRootDir,
     host: '127.0.0.1',
     port: 0,

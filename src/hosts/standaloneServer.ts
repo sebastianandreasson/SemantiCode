@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 
 import { ensureAgentInstructions } from '../cli/agentInstructions'
 import { handleCodebaseVisualizerRequest } from '../node/http'
+import type { AgentRuntimeRequestBridge } from '../node/http'
 
 export const DEFAULT_STANDALONE_HOST = '127.0.0.1'
 export const DEFAULT_STANDALONE_PORT = 3210
@@ -12,6 +13,7 @@ export const DEFAULT_STANDALONE_PORT = 3210
 const STANDALONE_HTML_ENTRY = '/standalone.html'
 
 export interface StartStandaloneServerOptions {
+  agentRuntime?: AgentRuntimeRequestBridge
   rootDir: string
   host?: string
   port?: number
@@ -41,6 +43,7 @@ export async function startStandaloneServer(
 
   const server = createServer(async (request, response) => {
     const handled = await handleCodebaseVisualizerRequest(request, response, {
+      agentRuntime: options.agentRuntime,
       rootDir,
       analyzeCalls: true,
       analyzeImports: true,

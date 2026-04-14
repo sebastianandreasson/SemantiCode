@@ -2,6 +2,12 @@ import type { LayoutNodeScope, LayoutStrategyKind } from './layout'
 import type { LayoutDraft } from './planner'
 import type { GraphEdge, ProjectSnapshot } from './snapshot'
 import type { LayoutSpec } from './layout'
+import type {
+  AgentMessage,
+  AgentSessionSummary,
+  AgentSettingsInput,
+  AgentSettingsState,
+} from './agent'
 
 export type AnalysisState = 'idle' | 'loading' | 'ready' | 'error'
 
@@ -47,3 +53,18 @@ export interface GraphNeighborsResponse {
   outgoingEdges: GraphEdge[]
   connectedNodeIds: string[]
 }
+
+export interface AgentStateResponse {
+  session: AgentSessionSummary | null
+  messages: AgentMessage[]
+}
+
+export interface AgentPromptRequest {
+  message: string
+}
+
+export interface AgentSettingsResponse {
+  settings: AgentSettingsState
+}
+
+export type AgentSettingsUpdateRequest = AgentSettingsInput

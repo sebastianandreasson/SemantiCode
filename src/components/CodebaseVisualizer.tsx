@@ -152,6 +152,7 @@ export function CodebaseVisualizer({
   const [activeResizePointerId, setActiveResizePointerId] = useState<number | null>(null)
   const [workspaceActionPending, setWorkspaceActionPending] = useState(false)
   const [workspaceActionError, setWorkspaceActionError] = useState<string | null>(null)
+  const [desktopHostAvailable, setDesktopHostAvailable] = useState(false)
   const currentSnapshot = useVisualizerStore((state) => state.snapshot)
   const draftLayouts = useVisualizerStore((state) => state.draftLayouts)
   const activeDraftId = useVisualizerStore((state) => state.activeDraftId)
@@ -191,7 +192,28 @@ export function CodebaseVisualizer({
       codebaseVisualizerDesktop?: DesktopBridge
     }
   ).codebaseVisualizerDesktop
-  const isDesktopHost = Boolean(desktopBridge?.isDesktop)
+  const isDesktopHost = desktopHostAvailable
+
+  useEffect(() => {
+    const updateDesktopHostAvailability = () => {
+      const bridge = (
+        globalThis as typeof globalThis & {
+          codebaseVisualizerDesktop?: DesktopBridge
+        }
+      ).codebaseVisualizerDesktop
+
+      setDesktopHostAvailable(Boolean(bridge?.isDesktop))
+    }
+
+    updateDesktopHostAvailability()
+    const timeoutId = window.setTimeout(updateDesktopHostAvailability, 0)
+    const intervalId = window.setInterval(updateDesktopHostAvailability, 750)
+
+    return () => {
+      window.clearTimeout(timeoutId)
+      window.clearInterval(intervalId)
+    }
+  }, [])
 
   useEffect(() => {
     if (snapshot === undefined) {
@@ -801,7 +823,7 @@ export function CodebaseVisualizer({
             </div>
 
             {inspectorTab === 'agent' ? (
-              <AgentPanel />
+              <AgentPanel desktopHostAvailable={isDesktopHost} />
             ) : inspectorTab === 'graph' ? (
               <GraphInspector
                 selectedEdge={selectedEdge}

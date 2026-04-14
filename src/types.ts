@@ -1,10 +1,17 @@
 export type {
+  AgentAuthMode,
+  AgentBrokerAuthState,
+  AgentBrokerSessionSummary,
   AgentEvent,
   AgentMessage,
   AgentMessageBlock,
+  AgentModelOption,
   AgentPermissionRequest,
   AgentRunState,
   AgentSessionSummary,
+  AgentSecretStorageKind,
+  AgentSettingsInput,
+  AgentSettingsState,
   AgentToolInvocation,
 } from './schema/agent'
 export type {
@@ -56,6 +63,10 @@ export type {
   ViewportState,
 } from './schema/layout'
 export type {
+  AgentPromptRequest,
+  AgentSettingsResponse,
+  AgentSettingsUpdateRequest,
+  AgentStateResponse,
   AnalysisState,
   AnalysisStatus,
   DraftMutationResponse,

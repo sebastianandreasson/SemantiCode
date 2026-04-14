@@ -6,12 +6,26 @@ export type AgentRunState =
   | 'disabled'
   | 'error'
 
+export type AgentAuthMode = 'api_key' | 'brokered_oauth'
+
+export type AgentTransportMode = 'provider' | 'app'
+
+export type AgentBrokerAuthState = 'unconfigured' | 'signed_out' | 'pending' | 'authenticated'
+
+export interface AgentBrokerSessionSummary {
+  accountLabel?: string
+  backendUrl?: string
+  state: AgentBrokerAuthState
+}
+
 export interface AgentSessionSummary {
+  authMode: AgentAuthMode
+  brokerSession?: AgentBrokerSessionSummary
   id: string
   workspaceRootDir: string
   provider: string
   modelId: string
-  transport: 'provider'
+  transport: AgentTransportMode
   createdAt: string
   updatedAt: string
   runState: AgentRunState
@@ -47,6 +61,31 @@ export interface AgentPermissionRequest {
   kind: 'write' | 'exec'
   title: string
   description: string
+}
+
+export type AgentSecretStorageKind = 'plaintext' | 'safe_storage'
+
+export interface AgentModelOption {
+  id: string
+}
+
+export interface AgentSettingsState {
+  authMode: AgentAuthMode
+  brokerSession: AgentBrokerSessionSummary
+  provider: string
+  modelId: string
+  hasApiKey: boolean
+  storageKind: AgentSecretStorageKind
+  availableProviders: string[]
+  availableModelsByProvider: Record<string, AgentModelOption[]>
+}
+
+export interface AgentSettingsInput {
+  authMode?: AgentAuthMode
+  provider: string
+  modelId: string
+  apiKey?: string
+  clearApiKey?: boolean
 }
 
 export type AgentEvent =

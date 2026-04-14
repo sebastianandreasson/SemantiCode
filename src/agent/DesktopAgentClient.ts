@@ -1,58 +1,207 @@
+import type { AgentSettingsResponse, AgentSettingsUpdateRequest, AgentStateResponse } from '../schema/api'
 import type { AgentEvent, AgentSessionSummary } from '../schema/agent'
+import {
+  CODEBASE_VISUALIZER_AGENT_CANCEL_ROUTE,
+  CODEBASE_VISUALIZER_AGENT_MESSAGE_ROUTE,
+  CODEBASE_VISUALIZER_AGENT_SETTINGS_ROUTE,
+  CODEBASE_VISUALIZER_AGENT_SESSION_ROUTE,
+} from '../shared/constants'
 
 interface DesktopAgentBridge {
   cancel?: () => Promise<boolean>
+  closeWorkspace?: () => Promise<boolean>
   createSession?: () => Promise<AgentSessionSummary | null>
-  isAvailable?: boolean
+  isAvailable?: boolean | (() => boolean)
+  isDesktop?: boolean
   onEvent?: (listener: (event: AgentEvent) => void) => () => void
+  openWorkspaceDialog?: () => Promise<boolean>
   sendMessage?: (message: string) => Promise<boolean>
 }
 
-export class DesktopAgentClient {
-  private readonly bridge: DesktopAgentBridge | undefined
+export interface DesktopAgentBridgeInfo {
+  hasAgentBridge: boolean
+  hasDesktopHost: boolean
+}
 
-  constructor() {
-    this.bridge = (
+export class DesktopAgentClient {
+  getBridgeInfo(): DesktopAgentBridgeInfo {
+    const bridge = this.getBridge()
+
+    return {
+      hasDesktopHost: Boolean(bridge?.isDesktop),
+      hasAgentBridge: Boolean(
+        bridge?.createSession &&
+        bridge?.sendMessage &&
+        bridge?.cancel &&
+        bridge?.onEvent,
+      ),
+    }
+  }
+
+  isDesktopHost() {
+    return Boolean(this.getBridge()?.isDesktop)
+  }
+
+  hasAgentBridge() {
+    const bridge = this.getBridge()
+
+    return Boolean(
+      bridge?.createSession &&
+      bridge?.sendMessage &&
+      bridge?.cancel &&
+      bridge?.onEvent,
+    )
+  }
+
+  isAvailable() {
+    const bridge = this.getBridge()
+
+    if (!bridge) {
+      return false
+    }
+
+    if (typeof bridge.isAvailable === 'function') {
+      return bridge.isAvailable()
+    }
+
+    if (typeof bridge.isAvailable === 'boolean') {
+      return bridge.isAvailable
+    }
+
+    return this.hasAgentBridge()
+  }
+
+  async createSession() {
+    const bridge = this.getBridge()
+
+    if (bridge?.createSession) {
+      return bridge.createSession()
+    }
+
+    const state = await this.fetchAgentState(CODEBASE_VISUALIZER_AGENT_SESSION_ROUTE, {
+      method: 'POST',
+    })
+
+    return state?.session ?? null
+  }
+
+  async sendMessage(message: string) {
+    const bridge = this.getBridge()
+
+    if (bridge?.sendMessage) {
+      return bridge.sendMessage(message)
+    }
+
+    await this.fetchAgentState(CODEBASE_VISUALIZER_AGENT_MESSAGE_ROUTE, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ message }),
+    })
+    return true
+  }
+
+  async cancel() {
+    const bridge = this.getBridge()
+
+    if (bridge?.cancel) {
+      return bridge.cancel()
+    }
+
+    await this.fetchAgentState(CODEBASE_VISUALIZER_AGENT_CANCEL_ROUTE, {
+      method: 'POST',
+    })
+    return true
+  }
+
+  subscribe(listener: (event: AgentEvent) => void) {
+    const bridge = this.getBridge()
+
+    if (!bridge?.onEvent) {
+      return () => undefined
+    }
+
+    return bridge.onEvent(listener)
+  }
+
+  private getBridge() {
+    return (
+      globalThis as typeof globalThis & {
+        codebaseVisualizerDesktop?: DesktopAgentBridge
+        codebaseVisualizerDesktopAgent?: DesktopAgentBridge
+      }
+    ).codebaseVisualizerDesktop ?? (
       globalThis as typeof globalThis & {
         codebaseVisualizerDesktopAgent?: DesktopAgentBridge
       }
     ).codebaseVisualizerDesktopAgent
   }
 
-  isAvailable() {
-    return Boolean(this.bridge?.isAvailable)
+  async getHttpState() {
+    return this.fetchAgentState(CODEBASE_VISUALIZER_AGENT_SESSION_ROUTE, {
+      method: 'GET',
+    })
   }
 
-  async createSession() {
-    if (!this.bridge?.createSession) {
-      return null
+  async getSettings() {
+    const response = await fetch(CODEBASE_VISUALIZER_AGENT_SETTINGS_ROUTE, {
+      method: 'GET',
+    })
+
+    if (!response.ok) {
+      throw new Error(await getResponseErrorMessage(
+        response,
+        `Agent settings request failed with status ${response.status}.`,
+      ))
     }
 
-    return this.bridge.createSession()
+    return ((await response.json()) as AgentSettingsResponse).settings
   }
 
-  async sendMessage(message: string) {
-    if (!this.bridge?.sendMessage) {
-      return false
+  async saveSettings(settings: AgentSettingsUpdateRequest) {
+    const response = await fetch(CODEBASE_VISUALIZER_AGENT_SETTINGS_ROUTE, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(settings),
+    })
+
+    if (!response.ok) {
+      throw new Error(await getResponseErrorMessage(
+        response,
+        `Saving agent settings failed with status ${response.status}.`,
+      ))
     }
 
-    return this.bridge.sendMessage(message)
+    return ((await response.json()) as AgentSettingsResponse).settings
   }
 
-  async cancel() {
-    if (!this.bridge?.cancel) {
-      return false
+  private async fetchAgentState(path: string, init: RequestInit) {
+    const response = await fetch(path, init)
+
+    if (!response.ok) {
+      throw new Error(await getResponseErrorMessage(
+        response,
+        `Agent request failed with status ${response.status}.`,
+      ))
     }
 
-    return this.bridge.cancel()
-  }
-
-  subscribe(listener: (event: AgentEvent) => void) {
-    if (!this.bridge?.onEvent) {
-      return () => undefined
-    }
-
-    return this.bridge.onEvent(listener)
+    return (await response.json()) as AgentStateResponse
   }
 }
 
+async function getResponseErrorMessage(response: Response, fallbackMessage: string) {
+  try {
+    const payload = (await response.json()) as { message?: string }
+
+    if (payload?.message) {
+      return payload.message
+    }
+  } catch {
+    // Ignore non-JSON error bodies and fall back to the caller-provided message.
+  }
+
+  return fallbackMessage
+}

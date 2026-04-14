@@ -7,10 +7,6 @@ contextBridge.exposeInMainWorld('codebaseVisualizerDesktop', {
   isDesktop: true,
   openWorkspaceDialog: () => ipcRenderer.invoke('codebase-visualizer:open-workspace'),
   closeWorkspace: () => ipcRenderer.invoke('codebase-visualizer:close-workspace'),
-})
-
-contextBridge.exposeInMainWorld('codebaseVisualizerDesktopAgent', {
-  isAvailable: true,
   createSession: () => ipcRenderer.invoke('codebase-visualizer:agent:create-session'),
   sendMessage: (message: string) =>
     ipcRenderer.invoke('codebase-visualizer:agent:send-message', message),
