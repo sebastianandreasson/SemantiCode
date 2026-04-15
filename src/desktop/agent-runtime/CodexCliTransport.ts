@@ -19,6 +19,7 @@ import type {
 
 import type { OpenAICodexProvider } from '../providers/openai-codex/provider'
 import { parseCodexLineActions } from './codexEventParser'
+import type { AgentToolInvocation } from '../../schema/agent'
 
 const CODEX_AUTH_FILENAME = 'auth.json'
 const CODEX_HOME_DIRNAME = 'codex-cli-runtime'
@@ -38,6 +39,7 @@ interface ActiveCodexRunState {
   processId: string
   stderrLines: string[]
   thinkingText: string
+  toolInvocationsById: Map<string, AgentToolInvocation>
 }
 
 interface PartialAssistantState {
@@ -144,6 +146,7 @@ export class CodexCliTransport implements AgentTransport {
       processId,
       stderrLines: [],
       thinkingText: '',
+      toolInvocationsById: new Map(),
     }
     const partialState = createPartialAssistantState(config.model)
 
@@ -342,6 +345,37 @@ export class CodexCliTransport implements AgentTransport {
           contentIndex: partialState.textIndex,
           delta,
           partial: cloneAssistantMessage(partialState.message),
+        })
+        continue
+      }
+
+      if (action.kind === 'tool_call_start') {
+        activeRunState.toolInvocationsById.set(
+          action.invocation.toolCallId,
+          action.invocation,
+        )
+        stream.push({
+          type: 'tool_execution_start',
+          args: action.invocation.args,
+          toolCallId: action.invocation.toolCallId,
+          toolName: action.invocation.toolName,
+        })
+        continue
+      }
+
+      if (action.kind === 'tool_call_end') {
+        const existingInvocation = activeRunState.toolInvocationsById.get(action.toolCallId)
+
+        if (!existingInvocation) {
+          continue
+        }
+
+        stream.push({
+          type: 'tool_execution_end',
+          isError: false,
+          result: '',
+          toolCallId: existingInvocation.toolCallId,
+          toolName: existingInvocation.toolName,
         })
       }
     }
