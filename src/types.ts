@@ -63,6 +63,11 @@ export type {
   ViewportState,
 } from './schema/layout'
 export type {
+  AgentBrokerCompleteRequest,
+  AgentCodexImportResponse,
+  AgentBrokerCallbackResult,
+  AgentBrokerLoginStartResponse,
+  AgentBrokerSessionResponse,
   AgentPromptRequest,
   AgentSettingsResponse,
   AgentSettingsUpdateRequest,

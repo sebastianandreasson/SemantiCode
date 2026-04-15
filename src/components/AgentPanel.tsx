@@ -26,10 +26,23 @@ export function AgentPanel({ desktopHostAvailable = false }: AgentPanelProps) {
   const [providerValue, setProviderValue] = useState('')
   const [modelValue, setModelValue] = useState('')
   const [apiKeyValue, setApiKeyValue] = useState('')
+  const [manualRedirectUrlValue, setManualRedirectUrlValue] = useState('')
+  const [openAiOAuthClientIdValue, setOpenAiOAuthClientIdValue] = useState('')
+  const [openAiOAuthClientSecretValue, setOpenAiOAuthClientSecretValue] = useState('')
+  const [settingsDraftDirty, setSettingsDraftDirty] = useState(false)
+  const [openAiOAuthClientIdDirty, setOpenAiOAuthClientIdDirty] = useState(false)
+  const [, setOpenAiOAuthClientSecretDirty] = useState(false)
   const [pending, setPending] = useState(false)
   const [settingsPending, setSettingsPending] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [oauthStatusMessage, setOauthStatusMessage] = useState<string | null>(null)
+  const [oauthLoginUrl, setOauthLoginUrl] = useState<string | null>(null)
   const messageListRef = useRef<HTMLDivElement | null>(null)
+  const sessionRef = useRef<AgentSessionSummary | null>(null)
+
+  useEffect(() => {
+    sessionRef.current = session
+  }, [session])
 
   useEffect(() => {
     const updateBridgeInfo = () => {
@@ -60,9 +73,44 @@ export function AgentPanel({ desktopHostAvailable = false }: AgentPanelProps) {
         }
 
         setSettings(nextSettings)
-        setAuthModeValue(nextSettings.authMode)
-        setProviderValue(nextSettings.provider)
-        setModelValue(nextSettings.modelId)
+
+        if (!settingsDraftDirty) {
+          setAuthModeValue(nextSettings.authMode)
+          setProviderValue(nextSettings.provider)
+          setModelValue(nextSettings.modelId)
+          setOpenAiOAuthClientIdValue(nextSettings.openAiOAuthClientId ?? '')
+        }
+
+        const currentSession = sessionRef.current
+        const brokerJustBecameRunnable =
+          nextSettings.authMode === 'brokered_oauth' &&
+          nextSettings.brokerSession.state === 'authenticated' &&
+          (
+            !currentSession ||
+            currentSession.authMode !== 'brokered_oauth' ||
+            currentSession.brokerSession?.state !== 'authenticated' ||
+            currentSession.runState === 'disabled' ||
+            currentSession.runState === 'error'
+          )
+
+        if (brokerJustBecameRunnable) {
+          const nextSession = await agentClient.createSession()
+
+          if (cancelled) {
+            return
+          }
+
+          setSession(nextSession)
+
+          const nextState = await agentClient.getHttpState()
+
+          if (cancelled) {
+            return
+          }
+
+          setSession(nextState.session)
+          setMessages(nextState.messages)
+        }
       } catch (error) {
         if (cancelled) {
           return
@@ -95,6 +143,16 @@ export function AgentPanel({ desktopHostAvailable = false }: AgentPanelProps) {
       }
     }
 
+    const syncAll = async () => {
+      await syncSettings()
+
+      if (cancelled) {
+        return
+      }
+
+      await syncHttpState()
+    }
+
     if (bridgeInfo.hasAgentBridge) {
       unsubscribe = agentClient.subscribe((event) => {
         if (cancelled) {
@@ -103,11 +161,11 @@ export function AgentPanel({ desktopHostAvailable = false }: AgentPanelProps) {
 
         handleAgentEvent(event, setMessages, setSession)
       })
-    } else {
-      intervalId = window.setInterval(() => {
-        void syncHttpState()
-      }, 1000)
     }
+
+    intervalId = window.setInterval(() => {
+      void syncAll()
+    }, 1000)
 
     void agentClient.createSession().then(async (nextSession) => {
       if (cancelled) {
@@ -118,8 +176,7 @@ export function AgentPanel({ desktopHostAvailable = false }: AgentPanelProps) {
         setSession(nextSession)
       }
 
-      await syncHttpState()
-      await syncSettings()
+      await syncAll()
       setErrorMessage(null)
     }).catch((error) => {
       if (cancelled) {
@@ -138,21 +195,27 @@ export function AgentPanel({ desktopHostAvailable = false }: AgentPanelProps) {
         window.clearInterval(intervalId)
       }
     }
-  }, [agentClient, bridgeInfo])
+  }, [agentClient, bridgeInfo, openAiOAuthClientIdDirty, settingsDraftDirty])
 
   useEffect(() => {
     if (!settings || !providerValue) {
       return
     }
 
-    const availableModels = settings.availableModelsByProvider[providerValue] ?? []
+    const availableModels = getSelectableModels(settings, authModeValue, providerValue)
 
     if (availableModels.some((model) => model.id === modelValue)) {
       return
     }
 
     setModelValue(availableModels[0]?.id ?? '')
-  }, [modelValue, providerValue, settings])
+  }, [authModeValue, modelValue, providerValue, settings])
+
+  useEffect(() => {
+    if (authModeValue === 'brokered_oauth' && providerValue && providerValue !== 'openai') {
+      setProviderValue('openai')
+    }
+  }, [authModeValue, providerValue])
 
   useEffect(() => {
     if (!messageListRef.current) {
@@ -172,6 +235,7 @@ export function AgentPanel({ desktopHostAvailable = false }: AgentPanelProps) {
     try {
       setPending(true)
       setErrorMessage(null)
+      await persistSettingsDraftIfNeeded()
       const ok = await agentClient.sendMessage(nextPrompt)
 
       if (!ok) {
@@ -185,6 +249,44 @@ export function AgentPanel({ desktopHostAvailable = false }: AgentPanelProps) {
       )
     } finally {
       setPending(false)
+    }
+  }
+
+  async function persistSettingsDraftIfNeeded() {
+    if (!settingsDraftDirty) {
+      return
+    }
+
+    if (!providerValue || !modelValue) {
+      throw new Error('Select both a provider and a model before continuing.')
+    }
+
+    setSettingsPending(true)
+
+    try {
+      const nextSettings = await agentClient.saveSettings({
+        authMode: authModeValue,
+        provider: providerValue,
+        modelId: modelValue,
+        apiKey: authModeValue === 'api_key' ? apiKeyValue.trim() || undefined : undefined,
+        openAiOAuthClientId:
+          settings?.canEditOpenAiOAuthConfig ? openAiOAuthClientIdValue : undefined,
+        openAiOAuthClientSecret:
+          settings?.canEditOpenAiOAuthConfig && openAiOAuthClientSecretValue.trim().length > 0
+            ? openAiOAuthClientSecretValue.trim()
+            : undefined,
+      })
+
+      setSettings(nextSettings)
+      setAuthModeValue(nextSettings.authMode)
+      setProviderValue(nextSettings.provider)
+      setModelValue(nextSettings.modelId)
+      setOpenAiOAuthClientIdValue(nextSettings.openAiOAuthClientId ?? '')
+      setSettingsDraftDirty(false)
+      setOpenAiOAuthClientIdDirty(false)
+      setOpenAiOAuthClientSecretDirty(false)
+    } finally {
+      setSettingsPending(false)
     }
   }
 
@@ -208,11 +310,18 @@ export function AgentPanel({ desktopHostAvailable = false }: AgentPanelProps) {
     try {
       setSettingsPending(true)
       setErrorMessage(null)
+      setOauthStatusMessage(null)
       const nextSettings = await agentClient.saveSettings({
         authMode: authModeValue,
         provider: providerValue,
         modelId: modelValue,
         apiKey: apiKeyValue.trim() || undefined,
+        openAiOAuthClientId:
+          settings?.canEditOpenAiOAuthConfig ? openAiOAuthClientIdValue : undefined,
+        openAiOAuthClientSecret:
+          settings?.canEditOpenAiOAuthConfig && openAiOAuthClientSecretValue.trim().length > 0
+            ? openAiOAuthClientSecretValue.trim()
+            : undefined,
       })
 
       setSettings(nextSettings)
@@ -220,6 +329,11 @@ export function AgentPanel({ desktopHostAvailable = false }: AgentPanelProps) {
       setProviderValue(nextSettings.provider)
       setModelValue(nextSettings.modelId)
       setApiKeyValue('')
+      setOpenAiOAuthClientIdValue(nextSettings.openAiOAuthClientId ?? '')
+      setOpenAiOAuthClientSecretValue('')
+      setSettingsDraftDirty(false)
+      setOpenAiOAuthClientIdDirty(false)
+      setOpenAiOAuthClientSecretDirty(false)
 
       const nextSession = await agentClient.createSession()
       setSession(nextSession)
@@ -252,6 +366,7 @@ export function AgentPanel({ desktopHostAvailable = false }: AgentPanelProps) {
 
       setSettings(nextSettings)
       setAuthModeValue(nextSettings.authMode)
+      setSettingsDraftDirty(false)
       setApiKeyValue('')
       const nextSession = await agentClient.createSession()
       setSession(nextSession)
@@ -267,7 +382,215 @@ export function AgentPanel({ desktopHostAvailable = false }: AgentPanelProps) {
     }
   }
 
-  const availableModels = settings?.availableModelsByProvider[providerValue] ?? []
+  async function handleStartBrokeredLogin() {
+    const effectiveProvider = 'openai'
+    const availableOpenAiModels = settings
+      ? getSelectableModels(settings, 'brokered_oauth', effectiveProvider)
+      : []
+    const effectiveModelId =
+      modelValue ||
+      settings?.modelId ||
+      availableOpenAiModels[0]?.id ||
+      ''
+
+    if (!effectiveModelId) {
+      setErrorMessage('No OpenAI model is available yet for sign-in.')
+      return
+    }
+
+    try {
+      setSettingsPending(true)
+      setErrorMessage(null)
+      const nextSettings = await agentClient.saveSettings({
+        authMode: 'brokered_oauth',
+        provider: effectiveProvider,
+        modelId: effectiveModelId,
+        openAiOAuthClientId:
+          settings?.canEditOpenAiOAuthConfig ? openAiOAuthClientIdValue : undefined,
+        openAiOAuthClientSecret:
+          settings?.canEditOpenAiOAuthConfig && openAiOAuthClientSecretValue.trim().length > 0
+            ? openAiOAuthClientSecretValue.trim()
+            : undefined,
+      })
+
+      setSettings(nextSettings)
+      setAuthModeValue(nextSettings.authMode)
+      setProviderValue(nextSettings.provider)
+      setModelValue(nextSettings.modelId)
+      setOpenAiOAuthClientIdValue(nextSettings.openAiOAuthClientId ?? '')
+      setOpenAiOAuthClientSecretValue('')
+      setSettingsDraftDirty(false)
+      setOpenAiOAuthClientIdDirty(false)
+      setOpenAiOAuthClientSecretDirty(false)
+
+      const result = await agentClient.beginBrokeredLogin()
+      const brokerSession = await agentClient.getBrokerSession()
+
+      setSettings((current) =>
+        current
+          ? {
+              ...current,
+              brokerSession,
+            }
+          : current,
+      )
+      setOauthStatusMessage(
+        result.message ??
+          (result.loginUrl
+            ? `Opened the browser for OpenAI sign-in.`
+            : 'OpenAI sign-in did not return a browser URL.'),
+      )
+      setOauthLoginUrl(result.loginUrl ?? null)
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : 'Failed to start OpenAI sign-in.',
+      )
+    } finally {
+      setSettingsPending(false)
+    }
+  }
+
+  async function handleBrokeredLogout() {
+    try {
+      setSettingsPending(true)
+      setErrorMessage(null)
+      setOauthStatusMessage(null)
+      setOauthLoginUrl(null)
+      const brokerSession = await agentClient.logoutBrokeredAuthSession()
+
+      setSettings((current) =>
+        current
+          ? {
+              ...current,
+              brokerSession,
+            }
+          : current,
+      )
+      const nextSession = await agentClient.createSession()
+      setSession(nextSession)
+      const state = await agentClient.getHttpState()
+      setSession(state.session)
+      setMessages(state.messages)
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : 'Failed to sign out from OpenAI OAuth.',
+      )
+    } finally {
+      setSettingsPending(false)
+    }
+  }
+
+  async function handleImportCodexLogin() {
+    try {
+      setSettingsPending(true)
+      setErrorMessage(null)
+      setOauthStatusMessage(null)
+      const result = await agentClient.importCodexAuthSession()
+      const nextSettings = await agentClient.getSettings()
+
+      setSettings(nextSettings)
+      setSettingsDraftDirty(false)
+      setOpenAiOAuthClientIdValue(nextSettings.openAiOAuthClientId ?? '')
+      setOpenAiOAuthClientIdDirty(false)
+      const nextSession = await agentClient.createSession()
+      setSession(nextSession)
+      const state = await agentClient.getHttpState()
+      setSession(state.session)
+      setMessages(state.messages)
+      setOauthStatusMessage(result.message)
+      setOauthLoginUrl(null)
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : 'Failed to import the local Codex login.',
+      )
+    } finally {
+      setSettingsPending(false)
+    }
+  }
+
+  async function handleClearOpenAiOAuthOverride() {
+    if (!settings?.canEditOpenAiOAuthConfig || !providerValue || !modelValue) {
+      return
+    }
+
+    try {
+      setSettingsPending(true)
+      setErrorMessage(null)
+      const nextSettings = await agentClient.saveSettings({
+        authMode: authModeValue,
+        provider: providerValue,
+        modelId: modelValue,
+        clearOpenAiOAuthClientId: true,
+        clearOpenAiOAuthClientSecret: true,
+      })
+
+      setSettings(nextSettings)
+      setSettingsDraftDirty(false)
+      setOpenAiOAuthClientIdValue(nextSettings.openAiOAuthClientId ?? '')
+      setOpenAiOAuthClientSecretValue('')
+      setOpenAiOAuthClientIdDirty(false)
+      setOpenAiOAuthClientSecretDirty(false)
+      const nextSession = await agentClient.createSession()
+      setSession(nextSession)
+      const state = await agentClient.getHttpState()
+      setSession(state.session)
+      setMessages(state.messages)
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : 'Failed to clear the OpenAI OAuth override.',
+      )
+    } finally {
+      setSettingsPending(false)
+    }
+  }
+
+  async function handleCompleteManualRedirect() {
+    const callbackUrl = manualRedirectUrlValue.trim()
+
+    if (!callbackUrl) {
+      setErrorMessage('Paste the final redirected URL before completing sign-in.')
+      return
+    }
+
+    try {
+      setSettingsPending(true)
+      setErrorMessage(null)
+      setOauthStatusMessage(null)
+      const result = await agentClient.completeBrokeredLogin(callbackUrl)
+      const nextSettings = await agentClient.getSettings()
+
+      setSettings(nextSettings)
+      setSettingsDraftDirty(false)
+      setOpenAiOAuthClientIdValue(nextSettings.openAiOAuthClientId ?? '')
+      setOpenAiOAuthClientIdDirty(false)
+      setManualRedirectUrlValue('')
+      const nextSession = await agentClient.createSession()
+      setSession(nextSession)
+      const state = await agentClient.getHttpState()
+      setSession(state.session)
+      setMessages(state.messages)
+      setOauthStatusMessage(result.message)
+      setOauthLoginUrl(null)
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : 'Failed to complete sign-in from the pasted redirect URL.',
+      )
+    } finally {
+      setSettingsPending(false)
+    }
+  }
+
+  const availableModels = settings ? getSelectableModels(settings, authModeValue, providerValue) : []
+  const sendDisabledReason =
+    session?.runState === 'disabled'
+      ? session.lastError ?? 'The current agent session is disabled.'
+      : session?.runState === 'initializing'
+        ? 'The agent session is still initializing.'
+        : composerValue.trim().length === 0
+          ? 'Enter a prompt to send.'
+          : pending
+            ? 'A prompt is already being sent.'
+            : null
 
   return (
     <div className="cbv-agent-panel">
@@ -315,10 +638,13 @@ export function AgentPanel({ desktopHostAvailable = false }: AgentPanelProps) {
             <span>Auth mode</span>
             <select
               disabled={settingsPending || !settings}
-              onChange={(event) => setAuthModeValue(event.target.value as AgentAuthMode)}
+              onChange={(event) => {
+                setAuthModeValue(event.target.value as AgentAuthMode)
+                setSettingsDraftDirty(true)
+              }}
               value={authModeValue}
             >
-              <option value="brokered_oauth">Brokered OAuth</option>
+              <option value="brokered_oauth">OpenAI OAuth</option>
               <option value="api_key">API key</option>
             </select>
           </label>
@@ -326,8 +652,11 @@ export function AgentPanel({ desktopHostAvailable = false }: AgentPanelProps) {
           <label>
             <span>Provider</span>
             <select
-              disabled={settingsPending || !settings}
-              onChange={(event) => setProviderValue(event.target.value)}
+              disabled={settingsPending || !settings || authModeValue === 'brokered_oauth'}
+              onChange={(event) => {
+                setProviderValue(event.target.value)
+                setSettingsDraftDirty(true)
+              }}
               value={providerValue}
             >
               {(settings?.availableProviders ?? []).map((provider) => (
@@ -342,7 +671,10 @@ export function AgentPanel({ desktopHostAvailable = false }: AgentPanelProps) {
             <span>Model</span>
             <select
               disabled={settingsPending || availableModels.length === 0}
-              onChange={(event) => setModelValue(event.target.value)}
+              onChange={(event) => {
+                setModelValue(event.target.value)
+                setSettingsDraftDirty(true)
+              }}
               value={modelValue}
             >
               {availableModels.map((model) => (
@@ -359,7 +691,10 @@ export function AgentPanel({ desktopHostAvailable = false }: AgentPanelProps) {
               <input
                 autoComplete="off"
                 disabled={settingsPending}
-                onChange={(event) => setApiKeyValue(event.target.value)}
+                onChange={(event) => {
+                  setApiKeyValue(event.target.value)
+                  setSettingsDraftDirty(true)
+                }}
                 placeholder={settings?.hasApiKey ? 'Stored key present. Enter a new key to replace it.' : 'Enter provider API key'}
                 type="password"
                 value={apiKeyValue}
@@ -367,17 +702,89 @@ export function AgentPanel({ desktopHostAvailable = false }: AgentPanelProps) {
             </label>
           ) : (
             <div className="cbv-agent-oauth-placeholder">
-              <strong>Brokered OAuth</strong>
+              <strong>OpenAI OAuth</strong>
               <p>
-                This is now modeled as the primary auth path. The backend broker,
-                browser login flow, and `AppTransport` integration still need to be
-                implemented.
+                Sign in through your OpenAI account in the browser. The desktop app
+                handles a localhost callback and stores the returned tokens locally.
               </p>
               <p>
-                {settings?.brokerSession.state === 'unconfigured'
-                  ? 'No broker backend is configured yet.'
-                  : 'A broker backend is configured, but sign-in is not implemented yet.'}
+                OAuth session state: {settings?.brokerSession.state ?? 'signed_out'}.
               </p>
+              {settings?.brokerSession.accountLabel ? (
+                <p>Signed in as: {settings.brokerSession.accountLabel}</p>
+              ) : null}
+              <p>
+                If the browser does not open automatically, use the login URL below.
+              </p>
+              <p>
+                The desktop app starts a localhost callback server automatically.
+                If that does not complete sign-in, paste the final redirected URL
+                below and finish the flow manually.
+              </p>
+              <label className="is-wide">
+                <span>Manual redirect URL fallback</span>
+                <input
+                  autoComplete="off"
+                  disabled={settingsPending}
+                  onChange={(event) => setManualRedirectUrlValue(event.target.value)}
+                  placeholder="Paste the final redirected browser URL"
+                  type="url"
+                  value={manualRedirectUrlValue}
+                />
+              </label>
+              {oauthStatusMessage ? (
+                <p className="cbv-agent-warning">{oauthStatusMessage}</p>
+              ) : null}
+              {oauthLoginUrl ? (
+                <p className="cbv-agent-warning">
+                  Login URL:{' '}
+                  <a href={oauthLoginUrl} rel="noreferrer" target="_blank">
+                    open sign-in page
+                  </a>
+                </p>
+              ) : null}
+              <p>
+                For local development, you can also import your existing Codex
+                ChatGPT login from <code>~/.codex/auth.json</code>.
+              </p>
+              {settings?.canEditOpenAiOAuthConfig ? (
+                <>
+                  <label>
+                    <span>Dev client ID override</span>
+                    <input
+                      autoComplete="off"
+                      disabled={settingsPending}
+                      onChange={(event) => {
+                        setOpenAiOAuthClientIdValue(event.target.value)
+                        setSettingsDraftDirty(true)
+                        setOpenAiOAuthClientIdDirty(true)
+                      }}
+                      placeholder="app_..."
+                      type="text"
+                      value={openAiOAuthClientIdValue}
+                    />
+                  </label>
+                  <label>
+                    <span>Dev client secret override</span>
+                    <input
+                      autoComplete="off"
+                      disabled={settingsPending}
+                      onChange={(event) => {
+                        setOpenAiOAuthClientSecretValue(event.target.value)
+                        setSettingsDraftDirty(true)
+                        setOpenAiOAuthClientSecretDirty(true)
+                      }}
+                      placeholder={
+                        settings?.hasOpenAiOAuthClientSecret
+                          ? 'Stored secret present. Enter a new value to replace it.'
+                          : 'Optional client secret'
+                      }
+                      type="password"
+                      value={openAiOAuthClientSecretValue}
+                    />
+                  </label>
+                </>
+              ) : null}
             </div>
           )}
         </div>
@@ -395,15 +802,73 @@ export function AgentPanel({ desktopHostAvailable = false }: AgentPanelProps) {
               Remove Key
             </button>
           ) : null}
-          <button
-            disabled={settingsPending || !providerValue || !modelValue}
-            onClick={() => {
-              void handleSaveSettings()
-            }}
-            type="button"
-          >
-            {settingsPending ? 'Saving…' : 'Save Settings'}
-          </button>
+          {authModeValue === 'brokered_oauth' ? (
+            <>
+              <button
+                className="is-secondary"
+                disabled={settingsPending || settings?.brokerSession.state === 'signed_out'}
+                onClick={() => {
+                  void handleBrokeredLogout()
+                }}
+                type="button"
+              >
+                Sign Out
+              </button>
+              {settings?.canEditOpenAiOAuthConfig ? (
+                <button
+                  className="is-secondary"
+                  disabled={
+                    settingsPending ||
+                    (!settings.hasOpenAiOAuthClientId && !settings.hasOpenAiOAuthClientSecret)
+                  }
+                  onClick={() => {
+                    void handleClearOpenAiOAuthOverride()
+                  }}
+                  type="button"
+                >
+                  Clear OAuth Override
+                </button>
+              ) : null}
+              <button
+                className="is-secondary"
+                disabled={settingsPending}
+                onClick={() => {
+                  void handleImportCodexLogin()
+                }}
+                type="button"
+              >
+                Use Codex Login
+              </button>
+              <button
+                className="is-secondary"
+                disabled={settingsPending || manualRedirectUrlValue.trim().length === 0}
+                onClick={() => {
+                  void handleCompleteManualRedirect()
+                }}
+                type="button"
+              >
+                Complete Sign-In
+              </button>
+              <button
+                onClick={() => {
+                  void handleStartBrokeredLogin()
+                }}
+                type="button"
+              >
+                Sign In With OpenAI
+              </button>
+            </>
+          ) : (
+            <button
+              disabled={settingsPending || !providerValue || !modelValue}
+              onClick={() => {
+                void handleSaveSettings()
+              }}
+              type="button"
+            >
+              {settingsPending ? 'Saving…' : 'Save Settings'}
+            </button>
+          )}
         </div>
       </section>
 
@@ -468,6 +933,7 @@ export function AgentPanel({ desktopHostAvailable = false }: AgentPanelProps) {
               session?.runState === 'disabled' ||
               session?.runState === 'initializing'
             }
+            title={sendDisabledReason ?? undefined}
             onClick={() => {
               void handleSubmit()
             }}
@@ -510,6 +976,20 @@ function normalizeBridgeInfo(
     hasDesktopHost: bridgeInfo.hasDesktopHost || desktopHostAvailable,
     hasAgentBridge: bridgeInfo.hasAgentBridge,
   }
+}
+
+function getSelectableModels(
+  settings: AgentSettingsState,
+  authMode: AgentAuthMode,
+  provider: string,
+) {
+  const availableModels = settings.availableModelsByProvider[provider] ?? []
+
+  if (authMode !== 'brokered_oauth' || provider !== 'openai') {
+    return availableModels
+  }
+
+  return availableModels.filter((model) => model.id !== 'gpt-4.1-nano')
 }
 
 function upsertMessage(messages: AgentMessage[], nextMessage: AgentMessage) {

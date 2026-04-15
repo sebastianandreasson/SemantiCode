@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { basename, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -8,7 +8,9 @@ import { startStandaloneServer, type StandaloneServerHandle } from '../hosts/sta
 let mainWindow: BrowserWindow | null = null
 let serverHandle: StandaloneServerHandle | null = null
 let activeWorkspaceRootDir: string | null = null
-const piAgentService = new PiAgentService()
+const piAgentService = new PiAgentService({
+  openExternal: (url) => shell.openExternal(url),
+})
 
 void app.whenReady().then(async () => {
   piAgentService.subscribe((event) => {
@@ -56,7 +58,15 @@ void app.whenReady().then(async () => {
       return false
     }
 
-    await piAgentService.promptWorkspaceSession(activeWorkspaceRootDir, message)
+    console.info(
+      `[codebase-visualizer][agent] IPC send-message received for ${activeWorkspaceRootDir}.`,
+    )
+    void piAgentService.promptWorkspaceSession(activeWorkspaceRootDir, message).catch((error) => {
+      console.error(
+        '[codebase-visualizer][agent] Background prompt failed:',
+        error instanceof Error ? error.message : error,
+      )
+    })
     return true
   })
 

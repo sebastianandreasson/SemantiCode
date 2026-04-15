@@ -1,6 +1,20 @@
-import type { AgentSettingsResponse, AgentSettingsUpdateRequest, AgentStateResponse } from '../schema/api'
+import type {
+  AgentBrokerCallbackResult,
+  AgentBrokerCompleteRequest,
+  AgentCodexImportResponse,
+  AgentBrokerLoginStartResponse,
+  AgentBrokerSessionResponse,
+  AgentSettingsResponse,
+  AgentSettingsUpdateRequest,
+  AgentStateResponse,
+} from '../schema/api'
 import type { AgentEvent, AgentSessionSummary } from '../schema/agent'
 import {
+  CODEBASE_VISUALIZER_AGENT_AUTH_COMPLETE_ROUTE,
+  CODEBASE_VISUALIZER_AGENT_AUTH_IMPORT_CODEX_ROUTE,
+  CODEBASE_VISUALIZER_AGENT_AUTH_LOGIN_START_ROUTE,
+  CODEBASE_VISUALIZER_AGENT_AUTH_LOGOUT_ROUTE,
+  CODEBASE_VISUALIZER_AGENT_AUTH_SESSION_ROUTE,
   CODEBASE_VISUALIZER_AGENT_CANCEL_ROUTE,
   CODEBASE_VISUALIZER_AGENT_MESSAGE_ROUTE,
   CODEBASE_VISUALIZER_AGENT_SETTINGS_ROUTE,
@@ -176,6 +190,87 @@ export class DesktopAgentClient {
     }
 
     return ((await response.json()) as AgentSettingsResponse).settings
+  }
+
+  async getBrokerSession() {
+    const response = await fetch(CODEBASE_VISUALIZER_AGENT_AUTH_SESSION_ROUTE, {
+      method: 'GET',
+    })
+
+    if (!response.ok) {
+      throw new Error(await getResponseErrorMessage(
+        response,
+        `Broker auth session request failed with status ${response.status}.`,
+      ))
+    }
+
+    return ((await response.json()) as AgentBrokerSessionResponse).brokerSession
+  }
+
+  async beginBrokeredLogin() {
+    const response = await fetch(CODEBASE_VISUALIZER_AGENT_AUTH_LOGIN_START_ROUTE, {
+      method: 'POST',
+    })
+
+    if (!response.ok) {
+      throw new Error(await getResponseErrorMessage(
+        response,
+        `Broker login start failed with status ${response.status}.`,
+      ))
+    }
+
+    return (await response.json()) as AgentBrokerLoginStartResponse
+  }
+
+  async completeBrokeredLogin(callbackUrl: string) {
+    const response = await fetch(CODEBASE_VISUALIZER_AGENT_AUTH_COMPLETE_ROUTE, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        callbackUrl,
+      } satisfies AgentBrokerCompleteRequest),
+    })
+
+    if (!response.ok) {
+      throw new Error(await getResponseErrorMessage(
+        response,
+        `Broker login completion failed with status ${response.status}.`,
+      ))
+    }
+
+    return (await response.json()) as AgentBrokerCallbackResult
+  }
+
+  async importCodexAuthSession() {
+    const response = await fetch(CODEBASE_VISUALIZER_AGENT_AUTH_IMPORT_CODEX_ROUTE, {
+      method: 'POST',
+    })
+
+    if (!response.ok) {
+      throw new Error(await getResponseErrorMessage(
+        response,
+        `Codex auth import failed with status ${response.status}.`,
+      ))
+    }
+
+    return (await response.json()) as AgentCodexImportResponse
+  }
+
+  async logoutBrokeredAuthSession() {
+    const response = await fetch(CODEBASE_VISUALIZER_AGENT_AUTH_LOGOUT_ROUTE, {
+      method: 'POST',
+    })
+
+    if (!response.ok) {
+      throw new Error(await getResponseErrorMessage(
+        response,
+        `Broker logout failed with status ${response.status}.`,
+      ))
+    }
+
+    return ((await response.json()) as AgentBrokerSessionResponse).brokerSession
   }
 
   private async fetchAgentState(path: string, init: RequestInit) {

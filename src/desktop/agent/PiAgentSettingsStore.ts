@@ -1,4 +1,5 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 
 import { app, safeStorage } from 'electron'
@@ -11,11 +12,22 @@ import type {
   AgentSettingsState,
 } from '../../schema/agent'
 
-const AGENT_BROKER_URL_ENV_NAME = 'CODEBASE_VISUALIZER_AGENT_BROKER_URL'
 const DEFAULT_AUTH_MODE: AgentAuthMode = 'brokered_oauth'
 const DEFAULT_PROVIDER = 'openai'
 const DEFAULT_MODEL_ID = 'gpt-4.1-mini'
+const DEFAULT_CODEX_MODEL_ID = 'gpt-5.4'
 const SETTINGS_FILENAME = 'agent-settings.json'
+const APP_SERVER_URL_ENV_NAME = 'CODEBASE_VISUALIZER_PI_APP_SERVER_URL'
+const CODEX_OPENAI_MODELS = [
+  'gpt-5.4',
+  'gpt-5.2-codex',
+  'gpt-5.1-codex-max',
+  'gpt-5.4-mini',
+  'gpt-5.3-codex',
+  'gpt-5.3-codex-spark',
+  'gpt-5.2',
+  'gpt-5.1-codex-mini',
+] as const
 
 interface PersistedSecret {
   encrypted: boolean
@@ -25,7 +37,18 @@ interface PersistedSecret {
 interface PersistedSettings {
   authMode?: AgentAuthMode
   apiKeys?: Record<string, PersistedSecret>
+  brokerAccountLabel?: string
+  brokerAccessToken?: PersistedSecret
+  brokerAuthState?: AgentBrokerSessionSummary['state']
+  brokerIdToken?: PersistedSecret
+  brokerPendingCodeVerifier?: PersistedSecret
+  brokerPendingState?: string
+  brokerRefreshToken?: PersistedSecret
+  brokerTokenExpiresAt?: string
   modelId?: string
+  appServerUrl?: string
+  openAiOAuthClientId?: string
+  openAiOAuthClientSecret?: PersistedSecret
   provider?: string
 }
 
@@ -44,17 +67,24 @@ export class PiAgentSettingsStore {
     const persisted = await this.readPersistedSettings()
     const authMode = this.normalizeAuthMode(persisted.authMode)
     const provider = this.normalizeProvider(persisted.provider)
-    const modelId = this.normalizeModelId(provider, persisted.modelId)
+    const modelId = this.normalizeModelId(authMode, provider, persisted.modelId)
 
     return {
       authMode,
-      brokerSession: this.getBrokerSessionSummary(),
+      brokerSession: this.getBrokerSessionSummary(persisted),
       provider,
       modelId,
       hasApiKey: Boolean(await this.getStoredApiKey(provider)),
+      appServerUrl: this.resolveAppServerUrl(persisted),
+      hasAppServerUrl: Boolean(this.resolveAppServerUrl(persisted)),
+      canEditAppServerUrl: !app.isPackaged,
+      openAiOAuthClientId: this.getOpenAiOAuthClientId(persisted),
+      hasOpenAiOAuthClientId: Boolean(this.getOpenAiOAuthClientId(persisted)),
+      hasOpenAiOAuthClientSecret: Boolean(this.getOpenAiOAuthClientSecret(persisted)),
+      canEditOpenAiOAuthConfig: !app.isPackaged,
       storageKind: this.getStorageKind(),
       availableProviders: this.getAvailableProviders(),
-      availableModelsByProvider: this.getAvailableModelsByProvider(),
+      availableModelsByProvider: this.getAvailableModelsByProvider(authMode),
     }
   }
 
@@ -62,7 +92,7 @@ export class PiAgentSettingsStore {
     const persisted = await this.readPersistedSettings()
     const authMode = this.normalizeAuthMode(input.authMode ?? persisted.authMode)
     const provider = this.normalizeProvider(input.provider)
-    const modelId = this.normalizeModelId(provider, input.modelId)
+    const modelId = this.normalizeModelId(authMode, provider, input.modelId)
     const nextSettings: PersistedSettings = {
       ...persisted,
       authMode,
@@ -73,6 +103,16 @@ export class PiAgentSettingsStore {
       },
     }
 
+    if (input.clearAppServerUrl) {
+      delete nextSettings.appServerUrl
+    } else if (typeof input.appServerUrl === 'string') {
+      const nextAppServerUrl = input.appServerUrl.trim()
+
+      if (nextAppServerUrl.length > 0) {
+        nextSettings.appServerUrl = nextAppServerUrl
+      }
+    }
+
     if (input.clearApiKey) {
       delete nextSettings.apiKeys?.[provider]
       setApiKey(provider, '')
@@ -80,24 +120,239 @@ export class PiAgentSettingsStore {
       nextSettings.apiKeys![provider] = this.serializeSecret(input.apiKey.trim())
     }
 
+    if (input.clearOpenAiOAuthClientId) {
+      delete nextSettings.openAiOAuthClientId
+    } else if (typeof input.openAiOAuthClientId === 'string') {
+      const nextClientId = input.openAiOAuthClientId.trim()
+
+      if (nextClientId.length > 0) {
+        nextSettings.openAiOAuthClientId = nextClientId
+      }
+    }
+
+    if (input.clearOpenAiOAuthClientSecret) {
+      delete nextSettings.openAiOAuthClientSecret
+    } else if (typeof input.openAiOAuthClientSecret === 'string') {
+      const nextClientSecret = input.openAiOAuthClientSecret.trim()
+
+      if (nextClientSecret.length > 0) {
+        nextSettings.openAiOAuthClientSecret = this.serializeSecret(nextClientSecret)
+      }
+    }
+
     await this.writePersistedSettings(nextSettings)
     await this.applyConfiguredApiKeys()
     return this.getSettings()
   }
 
-  private getBrokerSessionSummary(): AgentBrokerSessionSummary {
-    const backendUrl = process.env[AGENT_BROKER_URL_ENV_NAME]?.trim()
+  async getBrokerSession() {
+    const persisted = await this.readPersistedSettings()
+    return this.getBrokerSessionSummary(persisted)
+  }
 
-    if (!backendUrl) {
-      return {
-        state: 'unconfigured',
+  async getBrokerAppSessionToken() {
+    const persisted = await this.readPersistedSettings()
+    const secret = persisted.brokerAccessToken
+
+    if (!secret) {
+      return null
+    }
+
+    return this.deserializeSecret(secret)
+  }
+
+  async getBrokerPendingState() {
+    const persisted = await this.readPersistedSettings()
+    return persisted.brokerPendingState ?? null
+  }
+
+  async getBrokerPendingCodeVerifier() {
+    const persisted = await this.readPersistedSettings()
+    const secret = persisted.brokerPendingCodeVerifier
+
+    if (!secret) {
+      return null
+    }
+
+    return this.deserializeSecret(secret)
+  }
+
+  async beginBrokerLogin(input: { codeVerifier: string; state: string }) {
+    const persisted = await this.readPersistedSettings()
+    const nextSettings: PersistedSettings = {
+      ...persisted,
+      brokerAuthState: 'pending',
+      brokerPendingCodeVerifier: this.serializeSecret(input.codeVerifier),
+      brokerPendingState: input.state,
+    }
+
+    delete nextSettings.brokerAccessToken
+    delete nextSettings.brokerIdToken
+    delete nextSettings.brokerRefreshToken
+    delete nextSettings.brokerTokenExpiresAt
+    delete nextSettings.brokerAccountLabel
+    await this.writePersistedSettings(nextSettings)
+  }
+
+  async completeBrokerLogin(input: {
+    accessToken: string
+    accountLabel?: string
+    expiresAt?: string
+    idToken?: string
+    refreshToken?: string
+  }) {
+    const persisted = await this.readPersistedSettings()
+    const nextSettings: PersistedSettings = {
+      ...persisted,
+      brokerAccessToken: this.serializeSecret(input.accessToken),
+      brokerAccountLabel: input.accountLabel,
+      brokerAuthState: 'authenticated',
+      brokerIdToken: input.idToken ? this.serializeSecret(input.idToken) : undefined,
+      brokerRefreshToken: input.refreshToken
+        ? this.serializeSecret(input.refreshToken)
+        : persisted.brokerRefreshToken,
+      brokerTokenExpiresAt: input.expiresAt,
+    }
+
+    delete nextSettings.brokerPendingCodeVerifier
+    delete nextSettings.brokerPendingState
+    await this.writePersistedSettings(nextSettings)
+  }
+
+  async importCodexAuthSession() {
+    const authFilePath = join(homedir(), '.codex', 'auth.json')
+    const raw = await readFile(authFilePath, 'utf8').catch(() => null)
+
+    if (!raw) {
+      throw new Error('No local Codex auth session was found at ~/.codex/auth.json.')
+    }
+
+    const parsed = JSON.parse(raw) as {
+      auth_mode?: string
+      tokens?: {
+        access_token?: string
+        account_id?: string
+        id_token?: string
+        refresh_token?: string
       }
     }
 
-    return {
-      backendUrl,
-      state: 'signed_out',
+    if (parsed.auth_mode !== 'chatgpt') {
+      throw new Error('The local Codex auth cache is not using ChatGPT login.')
     }
+
+    const accessToken = parsed.tokens?.access_token?.trim()
+
+    if (!accessToken) {
+      throw new Error('The local Codex auth cache does not contain an access token.')
+    }
+
+    await this.completeBrokerLogin({
+      accessToken,
+      accountLabel: parsed.tokens?.account_id?.trim() || 'Codex ChatGPT session',
+      idToken: parsed.tokens?.id_token?.trim() || undefined,
+      refreshToken: parsed.tokens?.refresh_token?.trim() || undefined,
+    })
+  }
+
+  async updateBrokerTokens(input: {
+    accessToken: string
+    expiresAt?: string
+    idToken?: string
+    refreshToken?: string
+  }) {
+    const persisted = await this.readPersistedSettings()
+    const nextSettings: PersistedSettings = {
+      ...persisted,
+      brokerAccessToken: this.serializeSecret(input.accessToken),
+      brokerAuthState: 'authenticated',
+      brokerIdToken: input.idToken ? this.serializeSecret(input.idToken) : persisted.brokerIdToken,
+      brokerRefreshToken: input.refreshToken
+        ? this.serializeSecret(input.refreshToken)
+        : persisted.brokerRefreshToken,
+      brokerTokenExpiresAt: input.expiresAt ?? persisted.brokerTokenExpiresAt,
+    }
+
+    await this.writePersistedSettings(nextSettings)
+  }
+
+  async getBrokerRefreshToken() {
+    const persisted = await this.readPersistedSettings()
+    const secret = persisted.brokerRefreshToken
+
+    if (!secret) {
+      return null
+    }
+
+    return this.deserializeSecret(secret)
+  }
+
+  async getBrokerTokenExpiry() {
+    const persisted = await this.readPersistedSettings()
+    return persisted.brokerTokenExpiresAt ?? null
+  }
+
+  async getOpenAIOAuthClientConfig() {
+    const persisted = await this.readPersistedSettings()
+    return {
+      clientId: this.getOpenAiOAuthClientId(persisted) || undefined,
+      clientSecret: this.getOpenAiOAuthClientSecret(persisted) || undefined,
+    }
+  }
+
+  async getAppServerUrl() {
+    const persisted = await this.readPersistedSettings()
+    return this.resolveAppServerUrl(persisted)
+  }
+
+  async setBrokerSession(session: Partial<AgentBrokerSessionSummary>) {
+    const persisted = await this.readPersistedSettings()
+    const current = this.getBrokerSessionSummary(persisted)
+    const nextSettings: PersistedSettings = {
+      ...persisted,
+      brokerAccountLabel: session.accountLabel ?? current.accountLabel,
+      brokerAuthState: session.state ?? current.state,
+    }
+
+    if (nextSettings.brokerAuthState === 'signed_out') {
+      delete nextSettings.brokerAccountLabel
+      delete nextSettings.brokerAccessToken
+      delete nextSettings.brokerIdToken
+      delete nextSettings.brokerPendingState
+      delete nextSettings.brokerPendingCodeVerifier
+      delete nextSettings.brokerRefreshToken
+      delete nextSettings.brokerTokenExpiresAt
+    }
+
+    await this.writePersistedSettings(nextSettings)
+  }
+
+  private getBrokerSessionSummary(
+    persisted: PersistedSettings,
+  ): AgentBrokerSessionSummary {
+    return {
+      accountLabel: persisted.brokerAccountLabel,
+      hasAppSessionToken: Boolean(persisted.brokerAccessToken),
+      state: persisted.brokerAuthState ?? 'signed_out',
+    }
+  }
+
+  private getOpenAiOAuthClientId(persisted: PersistedSettings) {
+    return persisted.openAiOAuthClientId?.trim() || process.env.CODEBASE_VISUALIZER_OPENAI_OAUTH_CLIENT_ID?.trim() || ''
+  }
+
+  private resolveAppServerUrl(persisted: PersistedSettings) {
+    return persisted.appServerUrl?.trim() || process.env[APP_SERVER_URL_ENV_NAME]?.trim() || ''
+  }
+
+  private getOpenAiOAuthClientSecret(persisted: PersistedSettings) {
+    const persistedSecret = persisted.openAiOAuthClientSecret
+
+    if (persistedSecret) {
+      return this.deserializeSecret(persistedSecret)
+    }
+
+    return process.env.CODEBASE_VISUALIZER_OPENAI_OAUTH_CLIENT_SECRET?.trim() || ''
   }
 
   async applyConfiguredApiKeys() {
@@ -142,13 +397,21 @@ export class PiAgentSettingsStore {
     return providers
   }
 
-  private getAvailableModelsByProvider() {
+  private getAvailableModelsByProvider(authMode: AgentAuthMode) {
     return Object.fromEntries(
       this.getAvailableProviders().map((provider) => [
         provider,
-        getModels(provider).map((model) => ({ id: model.id })),
+        this.getAvailableModelsForProvider(authMode, provider),
       ]),
     )
+  }
+
+  private getAvailableModelsForProvider(authMode: AgentAuthMode, provider: string) {
+    if (authMode === 'brokered_oauth' && provider === 'openai') {
+      return CODEX_OPENAI_MODELS.map((id) => ({ id }))
+    }
+
+    return getModels(provider as KnownProvider).map((model) => ({ id: model.id }))
   }
 
   private normalizeProvider(provider: string | undefined) {
@@ -169,11 +432,19 @@ export class PiAgentSettingsStore {
     return DEFAULT_AUTH_MODE
   }
 
-  private normalizeModelId(provider: string, modelId: string | undefined) {
-    const models = getModels(provider as KnownProvider)
+  private normalizeModelId(
+    authMode: AgentAuthMode,
+    provider: string,
+    modelId: string | undefined,
+  ) {
+    const models = this.getAvailableModelsForProvider(authMode, provider)
 
     if (modelId && models.some((model) => model.id === modelId)) {
       return modelId
+    }
+
+    if (authMode === 'brokered_oauth' && provider === 'openai') {
+      return models[0]?.id ?? DEFAULT_CODEX_MODEL_ID
     }
 
     return models[0]?.id ?? DEFAULT_MODEL_ID

@@ -8,13 +8,14 @@ export type AgentRunState =
 
 export type AgentAuthMode = 'api_key' | 'brokered_oauth'
 
-export type AgentTransportMode = 'provider' | 'app'
+export type AgentTransportMode = 'provider' | 'app' | 'codex_cli'
 
 export type AgentBrokerAuthState = 'unconfigured' | 'signed_out' | 'pending' | 'authenticated'
 
 export interface AgentBrokerSessionSummary {
   accountLabel?: string
   backendUrl?: string
+  hasAppSessionToken?: boolean
   state: AgentBrokerAuthState
 }
 
@@ -75,6 +76,13 @@ export interface AgentSettingsState {
   provider: string
   modelId: string
   hasApiKey: boolean
+  appServerUrl?: string
+  hasAppServerUrl: boolean
+  canEditAppServerUrl: boolean
+  openAiOAuthClientId?: string
+  hasOpenAiOAuthClientId: boolean
+  hasOpenAiOAuthClientSecret: boolean
+  canEditOpenAiOAuthConfig: boolean
   storageKind: AgentSecretStorageKind
   availableProviders: string[]
   availableModelsByProvider: Record<string, AgentModelOption[]>
@@ -82,10 +90,17 @@ export interface AgentSettingsState {
 
 export interface AgentSettingsInput {
   authMode?: AgentAuthMode
+  brokerBackendUrl?: string
   provider: string
   modelId: string
   apiKey?: string
   clearApiKey?: boolean
+  appServerUrl?: string
+  clearAppServerUrl?: boolean
+  openAiOAuthClientId?: string
+  openAiOAuthClientSecret?: string
+  clearOpenAiOAuthClientId?: boolean
+  clearOpenAiOAuthClientSecret?: boolean
 }
 
 export type AgentEvent =

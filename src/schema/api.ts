@@ -3,6 +3,7 @@ import type { LayoutDraft } from './planner'
 import type { GraphEdge, ProjectSnapshot } from './snapshot'
 import type { LayoutSpec } from './layout'
 import type {
+  AgentBrokerSessionSummary,
   AgentMessage,
   AgentSessionSummary,
   AgentSettingsInput,
@@ -68,3 +69,28 @@ export interface AgentSettingsResponse {
 }
 
 export type AgentSettingsUpdateRequest = AgentSettingsInput
+
+export interface AgentBrokerSessionResponse {
+  brokerSession: AgentBrokerSessionSummary
+}
+
+export interface AgentBrokerCompleteRequest {
+  callbackUrl: string
+}
+
+export interface AgentBrokerLoginStartResponse {
+  brokerSession: AgentBrokerSessionSummary
+  implemented: boolean
+  loginUrl: string | null
+  message?: string
+}
+
+export interface AgentCodexImportResponse {
+  brokerSession: AgentBrokerSessionSummary
+  message: string
+}
+
+export interface AgentBrokerCallbackResult {
+  message: string
+  ok: boolean
+}

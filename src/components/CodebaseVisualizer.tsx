@@ -150,6 +150,7 @@ export function CodebaseVisualizer({
   const [draftActionError, setDraftActionError] = useState<string | null>(null)
   const [canvasWidthRatio, setCanvasWidthRatio] = useState(DEFAULT_CANVAS_WIDTH_RATIO)
   const [activeResizePointerId, setActiveResizePointerId] = useState<number | null>(null)
+  const [inspectorOpen, setInspectorOpen] = useState(false)
   const [workspaceActionPending, setWorkspaceActionPending] = useState(false)
   const [workspaceActionError, setWorkspaceActionError] = useState<string | null>(null)
   const [desktopHostAvailable, setDesktopHostAvailable] = useState(false)
@@ -380,6 +381,12 @@ export function CodebaseVisualizer({
   const inspectorWidthRatio = 1 - canvasWidthRatio
 
   useEffect(() => {
+    if (selectedNodeId || selectedEdgeId) {
+      setInspectorOpen(true)
+    }
+  }, [selectedEdgeId, selectedNodeId])
+
+  useEffect(() => {
     if (activeResizePointerId == null) {
       return
     }
@@ -438,6 +445,10 @@ export function CodebaseVisualizer({
   }, [activeResizePointerId])
 
   function handleResizePointerDown(event: ReactPointerEvent<HTMLButtonElement>) {
+    if (!inspectorOpen) {
+      return
+    }
+
     setActiveResizePointerId(event.pointerId)
     event.currentTarget.setPointerCapture(event.pointerId)
     event.preventDefault()
@@ -525,18 +536,6 @@ export function CodebaseVisualizer({
             {workspaceActionError ? (
               <p className="cbv-workspace-error">{workspaceActionError}</p>
             ) : null}
-          </div>
-
-          <div className="cbv-toolbar-meta">
-            <span>
-              {viewMode === 'symbols'
-                ? `${countSymbolNodes(effectiveSnapshot)} symbols`
-                : `${effectiveSnapshot.totalFiles} files`}
-            </span>
-            {viewMode === 'filesystem' ? (
-              <span>{countEdgesOfKind(effectiveSnapshot, 'imports')} imports</span>
-            ) : null}
-            <span>{countEdgesOfKind(effectiveSnapshot, 'calls')} calls</span>
           </div>
 
 	          <div className="cbv-layout-controls">
@@ -691,7 +690,7 @@ export function CodebaseVisualizer({
 	        </header>
 
 	        <div
-            className="cbv-workspace"
+            className={`cbv-workspace${inspectorOpen ? '' : ' is-inspector-closed'}`}
             ref={workspaceRef}
             style={{
               '--cbv-canvas-width': `${(canvasWidthRatio * 100).toFixed(2)}%`,
@@ -714,6 +713,7 @@ export function CodebaseVisualizer({
               onlyRenderVisibleElements
               onEdgeClick={(_, edge) => {
                 selectEdge(edge.id)
+                setInspectorOpen(true)
               }}
               onEdgesChange={onEdgesChange}
               onMoveEnd={(_, flowViewport) => {
@@ -725,6 +725,7 @@ export function CodebaseVisualizer({
                 }
 
                 selectNode(node.id)
+                setInspectorOpen(true)
               }}
               onNodeDoubleClick={(_, node) => {
                 const cluster = symbolClusterState.clusterByNodeId[node.id]
@@ -746,9 +747,6 @@ export function CodebaseVisualizer({
                 )
               }}
               onNodesChange={onNodesChange}
-              onPaneClick={() => {
-                selectNode(null)
-              }}
             >
               <Background
                 color="#d8d1c3"
@@ -768,19 +766,32 @@ export function CodebaseVisualizer({
             </ReactFlow>
           </section>
 
-          <button
-            aria-label="Resize canvas and inspector"
-            className="cbv-workspace-resize-handle"
-            onPointerDown={handleResizePointerDown}
-            type="button"
-          >
-            <span />
-          </button>
+          {inspectorOpen ? (
+            <button
+              aria-label="Resize canvas and inspector"
+              className="cbv-workspace-resize-handle"
+              onPointerDown={handleResizePointerDown}
+              type="button"
+            >
+              <span />
+            </button>
+          ) : null}
 
+          {inspectorOpen ? (
           <aside className="cbv-inspector">
             <div className="cbv-panel-header">
-              <p className="cbv-eyebrow">Inspector</p>
-              <strong>{selectedNode?.path ?? selectedFile?.path ?? 'Nothing selected'}</strong>
+              <div>
+                <p className="cbv-eyebrow">Inspector</p>
+                <strong>{selectedNode?.path ?? selectedFile?.path ?? 'Nothing selected'}</strong>
+              </div>
+              <button
+                aria-label="Close inspector"
+                className="cbv-inspector-close"
+                onClick={() => setInspectorOpen(false)}
+                type="button"
+              >
+                ×
+              </button>
             </div>
 
             {activeDraft ? (
@@ -852,6 +863,7 @@ export function CodebaseVisualizer({
               </div>
             )}
           </aside>
+          ) : null}
         </div>
       </section>
     </ReactFlowProvider>
@@ -1894,17 +1906,6 @@ function buildGraphSummary(
       .map((nodeId) => snapshot.nodes[nodeId])
       .filter((node): node is ProjectNode => Boolean(node)),
   }
-}
-
-function countEdgesOfKind(
-  snapshot: CodebaseSnapshot,
-  kind: GraphEdgeKind,
-) {
-  return snapshot.edges.filter((edge) => edge.kind === kind).length
-}
-
-function countSymbolNodes(snapshot: CodebaseSnapshot) {
-  return Object.values(snapshot.nodes).filter(isSymbolNode).length
 }
 
 function countVisibleLayoutNodes(

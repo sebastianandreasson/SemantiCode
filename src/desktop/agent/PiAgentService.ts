@@ -12,6 +12,7 @@ import {
 
 import type {
   AgentAuthMode,
+  AgentBrokerSessionSummary,
   AgentEvent,
   AgentMessage,
   AgentSessionSummary,
@@ -19,7 +20,14 @@ import type {
   AgentSettingsState,
   AgentToolInvocation,
 } from '../../schema/agent'
+import type {
+  AgentCodexImportResponse,
+  AgentBrokerCallbackResult,
+  AgentBrokerLoginStartResponse,
+} from '../../schema/api'
 import { PiAgentSettingsStore } from './PiAgentSettingsStore'
+import { CodexCliTransport, createCodexCliModel } from '../agent-runtime/CodexCliTransport'
+import { OpenAICodexProvider } from '../providers/openai-codex/provider'
 
 const DEFAULT_PI_PROVIDER = 'openai'
 const DEFAULT_PI_MODEL_ID = 'gpt-4.1-mini'
@@ -28,6 +36,7 @@ const PI_PROVIDER_ENV_NAME = 'CODEBASE_VISUALIZER_PI_PROVIDER'
 const PI_MODEL_ENV_NAME = 'CODEBASE_VISUALIZER_PI_MODEL'
 
 interface PiAgentSessionRecord {
+  kind: 'pi'
   agent: Agent
   activeAssistantMessageId: string | null
   messages: AgentMessage[]
@@ -37,20 +46,34 @@ interface PiAgentSessionRecord {
   workspaceRootDir: string
 }
 
+type AgentSessionRecord = PiAgentSessionRecord
+
 export interface PiAgentServiceOptions {
   logger?: Pick<Console, 'error' | 'info' | 'warn'>
+  openExternal?: (url: string) => Promise<void> | void
 }
 
 export class PiAgentService {
   private readonly logger: Pick<Console, 'error' | 'info' | 'warn'>
+  private readonly openExternal?: (url: string) => Promise<void> | void
   private readonly listeners = new Set<(event: AgentEvent) => void>()
-  private readonly sessionsByWorkspaceRootDir = new Map<string, PiAgentSessionRecord>()
+  private readonly sessionsByWorkspaceRootDir = new Map<string, AgentSessionRecord>()
+  private readonly openAICodexProvider: OpenAICodexProvider
   private readonly settingsStore: PiAgentSettingsStore
 
   constructor(options: PiAgentServiceOptions = {}) {
     this.logger = options.logger ?? console
+    this.openExternal = options.openExternal
     this.settingsStore = new PiAgentSettingsStore({
       logger: this.logger,
+    })
+    this.openAICodexProvider = new OpenAICodexProvider({
+      getClientConfig: () => this.settingsStore.getOpenAIOAuthClientConfig(),
+      logger: this.logger,
+      onAuthStateChanged: async () => {
+        await this.disposeAllSessions()
+      },
+      openExternal: this.openExternal,
     })
   }
 
@@ -73,21 +96,24 @@ export class PiAgentService {
     }
 
     await this.settingsStore.applyConfiguredApiKeys()
-    const settings = await this.settingsStore.getSettings()
+    const settings = await this.getSettings()
     const provider = resolveProvider(settings)
-    const model = resolveModel(provider, settings.modelId)
     const hasProviderApiKey =
       settings.authMode === 'api_key' ? Boolean(getApiKey(provider)) : false
     const bootPrompt = process.env[BOOT_PROMPT_ENV_NAME]?.trim() ?? ''
     const sessionTransport = resolveTransportMode(settings.authMode)
     const disabledReason = resolveDisabledReason(settings.authMode, provider, settings)
+    const resolvedModelId =
+      settings.authMode === 'brokered_oauth'
+        ? settings.modelId
+        : resolveModel(provider, settings.modelId).id
     const summary: AgentSessionSummary = {
       authMode: settings.authMode,
       brokerSession: settings.brokerSession,
       id: `pi-session:${randomUUID()}`,
       workspaceRootDir,
       provider,
-      modelId: model.id,
+      modelId: resolvedModelId,
       transport: sessionTransport,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -96,6 +122,19 @@ export class PiAgentService {
       hasProviderApiKey,
       lastError: disabledReason,
     }
+    const transport = disabledReason
+      ? createDisabledTransport()
+      : settings.authMode === 'brokered_oauth'
+        ? new CodexCliTransport({
+            authProvider: this.openAICodexProvider,
+            logger: this.logger,
+            workspaceRootDir,
+          })
+        : this.createTransport(provider)
+    const model =
+      settings.authMode === 'brokered_oauth'
+        ? createCodexCliModel(settings.modelId)
+        : resolveModel(provider, settings.modelId)
     const agent = new Agent({
       initialState: {
         model,
@@ -103,13 +142,14 @@ export class PiAgentService {
         thinkingLevel: 'medium',
         tools: [],
       },
-      transport: new ProviderTransport(),
+      transport,
     })
 
     const unsubscribe = agent.subscribe((event) => {
       this.handleAgentEvent(summary.id, workspaceRootDir, event)
     })
     const record: PiAgentSessionRecord = {
+      kind: 'pi',
       agent,
       activeAssistantMessageId: null,
       messages: [],
@@ -126,7 +166,7 @@ export class PiAgentService {
     })
 
     this.logger.info(
-      `[codebase-visualizer][pi] Created workspace session ${summary.id} for ${workspaceRootDir} using ${summary.provider}/${summary.modelId}.`,
+      `[codebase-visualizer][pi] Created ${summary.transport === 'codex_cli' ? 'Codex CLI' : 'provider'} workspace session ${summary.id} for ${workspaceRootDir} using ${summary.provider}/${summary.modelId}.`,
     )
 
     if (disabledReason) {
@@ -153,6 +193,7 @@ export class PiAgentService {
     record.agent.abort()
     await record.agent.waitForIdle().catch(() => undefined)
     record.unsubscribe()
+
     this.sessionsByWorkspaceRootDir.delete(workspaceRootDir)
     this.logger.info(
       `[codebase-visualizer][pi] Disposed workspace session ${record.summary.id} for ${workspaceRootDir}.`,
@@ -174,23 +215,70 @@ export class PiAgentService {
   }
 
   async getSettings() {
-    return this.settingsStore.getSettings()
+    const settings = await this.settingsStore.getSettings()
+
+    return {
+      ...settings,
+      brokerSession: await this.openAICodexProvider.getAuthState(),
+    }
   }
 
   async saveSettings(settings: AgentSettingsInput) {
     const nextSettings = await this.settingsStore.saveSettings(settings)
     await this.disposeAllSessions()
-    return nextSettings
+    return {
+      ...nextSettings,
+      brokerSession: await this.openAICodexProvider.getAuthState(),
+    }
+  }
+
+  async getBrokerSession() {
+    return this.openAICodexProvider.getAuthState()
+  }
+
+  async beginBrokeredLogin(): Promise<AgentBrokerLoginStartResponse> {
+    return this.openAICodexProvider.startLogin()
+  }
+
+  async logoutBrokeredAuthSession(): Promise<AgentBrokerSessionSummary> {
+    return this.openAICodexProvider.logout()
+  }
+
+  async importCodexAuthSession(): Promise<AgentCodexImportResponse> {
+    return this.openAICodexProvider.importCodexAuthSession()
+  }
+
+  async completeBrokeredLoginCallback(
+    callbackUrl: string,
+  ): Promise<AgentBrokerCallbackResult> {
+    return this.openAICodexProvider.handleCallback(callbackUrl)
+  }
+
+  async completeManualBrokeredLogin(
+    callbackUrl: string,
+  ): Promise<AgentBrokerCallbackResult> {
+    return this.openAICodexProvider.completeManualRedirect(callbackUrl)
   }
 
   async promptWorkspaceSession(workspaceRootDir: string, message: string) {
-    const record = this.sessionsByWorkspaceRootDir.get(workspaceRootDir)
+    this.logger.info(
+      `[codebase-visualizer][agent] promptWorkspaceSession called for ${workspaceRootDir}.`,
+    )
+    let record = this.sessionsByWorkspaceRootDir.get(workspaceRootDir)
+
+    if (!record) {
+      this.logger.info(
+        `[codebase-visualizer][agent] No existing session for ${workspaceRootDir}; creating one lazily.`,
+      )
+      await this.ensureWorkspaceSession(workspaceRootDir)
+      record = this.sessionsByWorkspaceRootDir.get(workspaceRootDir)
+    }
 
     if (!record) {
       throw new Error('No workspace agent session exists for the active repository.')
     }
 
-    if (!record.summary.hasProviderApiKey) {
+    if (record.summary.runState === 'disabled') {
       throw new Error(
         record.summary.lastError ??
           `No API key found for provider "${record.summary.provider}".`,
@@ -213,7 +301,34 @@ export class PiAgentService {
       message: normalizedMessage,
     })
 
-    await record.agent.prompt(message)
+    record.summary = updateSessionSummary(record.summary, {
+      lastError: undefined,
+      runState: 'running',
+    })
+    this.emit({
+      type: 'session_updated',
+      session: record.summary,
+    })
+
+    try {
+      this.logger.info(
+        `[codebase-visualizer][agent] Prompting ${record.summary.transport === 'codex_cli' ? 'Codex CLI' : 'PI'} session ${record.summary.id} with model ${record.summary.modelId}.`,
+      )
+      await record.agent.prompt(message)
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Unknown embedded agent runtime failure.'
+
+      record.summary = updateSessionSummary(record.summary, {
+        lastError: message,
+        runState: 'error',
+      })
+      this.emit({
+        type: 'session_updated',
+        session: record.summary,
+      })
+      throw error
+    }
   }
 
   async cancelWorkspaceSession(workspaceRootDir: string) {
@@ -225,6 +340,12 @@ export class PiAgentService {
 
     record.agent.abort()
     return true
+  }
+
+  private createTransport(provider: KnownProvider) {
+    return new ProviderTransport({
+      getApiKey: () => getApiKey(provider),
+    })
   }
 
   private async runBootPrompt(record: PiAgentSessionRecord, prompt: string) {
@@ -264,7 +385,7 @@ export class PiAgentService {
   ) {
     const record = this.sessionsByWorkspaceRootDir.get(workspaceRootDir)
 
-    if (!record) {
+    if (!record || record.kind !== 'pi') {
       return
     }
 
@@ -324,7 +445,7 @@ export class PiAgentService {
       case 'turn_end':
       case 'agent_end':
         this.updateRecordSummary(record, {
-          runState: record.summary.hasProviderApiKey ? 'ready' : 'disabled',
+          runState: resolveSessionReadyState(record.summary),
           lastError:
             event.type === 'turn_end' &&
             event.message.role === 'assistant' &&
@@ -437,8 +558,22 @@ function resolveProvider(settings?: AgentSettingsState): KnownProvider {
   return envProvider as KnownProvider
 }
 
+function createDisabledTransport() {
+  return new ProviderTransport({
+    getApiKey: () => undefined,
+  })
+}
+
 function resolveTransportMode(authMode: AgentAuthMode): AgentSessionSummary['transport'] {
-  return authMode === 'brokered_oauth' ? 'app' : 'provider'
+  return authMode === 'brokered_oauth' ? 'codex_cli' : 'provider'
+}
+
+function resolveSessionReadyState(summary: AgentSessionSummary): AgentSessionSummary['runState'] {
+  if (summary.authMode === 'brokered_oauth') {
+    return summary.brokerSession?.state === 'authenticated' ? 'ready' : 'disabled'
+  }
+
+  return summary.hasProviderApiKey ? 'ready' : 'disabled'
 }
 
 function resolveDisabledReason(
@@ -447,15 +582,19 @@ function resolveDisabledReason(
   settings: AgentSettingsState,
 ) {
   if (authMode === 'brokered_oauth') {
-    if (settings.brokerSession.state === 'unconfigured') {
-      return 'Brokered OAuth is selected, but no broker backend is configured yet.'
+    if (provider !== 'openai') {
+      return 'OpenAI Codex auth currently only supports the openai provider.'
     }
 
     if (settings.brokerSession.state === 'signed_out') {
-      return 'Brokered OAuth is selected, but you are not signed in yet.'
+      return 'OpenAI Codex auth is selected, but you are not signed in yet.'
     }
 
-    return 'Brokered OAuth support is not implemented yet.'
+    if (settings.brokerSession.state === 'authenticated') {
+      return undefined
+    }
+
+    return 'OpenAI Codex sign-in is in progress.'
   }
 
   if (!getApiKey(provider)) {
