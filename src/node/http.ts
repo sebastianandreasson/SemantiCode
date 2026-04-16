@@ -12,6 +12,7 @@ import {
   listSavedLayouts,
   rejectLayoutDraft,
 } from '../planner'
+import { analyzeWorkspaceArtifactSync } from '../preprocessing/workspaceSync'
 import type {
   AgentBrokerCompleteRequest,
   AgentCodexImportResponse,
@@ -24,6 +25,7 @@ import type {
   PreprocessingSummaryRequest,
   PreprocessingSummaryResponse,
   PreprocessingContextUpdateRequest,
+  WorkspaceSyncStatusResponse,
   AgentSettingsResponse,
   AgentSettingsUpdateRequest,
   AgentStateResponse,
@@ -32,6 +34,7 @@ import type {
   ReadProjectSnapshotOptions,
 } from '../types'
 import { readProjectSnapshot } from './readProjectSnapshot'
+import { getGitWorkspaceStatus } from './gitWorkspaceSync'
 import {
   SEMANTICODE_AGENT_AUTH_COMPLETE_ROUTE,
   SEMANTICODE_AGENT_AUTH_CALLBACK_ROUTE,
@@ -49,6 +52,7 @@ import {
   SEMANTICODE_PREPROCESSING_ROUTE,
   SEMANTICODE_PREPROCESSING_SUMMARY_ROUTE,
   SEMANTICODE_ROUTE,
+  SEMANTICODE_SYNC_ROUTE,
 } from '../shared/constants'
 
 export interface AgentRuntimeRequestBridge {
@@ -143,6 +147,32 @@ export async function handleSemanticodeRequest(
         sendJson(response, 200, result)
         return true
       }
+    }
+
+    if (pathname === SEMANTICODE_SYNC_ROUTE && method === 'GET') {
+      const [snapshot, layouts, draftLayouts, context, git] = await Promise.all([
+        readProjectSnapshot({
+          ...options,
+          rootDir: options.rootDir,
+        }),
+        listSavedLayouts(options.rootDir),
+        listLayoutDrafts(options.rootDir),
+        readPersistedPreprocessedWorkspaceContext(options.rootDir),
+        getGitWorkspaceStatus(options.rootDir),
+      ])
+
+      const result: WorkspaceSyncStatusResponse = {
+        sync: analyzeWorkspaceArtifactSync({
+          snapshot,
+          preprocessedWorkspaceContext: context,
+          layouts,
+          draftLayouts,
+          git,
+        }),
+      }
+
+      sendJson(response, 200, result)
+      return true
     }
 
     if (pathname === SEMANTICODE_PREPROCESSING_SUMMARY_ROUTE && method === 'POST') {

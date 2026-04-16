@@ -5,6 +5,7 @@ import type {
 } from '../semantic/types'
 
 export type PreprocessingRunState = 'idle' | 'building' | 'ready' | 'stale' | 'error'
+export type ArtifactSyncState = 'in_sync' | 'outdated' | 'missing'
 
 export interface PreprocessingProgress {
   processedSymbols: number
@@ -32,6 +33,46 @@ export interface PreprocessedWorkspaceContext {
   semanticEmbeddings: SemanticEmbeddingVectorRecord[]
   workspaceProfile: WorkspaceProfile
   purposeSummaries: SemanticPurposeSummaryRecord[]
+}
+
+export interface GitWorkspaceStatus {
+  isGitRepo: boolean
+  branch: string | null
+  head: string | null
+  changedFiles: string[]
+  stagedFiles: string[]
+  unstagedFiles: string[]
+  untrackedFiles: string[]
+}
+
+export interface SymbolArtifactSyncStatus {
+  state: ArtifactSyncState
+  totalTracked: number
+  staleCount: number
+  obsoleteCount: number
+  staleSymbolIds: string[]
+  obsoleteSymbolIds: string[]
+  affectedPaths: string[]
+}
+
+export interface LayoutArtifactSyncStatus {
+  id: string
+  title: string
+  sourceType: 'layout' | 'draft'
+  state: ArtifactSyncState
+  staleCount: number
+  missingCount: number
+  affectedNodeIds: string[]
+  missingNodeIds: string[]
+  affectedPaths: string[]
+}
+
+export interface WorkspaceArtifactSyncStatus {
+  git: GitWorkspaceStatus
+  summaries: SymbolArtifactSyncStatus
+  embeddings: SymbolArtifactSyncStatus
+  layouts: LayoutArtifactSyncStatus[]
+  drafts: LayoutArtifactSyncStatus[]
 }
 
 export interface PreprocessingStatus {

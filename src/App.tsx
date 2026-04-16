@@ -26,6 +26,8 @@ import type {
   PreprocessingContextResponse,
   PreprocessingSummaryResponse,
   PreprocessingStatus,
+  WorkspaceArtifactSyncStatus,
+  WorkspaceSyncStatusResponse,
 } from './types'
 import { useVisualizerStore, visualizerStore } from './store/visualizerStore'
 import {
@@ -37,6 +39,7 @@ import {
   SEMANTICODE_PREPROCESSING_ROUTE,
   SEMANTICODE_PREPROCESSING_SUMMARY_ROUTE,
   SEMANTICODE_ROUTE,
+  SEMANTICODE_SYNC_ROUTE,
 } from './shared/constants'
 
 const SEMANTIC_EMBEDDING_MODEL_ID = 'nomic-ai/nomic-embed-text-v1.5'
@@ -47,6 +50,8 @@ export default function App() {
   const [layoutSuggestionError, setLayoutSuggestionError] = useState<string | null>(null)
   const [preprocessedWorkspaceContext, setPreprocessedWorkspaceContext] =
     useState<PreprocessedWorkspaceContext | null>(null)
+  const [workspaceSyncStatus, setWorkspaceSyncStatus] =
+    useState<WorkspaceArtifactSyncStatus | null>(null)
   const [preprocessingStatus, setPreprocessingStatus] = useState<PreprocessingStatus>({
     activity: null,
     runState: 'idle',
@@ -102,9 +107,10 @@ export default function App() {
       setStatus('loading')
 
       try {
-        const [{ layoutState, snapshot }, persistedContext] = await Promise.all([
+        const [{ layoutState, snapshot }, persistedContext, workspaceSyncStatus] = await Promise.all([
           fetchWorkspaceState(),
           fetchPersistedPreprocessedWorkspaceContext(),
+          fetchWorkspaceSyncStatus(),
         ])
 
         if (isCancelled) {
@@ -132,6 +138,7 @@ export default function App() {
           setActiveLayoutId(layoutState.activeLayoutId)
           setActiveDraftId(layoutState.activeDraftId)
           setPreprocessedWorkspaceContext(persistedContext)
+          setWorkspaceSyncStatus(workspaceSyncStatus)
           setPreprocessingStatus(
             persistedContext
               ? {
@@ -196,12 +203,16 @@ export default function App() {
   ])
 
   async function refreshWorkspaceState() {
-    const { layoutState, snapshot } = await fetchWorkspaceState()
+    const [{ layoutState, snapshot }, workspaceSyncStatus] = await Promise.all([
+      fetchWorkspaceState(),
+      fetchWorkspaceSyncStatus(),
+    ])
 
     startTransition(() => {
       setSnapshot(snapshot)
       setLayouts(layoutState.layouts)
       setDraftLayouts(layoutState.draftLayouts)
+      setWorkspaceSyncStatus(workspaceSyncStatus)
       setErrorMessage(null)
     })
 
@@ -481,6 +492,7 @@ export default function App() {
       })
 
       await persistPreprocessedWorkspaceContext(context)
+      setWorkspaceSyncStatus(await fetchWorkspaceSyncStatus())
     } catch (error) {
       if (preprocessingRunIdRef.current !== runId) {
         return
@@ -593,6 +605,7 @@ export default function App() {
         processedSymbols: nextEmbeddings.length,
       }))
       await persistPreprocessedWorkspaceContext(context)
+      setWorkspaceSyncStatus(await fetchWorkspaceSyncStatus())
     } catch (error) {
       setPreprocessingStatus((current) => ({
         ...current,
@@ -609,7 +622,10 @@ export default function App() {
   }
 
   async function refreshLayoutState() {
-    const response = await fetch(SEMANTICODE_LAYOUTS_ROUTE)
+    const [response, workspaceSyncStatus] = await Promise.all([
+      fetch(SEMANTICODE_LAYOUTS_ROUTE),
+      fetchWorkspaceSyncStatus(),
+    ])
 
     if (!response.ok) {
       throw new Error(await getResponseErrorMessage(
@@ -623,6 +639,7 @@ export default function App() {
     startTransition(() => {
       setLayouts(layoutState.layouts)
       setDraftLayouts(layoutState.draftLayouts)
+      setWorkspaceSyncStatus(workspaceSyncStatus)
     })
 
     return layoutState
@@ -831,6 +848,7 @@ export default function App() {
           onStartPreprocessing={handleStartPreprocessing}
           preprocessedWorkspaceContext={preprocessedWorkspaceContext}
           preprocessingStatus={preprocessingStatus}
+          workspaceSyncStatus={workspaceSyncStatus}
           workspaceProfile={preprocessedWorkspaceContext?.workspaceProfile ?? null}
         />
       )}
@@ -916,6 +934,20 @@ async function fetchPersistedPreprocessedWorkspaceContext() {
 
   const payload = (await response.json()) as PreprocessingContextResponse
   return payload.context
+}
+
+async function fetchWorkspaceSyncStatus() {
+  const response = await fetch(SEMANTICODE_SYNC_ROUTE)
+
+  if (!response.ok) {
+    throw new Error(await getResponseErrorMessage(
+      response,
+      `Workspace sync request failed with status ${response.status}.`,
+    ))
+  }
+
+  const payload = (await response.json()) as WorkspaceSyncStatusResponse
+  return payload.sync
 }
 
 async function persistPreprocessedWorkspaceContext(

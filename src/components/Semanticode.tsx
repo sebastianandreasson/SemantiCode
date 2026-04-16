@@ -41,6 +41,7 @@ import {
   type SymbolNode,
   type VisualizerViewMode,
   type WorkspaceProfile,
+  type WorkspaceArtifactSyncStatus,
 } from '../types'
 import { useVisualizerStore } from '../store/visualizerStore'
 import { buildStructuralLayout } from '../layouts/structuralLayout'
@@ -69,6 +70,7 @@ interface SemanticodeProps {
   layoutSuggestionError?: string | null
   preprocessedWorkspaceContext?: PreprocessedWorkspaceContext | null
   preprocessingStatus?: PreprocessingStatus | null
+  workspaceSyncStatus?: WorkspaceArtifactSyncStatus | null
   workspaceProfile?: WorkspaceProfile | null
 }
 
@@ -185,6 +187,7 @@ export function Semanticode({
   layoutSuggestionError = null,
   preprocessedWorkspaceContext = null,
   preprocessingStatus = null,
+  workspaceSyncStatus = null,
   workspaceProfile = null,
 }: SemanticodeProps) {
   const [agentSettingsOpen, setAgentSettingsOpen] = useState(false)
@@ -373,6 +376,26 @@ export function Semanticode({
     layouts.find((layout) => layout.id === activeLayoutId) ??
     layouts[0] ??
     null
+  const layoutSyncById = useMemo(
+    () =>
+      new Map(
+        workspaceSyncStatus?.layouts.map((entry) => [entry.id, entry]) ?? [],
+      ),
+    [workspaceSyncStatus],
+  )
+  const draftSyncById = useMemo(
+    () =>
+      new Map(
+        workspaceSyncStatus?.drafts.map((entry) => [entry.id, entry]) ?? [],
+      ),
+    [workspaceSyncStatus],
+  )
+  const activeLayoutSync =
+    activeDraft
+      ? draftSyncById.get(activeDraft.id) ?? null
+      : activeLayout
+        ? layoutSyncById.get(activeLayout.id) ?? null
+        : null
   const resolvedScene = useMemo(
     () =>
       resolveCanvasScene({
@@ -544,6 +567,12 @@ export function Semanticode({
     edges,
     effectiveSnapshot,
   )
+  const inspectorHeader = getInspectorHeaderSummary({
+    selectedFile,
+    selectedFiles,
+    selectedNode,
+    selectedSymbols,
+  })
   const workspaceName = effectiveSnapshot
     ? getWorkspaceName(effectiveSnapshot.rootDir)
     : 'Workspace'
@@ -915,51 +944,20 @@ export function Semanticode({
                     {preprocessingStatus.lastError}
                   </p>
                 ) : null}
+                {workspaceSyncStatus ? (
+                  <p
+                    className={`cbv-sync-summary${hasWorkspaceSyncUpdates(workspaceSyncStatus) ? ' is-outdated' : ''}`}
+                    title={formatWorkspaceSyncTitle(workspaceSyncStatus)}
+                  >
+                    {formatWorkspaceSyncLabel(workspaceSyncStatus)}
+                  </p>
+                ) : null}
               </div>
             ) : null}
           </div>
 
 	          <div className="cbv-toolbar-center">
               <div className="cbv-layout-controls">
-            <div className="cbv-mode-switch">
-              <button
-                className={viewMode === 'filesystem' ? 'is-active' : ''}
-                onClick={() =>
-                  activateViewMode(
-                    'filesystem',
-                    availableDraftLayouts,
-                    layouts,
-                    setViewMode,
-                    setActiveDraftId,
-                    setActiveLayoutId,
-                    setBaseScene,
-                    clearCompareOverlay,
-                  )
-                }
-                type="button"
-              >
-                Filesystem
-              </button>
-              <button
-                className={viewMode === 'symbols' ? 'is-active' : ''}
-                onClick={() =>
-                  activateViewMode(
-                    'symbols',
-                    availableDraftLayouts,
-                    layouts,
-                    setViewMode,
-                    setActiveDraftId,
-                    setActiveLayoutId,
-                    setBaseScene,
-                    clearCompareOverlay,
-                  )
-                }
-                type="button"
-              >
-                Symbols
-              </button>
-            </div>
-
             <label className="cbv-layout-picker">
               <span className="cbv-eyebrow">Layouts</span>
               <select
@@ -1009,16 +1007,27 @@ export function Semanticode({
               >
                 {layouts.map((layout) => (
                   <option key={layout.id} value={`layout:${layout.id}`}>
-                    {layout.title}
+                    {formatLayoutOptionLabel(layout.title, layoutSyncById.get(layout.id))}
                   </option>
                 ))}
                 {availableDraftLayouts.map((draft) => (
                   <option key={draft.id} value={`draft:${draft.id}`}>
-                    Draft: {draft.layout?.title ?? draft.id}
+                    {formatLayoutOptionLabel(
+                      `Draft: ${draft.layout?.title ?? draft.id}`,
+                      draftSyncById.get(draft.id),
+                    )}
                   </option>
                 ))}
               </select>
             </label>
+            {activeLayoutSync?.state === 'outdated' ? (
+              <p
+                className="cbv-layout-sync-note"
+                title={formatLayoutSyncTitle(activeLayoutSync)}
+              >
+                {formatLayoutSyncLabel(activeLayoutSync)}
+              </p>
+            ) : null}
               </div>
 	          </div>
 
@@ -1104,22 +1113,14 @@ export function Semanticode({
               </button>
             ) : null}
             <button
-              className="cbv-toolbar-button is-secondary"
+              aria-label="Agent Settings"
+              className="cbv-toolbar-icon-button"
               onClick={() => setAgentSettingsOpen(true)}
+              title="Agent Settings"
               type="button"
             >
-              Agent Settings
+              ⚙
             </button>
-	          <div className="cbv-layer-toggles">
-	            {visibleLayerToggles.map((layer) => (
-	              <LayerToggle
-	                active={graphLayers[layer]}
-	                key={layer}
-	                label={getLayerLabel(layer, viewMode)}
-	                onClick={() => toggleGraphLayer(layer)}
-	              />
-	            ))}
-	          </div>
             </div>
 	        </header>
 
@@ -1132,11 +1133,23 @@ export function Semanticode({
             } as CSSProperties}
           >
 	          <section className="cbv-canvas">
-	            {viewMode === 'symbols' ? (
-	              <div className="cbv-canvas-legend">
-	                <SymbolKindLegend />
-	              </div>
-	            ) : null}
+	            <div className="cbv-canvas-overlays">
+                <div className="cbv-canvas-layer-toggles">
+	              {visibleLayerToggles.map((layer) => (
+	                <LayerToggle
+	                  active={graphLayers[layer]}
+	                  key={layer}
+	                  label={getLayerLabel(layer, viewMode)}
+	                  onClick={() => toggleGraphLayer(layer)}
+	                />
+	              ))}
+                </div>
+	              {viewMode === 'symbols' ? (
+	                <div className="cbv-canvas-legend">
+	                  <SymbolKindLegend />
+	                </div>
+	              ) : null}
+              </div>
             <ReactFlow
               defaultViewport={viewport}
               edges={edges}
@@ -1259,14 +1272,12 @@ export function Semanticode({
           {inspectorOpen ? (
           <aside className="cbv-inspector">
             <div className="cbv-panel-header">
-              <div>
-                <p className="cbv-eyebrow">Inspector</p>
-                <strong>
-                  {selectedSymbols.length > 1
-                    ? `${selectedSymbols.length} symbols selected`
-                    : selectedFiles.length > 1
-                    ? `${selectedFiles.length} files selected`
-                    : selectedNode?.path ?? selectedFile?.path ?? 'Nothing selected'}
+              <div className="cbv-panel-header-copy">
+                <p className="cbv-eyebrow">
+                  {inspectorHeader.eyebrow ?? 'Inspector'}
+                </p>
+                <strong title={inspectorHeader.title}>
+                  {inspectorHeader.title}
                 </strong>
               </div>
               <button
@@ -1468,6 +1479,46 @@ function getWorkspaceName(rootDir: string) {
   return segments[segments.length - 1] || rootDir
 }
 
+function getInspectorHeaderSummary(input: {
+  selectedFile: CodebaseFile | null
+  selectedFiles: CodebaseFile[]
+  selectedNode: ProjectNode | null
+  selectedSymbols: SymbolNode[]
+}) {
+  if (input.selectedSymbols.length > 1) {
+    return {
+      eyebrow: 'Symbol selection',
+      title: `${input.selectedSymbols.length} symbols selected`,
+    }
+  }
+
+  if (input.selectedFiles.length > 1) {
+    return {
+      eyebrow: 'File selection',
+      title: `${input.selectedFiles.length} files selected`,
+    }
+  }
+
+  if (input.selectedNode) {
+    return {
+      eyebrow: input.selectedNode.path,
+      title: input.selectedNode.name,
+    }
+  }
+
+  if (input.selectedFile) {
+    return {
+      eyebrow: input.selectedFile.path,
+      title: input.selectedFile.name,
+    }
+  }
+
+  return {
+    eyebrow: 'Inspector',
+    title: 'Nothing selected',
+  }
+}
+
 function formatPreprocessingStatusLabel(status: PreprocessingStatus) {
   switch (status.runState) {
     case 'building':
@@ -1545,6 +1596,134 @@ function getPreprocessingProgressPercent(status: PreprocessingStatus) {
     0,
     Math.min(100, (status.processedSymbols / status.totalSymbols) * 100),
   )
+}
+
+function hasWorkspaceSyncUpdates(status: WorkspaceArtifactSyncStatus) {
+  return (
+    status.summaries.state !== 'in_sync' ||
+    status.embeddings.state !== 'in_sync' ||
+    status.layouts.some((entry) => entry.state === 'outdated') ||
+    status.drafts.some((entry) => entry.state === 'outdated')
+  )
+}
+
+function formatWorkspaceSyncLabel(status: WorkspaceArtifactSyncStatus) {
+  if (!status.git.isGitRepo) {
+    return 'Repo sync unavailable'
+  }
+
+  const parts: string[] = []
+
+  if (status.summaries.staleCount > 0 || status.summaries.obsoleteCount > 0) {
+    parts.push(`${status.summaries.staleCount + status.summaries.obsoleteCount} summaries`)
+  }
+
+  if (status.embeddings.staleCount > 0 || status.embeddings.obsoleteCount > 0) {
+    parts.push(`${status.embeddings.staleCount + status.embeddings.obsoleteCount} embeddings`)
+  }
+
+  const affectedLayoutCount = [
+    ...status.layouts,
+    ...status.drafts,
+  ].filter((entry) => entry.state === 'outdated').length
+
+  if (affectedLayoutCount > 0) {
+    parts.push(`${affectedLayoutCount} layouts`)
+  }
+
+  if (parts.length === 0) {
+    return status.git.changedFiles.length > 0
+      ? `Repo changed · ${status.git.changedFiles.length} files`
+      : 'Repo sync clean'
+  }
+
+  return `Needs update · ${parts.join(' · ')}`
+}
+
+function formatWorkspaceSyncTitle(status: WorkspaceArtifactSyncStatus) {
+  if (!status.git.isGitRepo) {
+    return 'The current workspace is not a git repository.'
+  }
+
+  const parts = [
+    status.git.branch
+      ? `Git ${status.git.branch} @ ${status.git.head?.slice(0, 7) ?? 'unknown'}`
+      : `Git ${status.git.head?.slice(0, 7) ?? 'unknown'}`,
+  ]
+
+  if (status.git.changedFiles.length > 0) {
+    parts.push(`Changed files: ${status.git.changedFiles.join(', ')}`)
+  }
+
+  if (status.summaries.affectedPaths.length > 0) {
+    parts.push(`Summary diff: ${status.summaries.affectedPaths.join(', ')}`)
+  }
+
+  if (status.embeddings.affectedPaths.length > 0) {
+    parts.push(`Embedding diff: ${status.embeddings.affectedPaths.join(', ')}`)
+  }
+
+  const outdatedLayouts = [...status.layouts, ...status.drafts].filter(
+    (entry) => entry.state === 'outdated',
+  )
+
+  if (outdatedLayouts.length > 0) {
+    parts.push(
+      `Layouts needing parity updates: ${outdatedLayouts
+        .map((entry) => `${entry.title} (${entry.affectedPaths.length || entry.missingCount})`)
+        .join(', ')}`,
+    )
+  }
+
+  return parts.join(' · ')
+}
+
+function formatLayoutOptionLabel(
+  baseLabel: string,
+  syncEntry:
+    | WorkspaceArtifactSyncStatus['layouts'][number]
+    | undefined,
+) {
+  if (!syncEntry || syncEntry.state !== 'outdated') {
+    return baseLabel
+  }
+
+  const issueCount = syncEntry.staleCount + syncEntry.missingCount
+  return `${baseLabel} · outdated (${issueCount})`
+}
+
+function formatLayoutSyncLabel(
+  syncEntry: WorkspaceArtifactSyncStatus['layouts'][number],
+) {
+  const parts = []
+
+  if (syncEntry.staleCount > 0) {
+    parts.push(`${syncEntry.staleCount} changed nodes`)
+  }
+
+  if (syncEntry.missingCount > 0) {
+    parts.push(`${syncEntry.missingCount} missing nodes`)
+  }
+
+  return parts.length > 0
+    ? `Layout parity diff · ${parts.join(' · ')}`
+    : 'Layout parity diff'
+}
+
+function formatLayoutSyncTitle(
+  syncEntry: WorkspaceArtifactSyncStatus['layouts'][number],
+) {
+  const parts = [formatLayoutSyncLabel(syncEntry)]
+
+  if (syncEntry.affectedPaths.length > 0) {
+    parts.push(`Changed files: ${syncEntry.affectedPaths.join(', ')}`)
+  }
+
+  if (syncEntry.missingNodeIds.length > 0) {
+    parts.push(`Missing nodes: ${syncEntry.missingNodeIds.join(', ')}`)
+  }
+
+  return parts.join(' · ')
 }
 
 function MultiFileInspector({
@@ -3280,41 +3459,6 @@ function layoutsDifferMeaningfully(
   }
 
   return generatedPlacementIds.some((nodeId) => !mergedPlacements[nodeId])
-}
-
-function activateViewMode(
-  nextViewMode: VisualizerViewMode,
-  draftLayouts: LayoutDraft[],
-  layouts: LayoutSpec[],
-  setViewMode: (viewMode: VisualizerViewMode) => void,
-  setActiveDraftId: (draftId: string | null) => void,
-  setActiveLayoutId: (layoutId: string | null) => void,
-  setBaseScene: (scene: { kind: 'active_layout' }) => void,
-  clearCompareOverlay: () => void,
-) {
-  setBaseScene({
-    kind: 'active_layout',
-  })
-  clearCompareOverlay()
-  setViewMode(nextViewMode)
-
-  const matchingDraft = draftLayouts.find(
-    (draft) =>
-      draft.layout &&
-      getPreferredViewModeForLayout(draft.layout) === nextViewMode,
-  )
-
-  if (matchingDraft) {
-    setActiveDraftId(matchingDraft.id)
-    return
-  }
-
-  const matchingLayout = layouts.find(
-    (layout) => getPreferredViewModeForLayout(layout) === nextViewMode,
-  )
-
-  setActiveDraftId(null)
-  setActiveLayoutId(matchingLayout?.id ?? null)
 }
 
 function getPreferredViewModeForLayout(layout: LayoutSpec) {

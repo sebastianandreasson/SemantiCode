@@ -92,6 +92,7 @@ export type {
   LayoutStateResponse,
   LayoutSummary,
   SnapshotResponse,
+  WorkspaceSyncStatusResponse,
 } from './schema/api'
 export type {
   LayoutDraft,
@@ -136,6 +137,11 @@ export type {
   PreprocessingRunState,
   PreprocessingStatus,
   PreprocessingResult,
+  ArtifactSyncState,
+  GitWorkspaceStatus,
+  LayoutArtifactSyncStatus,
+  SymbolArtifactSyncStatus,
+  WorkspaceArtifactSyncStatus,
   WorkspaceProfile,
 } from './preprocessing/types'
 export {
@@ -163,6 +169,7 @@ export {
   buildSemanticPurposeSummaryRecords,
 } from './semantic/purposeSummaries'
 export { preprocessWorkspaceSnapshot } from './preprocessing/preprocessingService'
+export { analyzeWorkspaceArtifactSync } from './preprocessing/workspaceSync'
 export {
   buildSemanticLayout,
   buildSemanticLayoutFromProjection,
