@@ -56,7 +56,7 @@ import {
   resolveLayoutCompareOverlay,
 } from '../visualizer/canvasScene'
 
-interface CodebaseVisualizerProps {
+interface SemanticodeProps {
   snapshot?: CodebaseSnapshot | null
   onAcceptDraft?: (draftId: string) => Promise<void>
   onAgentRunSettled?: () => Promise<void>
@@ -159,11 +159,20 @@ const SYMBOL_LEGEND_ITEMS = [
 
 interface DesktopBridge {
   closeWorkspace?: () => Promise<boolean>
+  getWorkspaceHistory?: () => Promise<{
+    activeWorkspaceRootDir: string | null
+    recentWorkspaces: {
+      name: string
+      rootDir: string
+      lastOpenedAt: string
+    }[]
+  }>
   isDesktop?: boolean
   openWorkspaceDialog?: () => Promise<boolean>
+  openWorkspaceRootDir?: (rootDir: string) => Promise<boolean>
 }
 
-export function CodebaseVisualizer({
+export function Semanticode({
   snapshot,
   onAcceptDraft,
   onAgentRunSettled,
@@ -177,14 +186,22 @@ export function CodebaseVisualizer({
   preprocessedWorkspaceContext = null,
   preprocessingStatus = null,
   workspaceProfile = null,
-}: CodebaseVisualizerProps) {
+}: SemanticodeProps) {
   const [agentSettingsOpen, setAgentSettingsOpen] = useState(false)
+  const [projectsSidebarOpen, setProjectsSidebarOpen] = useState(true)
   const [draftActionError, setDraftActionError] = useState<string | null>(null)
   const [layoutSuggestionText, setLayoutSuggestionText] = useState('')
   const [canvasWidthRatio, setCanvasWidthRatio] = useState(DEFAULT_CANVAS_WIDTH_RATIO)
   const [activeResizePointerId, setActiveResizePointerId] = useState<number | null>(null)
   const [flowInstance, setFlowInstance] = useState<ReactFlowInstance<Node, Edge> | null>(null)
   const [inspectorOpen, setInspectorOpen] = useState(false)
+  const [recentProjects, setRecentProjects] = useState<
+    {
+      name: string
+      rootDir: string
+      lastOpenedAt: string
+    }[]
+  >([])
   const [workspaceActionPending, setWorkspaceActionPending] = useState(false)
   const [workspaceActionError, setWorkspaceActionError] = useState<string | null>(null)
   const [desktopHostAvailable, setDesktopHostAvailable] = useState(false)
@@ -236,18 +253,18 @@ export function CodebaseVisualizer({
   const selectedNodeIdSet = useMemo(() => new Set(selectedNodeIds), [selectedNodeIds])
   const desktopBridge = (
     globalThis as typeof globalThis & {
-      codebaseVisualizerDesktop?: DesktopBridge
+      semanticodeDesktop?: DesktopBridge
     }
-  ).codebaseVisualizerDesktop
+  ).semanticodeDesktop
   const isDesktopHost = desktopHostAvailable
 
   useEffect(() => {
     const updateDesktopHostAvailability = () => {
       const bridge = (
         globalThis as typeof globalThis & {
-          codebaseVisualizerDesktop?: DesktopBridge
+          semanticodeDesktop?: DesktopBridge
         }
-      ).codebaseVisualizerDesktop
+      ).semanticodeDesktop
 
       setDesktopHostAvailable(Boolean(bridge?.isDesktop))
     }
@@ -261,6 +278,32 @@ export function CodebaseVisualizer({
       window.clearInterval(intervalId)
     }
   }, [])
+
+  useEffect(() => {
+    if (!desktopHostAvailable || !desktopBridge?.getWorkspaceHistory) {
+      return
+    }
+
+    let cancelled = false
+
+    void desktopBridge.getWorkspaceHistory().then((history) => {
+      if (cancelled) {
+        return
+      }
+
+      setRecentProjects(history.recentWorkspaces)
+    }).catch(() => {
+      if (cancelled) {
+        return
+      }
+
+      setRecentProjects([])
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [desktopBridge, desktopHostAvailable])
 
   useEffect(() => {
     if (snapshot === undefined) {
@@ -639,7 +682,12 @@ export function CodebaseVisualizer({
     try {
       setWorkspaceActionPending(true)
       setWorkspaceActionError(null)
-      await desktopBridge.openWorkspaceDialog()
+      const opened = await desktopBridge.openWorkspaceDialog()
+
+      if (!opened && desktopBridge.getWorkspaceHistory) {
+        const history = await desktopBridge.getWorkspaceHistory()
+        setRecentProjects(history.recentWorkspaces)
+      }
     } catch (error) {
       setWorkspaceActionError(
         error instanceof Error ? error.message : 'Failed to open another folder.',
@@ -661,6 +709,24 @@ export function CodebaseVisualizer({
     } catch (error) {
       setWorkspaceActionError(
         error instanceof Error ? error.message : 'Failed to close the current folder.',
+      )
+    } finally {
+      setWorkspaceActionPending(false)
+    }
+  }
+
+  async function handleOpenRecentProject(rootDir: string) {
+    if (!desktopBridge?.openWorkspaceRootDir) {
+      return
+    }
+
+    try {
+      setWorkspaceActionPending(true)
+      setWorkspaceActionError(null)
+      await desktopBridge.openWorkspaceRootDir(rootDir)
+    } catch (error) {
+      setWorkspaceActionError(
+        error instanceof Error ? error.message : 'Failed to open the selected folder.',
       )
     } finally {
       setWorkspaceActionPending(false)
@@ -705,50 +771,101 @@ export function CodebaseVisualizer({
 
   return (
     <ReactFlowProvider>
-      <section className="cbv-shell">
-        <header className="cbv-toolbar">
-          <div className="cbv-workspace-summary">
-            <div>
-              <strong>{workspaceName}</strong>
-              <p className="cbv-eyebrow">{effectiveSnapshot.rootDir}</p>
-            </div>
-            {isDesktopHost ? (
-              <div className="cbv-workspace-actions">
-                <button
-                  disabled={workspaceActionPending}
-                  onClick={() => {
-                    void handleOpenAnotherWorkspace()
-                  }}
-                  type="button"
-                >
-                  Open Another
-                </button>
-                <button
-                  className="is-secondary"
-                  disabled={workspaceActionPending}
-                  onClick={() => {
-                    void handleCloseWorkspace()
-                  }}
-                  type="button"
-                >
-                  Close
-                </button>
+      <div
+        className={`cbv-app-shell${desktopHostAvailable ? ' is-desktop-host' : ''}${projectsSidebarOpen ? ' is-projects-open' : ''}`}
+      >
+        {desktopHostAvailable ? (
+          <aside
+            className={`cbv-projects-sidebar${projectsSidebarOpen ? '' : ' is-collapsed'}`}
+          >
+            <div className="cbv-projects-sidebar-header">
+              <div>
+                <p className="cbv-eyebrow">Projects</p>
+                <strong>{recentProjects.length ? `${recentProjects.length} recent` : 'Folders'}</strong>
               </div>
-            ) : null}
+              <button
+                className="cbv-inspector-close"
+                onClick={() => setProjectsSidebarOpen(false)}
+                type="button"
+              >
+                ×
+              </button>
+            </div>
+            <div className="cbv-projects-sidebar-actions">
+              <button
+                disabled={workspaceActionPending}
+                onClick={() => {
+                  void handleOpenAnotherWorkspace()
+                }}
+                type="button"
+              >
+                Open Folder
+              </button>
+              <button
+                className="is-secondary"
+                disabled={workspaceActionPending}
+                onClick={() => {
+                  void handleCloseWorkspace()
+                }}
+                type="button"
+              >
+                Close Current
+              </button>
+            </div>
+            <div className="cbv-projects-list">
+              {recentProjects.length > 0 ? (
+                recentProjects.map((project) => {
+                  const isActive = project.rootDir === effectiveSnapshot.rootDir
+
+                  return (
+                    <button
+                      className={`cbv-projects-item${isActive ? ' is-active' : ''}`}
+                      disabled={workspaceActionPending || isActive}
+                      key={project.rootDir}
+                      onClick={() => {
+                        void handleOpenRecentProject(project.rootDir)
+                      }}
+                      type="button"
+                    >
+                      <strong>{project.name}</strong>
+                      <span>{project.rootDir}</span>
+                      <small>
+                        {isActive
+                          ? 'Current folder'
+                          : `Opened ${new Date(project.lastOpenedAt).toLocaleString()}`}
+                      </small>
+                    </button>
+                  )
+                })
+              ) : (
+                <p className="cbv-projects-empty">
+                  Open a folder to keep it in the recent projects list.
+                </p>
+              )}
+            </div>
             {workspaceActionError ? (
               <p className="cbv-workspace-error">{workspaceActionError}</p>
             ) : null}
+          </aside>
+        ) : null}
+        <section className="cbv-shell">
+        <header className="cbv-toolbar">
+          <div className="cbv-toolbar-left">
+            <div className="cbv-workspace-summary">
+              <strong>{workspaceName}</strong>
+              <p className="cbv-toolbar-path">{effectiveSnapshot.rootDir}</p>
+            </div>
             {preprocessingStatus ? (
               <div className="cbv-preprocessing-status-block">
-                <div
-                  className={`cbv-preprocessing-status is-${preprocessingStatus.runState}`}
-                  title={formatPreprocessingStatusTitle(preprocessingStatus)}
-                >
-                  <span className="cbv-preprocessing-status-dot" />
-                  <span>{formatPreprocessingStatusLabel(preprocessingStatus)}</span>
-                </div>
-                {onStartPreprocessing ? (
-                  <div className="cbv-preprocessing-actions">
+                <div className="cbv-preprocessing-inline">
+                  <div
+                    className={`cbv-preprocessing-status is-${preprocessingStatus.runState}`}
+                    title={formatPreprocessingStatusTitle(preprocessingStatus)}
+                  >
+                    <span className="cbv-preprocessing-status-dot" />
+                    <span>{formatPreprocessingStatusLabel(preprocessingStatus)}</span>
+                  </div>
+                  {onStartPreprocessing ? (
                     <button
                       className="cbv-preprocessing-action"
                       disabled={preprocessingStatus.runState === 'building'}
@@ -757,17 +874,13 @@ export function CodebaseVisualizer({
                         event.stopPropagation()
                         onStartPreprocessing()
                       }}
+                      title="Use the agent to generate semantic purpose summaries."
                       type="button"
                     >
                       {formatPreprocessingActionLabel(preprocessingStatus)}
                     </button>
-                    <span className="cbv-preprocessing-help">
-                      Uses the agent to generate purpose summaries for semantic indexing.
-                    </span>
-                  </div>
-                ) : null}
-                {onBuildSemanticEmbeddings ? (
-                  <div className="cbv-preprocessing-actions">
+                  ) : null}
+                  {onBuildSemanticEmbeddings ? (
                     <button
                       className="cbv-preprocessing-action is-secondary"
                       disabled={
@@ -779,15 +892,13 @@ export function CodebaseVisualizer({
                         event.stopPropagation()
                         onBuildSemanticEmbeddings()
                       }}
+                      title="Build local semantic embeddings from cached summaries."
                       type="button"
                     >
                       {formatEmbeddingActionLabel(preprocessingStatus)}
                     </button>
-                    <span className="cbv-preprocessing-help">
-                      Builds local semantic embeddings from cached summaries without rerunning the agent.
-                    </span>
-                  </div>
-                ) : null}
+                  ) : null}
+                </div>
                 {preprocessingStatus.runState === 'building' ||
                 preprocessingStatus.runState === 'stale' ? (
                   <div className="cbv-preprocessing-progress">
@@ -808,7 +919,8 @@ export function CodebaseVisualizer({
             ) : null}
           </div>
 
-	          <div className="cbv-layout-controls">
+	          <div className="cbv-toolbar-center">
+              <div className="cbv-layout-controls">
             <div className="cbv-mode-switch">
               <button
                 className={viewMode === 'filesystem' ? 'is-active' : ''}
@@ -907,7 +1019,10 @@ export function CodebaseVisualizer({
                 ))}
               </select>
             </label>
+              </div>
+	          </div>
 
+            <div className="cbv-toolbar-right">
             {activeDraft ? (
               <div className="cbv-draft-actions">
                 <button
@@ -979,6 +1094,15 @@ export function CodebaseVisualizer({
                 ) : null}
               </div>
             ) : null}
+            {isDesktopHost ? (
+              <button
+                className={`cbv-toolbar-button is-secondary${projectsSidebarOpen ? ' is-active' : ''}`}
+                onClick={() => setProjectsSidebarOpen((current) => !current)}
+                type="button"
+              >
+                {projectsSidebarOpen ? 'Hide Projects' : 'Show Projects'}
+              </button>
+            ) : null}
             <button
               className="cbv-toolbar-button is-secondary"
               onClick={() => setAgentSettingsOpen(true)}
@@ -986,8 +1110,6 @@ export function CodebaseVisualizer({
             >
               Agent Settings
             </button>
-	          </div>
-
 	          <div className="cbv-layer-toggles">
 	            {visibleLayerToggles.map((layer) => (
 	              <LayerToggle
@@ -998,6 +1120,7 @@ export function CodebaseVisualizer({
 	              />
 	            ))}
 	          </div>
+            </div>
 	        </header>
 
 	        <div
@@ -1334,6 +1457,7 @@ export function CodebaseVisualizer({
           </div>
         ) : null}
       </section>
+      </div>
     </ReactFlowProvider>
   )
 }

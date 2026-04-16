@@ -1,9 +1,9 @@
 {
-  "name": "codebase-visualizer",
+  "name": "semanticode",
   "version": "0.2.1",
   "type": "module",
   "bin": {
-    "codebase-visualizer": "./bin/codebase-visualizer.js"
+    "semanticode": "./bin/semanticode.js"
   },
   "files": [
     "bin",

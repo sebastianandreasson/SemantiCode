@@ -1,8 +1,8 @@
-# Codebase Visualizer Standalone App Plan
+# Semanticode Standalone App Plan
 
 ## Goal
 
-Turn this repository from a package-first codebase visualizer into a full standalone application:
+Turn this repository from a package-first semanticode into a full standalone application:
 
 - a desktop app
 - with an integrated code editor
@@ -51,7 +51,7 @@ The new primary mode should be:
 Secondary mode should remain:
 
 4. `npx` / browser demo mode
-   The user runs `npx codebase-visualizer` and gets the same core app in a browser-backed host.
+   The user runs `npx semanticode` and gets the same core app in a browser-backed host.
 
 The important product change is not "remove the web mode".
 It is "stop designing the whole system around the npm package as the primary identity".
@@ -85,7 +85,7 @@ The product should support two hosts over one shared core:
    This is the primary product.
 
 2. Web demo host
-   `npx codebase-visualizer` launches the same renderer in a browser with a local workspace backend.
+   `npx semanticode` launches the same renderer in a browser with a local workspace backend.
    This is the secondary/demo product.
 
 This means the repo should be organized so that:
@@ -197,7 +197,7 @@ Responsibilities:
 - watch file changes
 - run language adapters
 - run external analyzers
-- persist app state under `.codebase-visualizer/`
+- persist app state under `.semanticode/`
 - expose a typed internal API to the renderer
 
 This should become a reusable workspace service with multiple transports.
@@ -307,7 +307,7 @@ The main change is UX:
 
 Workspace-local state should still live in:
 
-- `.codebase-visualizer/`
+- `.semanticode/`
 
 This should store:
 
@@ -394,7 +394,7 @@ Refactor it into app-centric layers.
 
 ### Keep Explicitly Alive
 
-- `npx codebase-visualizer` as a secondary demo/runtime host
+- `npx semanticode` as a secondary demo/runtime host
 - shared web renderer that can run in both browser and desktop contexts
 - HTTP workspace transport for the demo host
 

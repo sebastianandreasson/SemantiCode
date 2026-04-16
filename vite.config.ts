@@ -3,12 +3,12 @@ import { resolve } from 'node:path'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-import { codebaseVisualizerPlugin } from './src/vite'
+import { semanticodePlugin } from './src/vite'
 
 export default defineConfig({
   plugins: [
     react(),
-    codebaseVisualizerPlugin({
+    semanticodePlugin({
       analyzeCalls: true,
       analyzeImports: true,
       analyzeSymbols: true,

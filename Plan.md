@@ -1,8 +1,8 @@
-# Codebase Visualizer Plan
+# Semanticode Plan
 
 ## Goal
 
-Build `codebase-visualizer` as a tool that can be:
+Build `semanticode` as a tool that can be:
 
 - Installed inside an existing repository and run locally against that repo.
 - Installed globally and pointed at any repository on disk.
@@ -26,10 +26,10 @@ The differentiator is a layout engine that can generate alternate views of the s
 The product should have three entry modes:
 
 1. Local package mode
-   The user installs the package in a repo and runs a local command such as `npx codebase-visualizer`.
+   The user installs the package in a repo and runs a local command such as `npx semanticode`.
 
 2. Global CLI mode
-   The user installs it globally and runs something like `codebase-visualizer /path/to/repo`.
+   The user installs it globally and runs something like `semanticode /path/to/repo`.
 
 3. Embedded library mode
    A host app imports the React viewer, snapshot reader, and layout APIs directly.
@@ -129,7 +129,7 @@ Responsibilities:
 
 Recommended shape:
 
-- `codebase-visualizer` CLI starts a local web server
+- `semanticode` CLI starts a local web server
 - Browser opens to a local app
 - App talks to JSON endpoints or a websocket stream
 
@@ -328,7 +328,7 @@ Needs:
 
 Recommended addition:
 
-Support a repo-local config file such as `codebase-visualizer.config.json` where users can define:
+Support a repo-local config file such as `semanticode.config.json` where users can define:
 
 - entry points
 - important directories
@@ -353,10 +353,10 @@ Add a first-class CLI package surface.
 
 Suggested commands:
 
-- `codebase-visualizer`
-- `codebase-visualizer --root .`
-- `codebase-visualizer --port 4321`
-- `codebase-visualizer layout "put tests below implementation"`
+- `semanticode`
+- `semanticode --root .`
+- `semanticode --port 4321`
+- `semanticode layout "put tests below implementation"`
 
 Phase 1 CLI responsibilities:
 
@@ -379,9 +379,9 @@ Need a distinction between source repo state and visualizer state.
 
 Suggested storage:
 
-- ephemeral snapshot cache in `.codebase-visualizer/cache`
-- saved layouts in `.codebase-visualizer/layouts`
-- optional project config in `codebase-visualizer.config.json`
+- ephemeral snapshot cache in `.semanticode/cache`
+- saved layouts in `.semanticode/layouts`
+- optional project config in `semanticode.config.json`
 
 Saved layouts should be portable and diffable, so use JSON or TOML.
 

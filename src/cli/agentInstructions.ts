@@ -2,7 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
-const INSTRUCTIONS_DIRECTORY = '.codebase-visualizer'
+const INSTRUCTIONS_DIRECTORY = '.semanticode'
 const INSTRUCTIONS_FILENAME = 'INSTRUCTIONS.md'
 
 export async function ensureAgentInstructions(rootDir: string) {
@@ -29,9 +29,9 @@ function buildAgentInstructionsMarkdown(
   },
 ) {
   return [
-    '# Codebase Visualizer Agent Instructions',
+    '# Semanticode Agent Instructions',
     '',
-    'This repository is being visualized by Codebase Visualizer.',
+    'This repository is being visualized by Semanticode.',
     'Your job is to turn a natural-language layout request into a saved draft layout for this repository.',
     '',
     '## Goal',
@@ -43,14 +43,14 @@ function buildAgentInstructionsMarkdown(
     '## Repository Paths',
     '',
     `- Repository root: \`${rootDir}\``,
-    '- Draft layouts directory: `.codebase-visualizer/layouts/drafts/`',
-    '- Accepted layouts directory: `.codebase-visualizer/layouts/`',
-    '- This instruction file: `.codebase-visualizer/INSTRUCTIONS.md`',
-    `- Local Codebase Visualizer repo: \`${localModulePaths.packageRoot}\``,
+    '- Draft layouts directory: `.semanticode/layouts/drafts/`',
+    '- Accepted layouts directory: `.semanticode/layouts/`',
+    '- This instruction file: `.semanticode/INSTRUCTIONS.md`',
+    `- Local Semanticode repo: \`${localModulePaths.packageRoot}\``,
     '',
     '## Preferred Workflow',
     '',
-    'Use the local Codebase Visualizer APIs instead of inventing your own file format.',
+    'Use the local Semanticode APIs instead of inventing your own file format.',
     'Do not rely on package-name resolution from the target repository; import from the exact local module paths below.',
     '',
     '1. Read a fresh snapshot of the repository.',
@@ -58,7 +58,7 @@ function buildAgentInstructionsMarkdown(
     '3. Construct a `LayoutPlannerProposalEnvelope`.',
     '4. Validate it.',
     '5. Materialize it into a `LayoutSpec`.',
-    '6. Save it as a draft in `.codebase-visualizer/layouts/drafts/`.',
+    '6. Save it as a draft in `.semanticode/layouts/drafts/`.',
     '',
     '## Package APIs',
     '',
@@ -186,8 +186,8 @@ function buildAgentInstructionsMarkdown(
     '',
     '## Output Expectation',
     '',
-    'When you are done, the repository should contain a new JSON draft file in `.codebase-visualizer/layouts/drafts/`.',
-    'That draft should appear in the Codebase Visualizer layout picker without any manual post-processing.',
+    'When you are done, the repository should contain a new JSON draft file in `.semanticode/layouts/drafts/`.',
+    'That draft should appear in the Semanticode layout picker without any manual post-processing.',
     '',
     '## Important',
     '',

@@ -67,7 +67,7 @@ export async function buildJsCallGraph(
     }
   }
 
-  const tempRoot = await mkdtemp(join(tmpdir(), 'codebase-visualizer-callgraph-'))
+  const tempRoot = await mkdtemp(join(tmpdir(), 'semanticode-callgraph-'))
 
   try {
     const compiledFileMap = await createCompiledWorkspace(tempRoot, supportedFiles)
@@ -298,7 +298,7 @@ function transpileForCallgraph(path: string, source: string) {
     return result.outputText
   } catch (error) {
     console.warn(
-      `[codebase-visualizer] Skipping JS/TS callgraph transpile for "${path}".`,
+      `[semanticode] Skipping JS/TS callgraph transpile for "${path}".`,
       error,
     )
     return null

@@ -9,7 +9,7 @@ const readFileMock = vi.fn()
 
 vi.mock('electron', () => ({
   app: {
-    getPath: vi.fn(() => '/tmp/codebase-visualizer-tests'),
+    getPath: vi.fn(() => '/tmp/semanticode-tests'),
   },
 }))
 
@@ -98,7 +98,7 @@ vi.mock('../providers/openai-codex/provider', () => ({
     }
 
     async materializeCodexCliAuth() {
-      return '/tmp/codebase-visualizer-tests/auth.json'
+      return '/tmp/semanticode-tests/auth.json'
     }
 
     async startLogin() {

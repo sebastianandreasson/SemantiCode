@@ -1,6 +1,6 @@
 import { startTransition, useEffect, useRef, useState } from 'react'
 
-import { CodebaseVisualizer } from './index'
+import { Semanticode } from './index'
 import {
   countPreprocessableSymbols,
   getPreprocessableSymbols,
@@ -29,14 +29,14 @@ import type {
 } from './types'
 import { useVisualizerStore, visualizerStore } from './store/visualizerStore'
 import {
-  CODEBASE_VISUALIZER_AGENT_MESSAGE_ROUTE,
-  CODEBASE_VISUALIZER_AGENT_SESSION_ROUTE,
-  buildCodebaseVisualizerDraftActionRoute,
-  CODEBASE_VISUALIZER_LAYOUTS_ROUTE,
-  CODEBASE_VISUALIZER_PREPROCESSING_EMBEDDINGS_ROUTE,
-  CODEBASE_VISUALIZER_PREPROCESSING_ROUTE,
-  CODEBASE_VISUALIZER_PREPROCESSING_SUMMARY_ROUTE,
-  CODEBASE_VISUALIZER_ROUTE,
+  SEMANTICODE_AGENT_MESSAGE_ROUTE,
+  SEMANTICODE_AGENT_SESSION_ROUTE,
+  buildSemanticodeDraftActionRoute,
+  SEMANTICODE_LAYOUTS_ROUTE,
+  SEMANTICODE_PREPROCESSING_EMBEDDINGS_ROUTE,
+  SEMANTICODE_PREPROCESSING_ROUTE,
+  SEMANTICODE_PREPROCESSING_SUMMARY_ROUTE,
+  SEMANTICODE_ROUTE,
 } from './shared/constants'
 
 const SEMANTIC_EMBEDDING_MODEL_ID = 'nomic-ai/nomic-embed-text-v1.5'
@@ -80,9 +80,9 @@ export default function App() {
   useEffect(() => {
     const desktopBridge = (
       globalThis as typeof globalThis & {
-        codebaseVisualizerDesktop?: { isDesktop?: boolean }
+        semanticodeDesktop?: { isDesktop?: boolean }
       }
-    ).codebaseVisualizerDesktop
+    ).semanticodeDesktop
 
     if (!desktopBridge?.isDesktop) {
       return
@@ -609,7 +609,7 @@ export default function App() {
   }
 
   async function refreshLayoutState() {
-    const response = await fetch(CODEBASE_VISUALIZER_LAYOUTS_ROUTE)
+    const response = await fetch(SEMANTICODE_LAYOUTS_ROUTE)
 
     if (!response.ok) {
       throw new Error(await getResponseErrorMessage(
@@ -647,7 +647,7 @@ export default function App() {
     const existingDraftIds = new Set(draftLayouts.map((draft) => draft.id))
 
     try {
-      const response = await fetch(CODEBASE_VISUALIZER_AGENT_MESSAGE_ROUTE, {
+      const response = await fetch(SEMANTICODE_AGENT_MESSAGE_ROUTE, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -689,8 +689,8 @@ export default function App() {
 
     while (Date.now() < timeoutAt) {
       const [layoutResponse, agentResponse] = await Promise.all([
-        fetch(CODEBASE_VISUALIZER_LAYOUTS_ROUTE),
-        fetch(CODEBASE_VISUALIZER_AGENT_SESSION_ROUTE),
+        fetch(SEMANTICODE_LAYOUTS_ROUTE),
+        fetch(SEMANTICODE_AGENT_SESSION_ROUTE),
       ])
 
       if (!layoutResponse.ok) {
@@ -745,7 +745,7 @@ export default function App() {
 
     try {
       const response = await fetch(
-        buildCodebaseVisualizerDraftActionRoute(draftId, 'accept'),
+        buildSemanticodeDraftActionRoute(draftId, 'accept'),
         {
           method: 'POST',
         },
@@ -781,7 +781,7 @@ export default function App() {
 
     try {
       const response = await fetch(
-        buildCodebaseVisualizerDraftActionRoute(draftId, 'reject'),
+        buildSemanticodeDraftActionRoute(draftId, 'reject'),
         {
           method: 'POST',
         },
@@ -819,7 +819,7 @@ export default function App() {
       ) : errorMessage ? (
         <section className="demo-status is-error">{errorMessage}</section>
       ) : (
-        <CodebaseVisualizer
+        <Semanticode
           layoutActionsPending={layoutActionPending}
           onAgentRunSettled={refreshWorkspaceState}
           onBuildSemanticEmbeddings={handleBuildSemanticEmbeddings}
@@ -840,8 +840,8 @@ export default function App() {
 
 async function fetchWorkspaceState() {
   const [snapshotResponse, layoutStateResponse] = await Promise.all([
-    fetch(CODEBASE_VISUALIZER_ROUTE),
-    fetch(CODEBASE_VISUALIZER_LAYOUTS_ROUTE),
+    fetch(SEMANTICODE_ROUTE),
+    fetch(SEMANTICODE_LAYOUTS_ROUTE),
   ])
 
   if (!snapshotResponse.ok) {
@@ -870,13 +870,13 @@ async function fetchWorkspaceState() {
 }
 
 function buildLayoutSuggestionPrompt(rootDir: string, layoutBrief: string) {
-  const instructionsPath = `${rootDir}/.codebase-visualizer/INSTRUCTIONS.md`
+  const instructionsPath = `${rootDir}/.semanticode/INSTRUCTIONS.md`
 
   return [
-    `Look up "${instructionsPath}" and follow it to construct a new Codebase Visualizer layout draft for this repository.`,
+    `Look up "${instructionsPath}" and follow it to construct a new Semanticode layout draft for this repository.`,
     'Use the following layout brief:',
     layoutBrief,
-    'Save the result as a draft layout so it appears in Codebase Visualizer.',
+    'Save the result as a draft layout so it appears in Semanticode.',
     'Do not answer with prose in chat. Do the work and stop after the draft has been saved.',
   ].join('\n\n')
 }
@@ -905,7 +905,7 @@ async function getResponseErrorMessage(
 }
 
 async function fetchPersistedPreprocessedWorkspaceContext() {
-  const response = await fetch(CODEBASE_VISUALIZER_PREPROCESSING_ROUTE)
+  const response = await fetch(SEMANTICODE_PREPROCESSING_ROUTE)
 
   if (!response.ok) {
     throw new Error(await getResponseErrorMessage(
@@ -921,7 +921,7 @@ async function fetchPersistedPreprocessedWorkspaceContext() {
 async function persistPreprocessedWorkspaceContext(
   context: PreprocessedWorkspaceContext,
 ) {
-  const response = await fetch(CODEBASE_VISUALIZER_PREPROCESSING_ROUTE, {
+  const response = await fetch(SEMANTICODE_PREPROCESSING_ROUTE, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -938,7 +938,7 @@ async function persistPreprocessedWorkspaceContext(
 }
 
 async function requestLLMSemanticSummary(message: string) {
-  const response = await fetch(CODEBASE_VISUALIZER_PREPROCESSING_SUMMARY_ROUTE, {
+  const response = await fetch(SEMANTICODE_PREPROCESSING_SUMMARY_ROUTE, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -964,7 +964,7 @@ async function requestSemanticEmbeddings(
     textHash: string
   }[],
 ) {
-  const response = await fetch(CODEBASE_VISUALIZER_PREPROCESSING_EMBEDDINGS_ROUTE, {
+  const response = await fetch(SEMANTICODE_PREPROCESSING_EMBEDDINGS_ROUTE, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

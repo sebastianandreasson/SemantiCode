@@ -108,11 +108,11 @@ export class OpenAICodexProvider {
 
       return {
         ok: true,
-        message: 'Sign-in completed. Return to Codebase Visualizer.',
+        message: 'Sign-in completed. Return to Semanticode.',
       }
     } catch (error) {
       this.logger.warn(
-        `[codebase-visualizer][openai-codex] Login callback failed: ${error instanceof Error ? error.message : 'Unknown error.'}`,
+        `[semanticode][openai-codex] Login callback failed: ${error instanceof Error ? error.message : 'Unknown error.'}`,
       )
       await this.storage.clear()
       await this.closeCallbackServer()
@@ -243,7 +243,7 @@ export class OpenAICodexProvider {
       await this.handleCallback(callbackUrl)
     } catch (error) {
       this.logger.warn(
-        `[codebase-visualizer][openai-codex] Automatic callback handling failed: ${error instanceof Error ? error.message : 'Unknown error.'}`,
+        `[semanticode][openai-codex] Automatic callback handling failed: ${error instanceof Error ? error.message : 'Unknown error.'}`,
       )
     }
   }

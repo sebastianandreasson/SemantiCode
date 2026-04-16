@@ -1,4 +1,4 @@
-# Codebase Visualizer Implementation Plan
+# Semanticode Implementation Plan
 
 ## Purpose
 
@@ -36,7 +36,7 @@ Resolve the architecture choices that would otherwise create churn later.
 - Confirm the primary product mode is `CLI-first with bundled web UI`.
 - Keep the React viewer as an export, but treat embedded-library mode as secondary.
 - Decide where project state lives:
-  `.codebase-visualizer/` inside the target repo is the default.
+  `.semanticode/` inside the target repo is the default.
 - Decide whether remote AI is in scope for v1:
   recommended answer is `no`, with a pluggable local/remote provider boundary added later.
 - Decide the first supported ecosystems for import analysis:
@@ -176,7 +176,7 @@ Turn the package into an actual tool the user can run locally or globally.
 
 - Add a `bin` entry in `package.json`.
 - Implement a CLI command such as:
-  `codebase-visualizer [root]`.
+  `semanticode [root]`.
 - Support flags:
   `--root`, `--port`, `--host`, `--open`, `--no-open`.
 - Make the CLI resolve the target repo path safely.
@@ -340,9 +340,9 @@ Persist view state and project-specific analysis hints.
 
 ### Tasks
 
-- Add `.codebase-visualizer/layouts/`
-- Add `.codebase-visualizer/cache/`
-- Add `codebase-visualizer.config.json`
+- Add `.semanticode/layouts/`
+- Add `.semanticode/cache/`
+- Add `semanticode.config.json`
 - Support saving named layouts.
 - Support loading and deleting saved layouts.
 - Support project hints:

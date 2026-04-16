@@ -130,18 +130,18 @@ Add a typed IPC surface between renderer and Electron main.
 
 Suggested channels:
 
-- `codebase-visualizer:agent:create-session`
-- `codebase-visualizer:agent:send-message`
-- `codebase-visualizer:agent:cancel`
-- `codebase-visualizer:agent:get-state`
-- `codebase-visualizer:agent:event`
+- `semanticode:agent:create-session`
+- `semanticode:agent:send-message`
+- `semanticode:agent:cancel`
+- `semanticode:agent:get-state`
+- `semanticode:agent:event`
 
 Preload exposure:
 
-- `window.codebaseVisualizerDesktopAgent.createSession()`
-- `window.codebaseVisualizerDesktopAgent.sendMessage()`
-- `window.codebaseVisualizerDesktopAgent.cancel()`
-- `window.codebaseVisualizerDesktopAgent.subscribe()`
+- `window.semanticodeDesktopAgent.createSession()`
+- `window.semanticodeDesktopAgent.sendMessage()`
+- `window.semanticodeDesktopAgent.cancel()`
+- `window.semanticodeDesktopAgent.subscribe()`
 
 Use a typed event payload model so the renderer is not parsing arbitrary `pi` internals.
 
@@ -308,9 +308,9 @@ Suggested:
 
 Keep repo-specific outputs in the repo:
 
-- `.codebase-visualizer/layouts/`
-- `.codebase-visualizer/layouts/drafts/`
-- `.codebase-visualizer/INSTRUCTIONS.md`
+- `.semanticode/layouts/`
+- `.semanticode/layouts/drafts/`
+- `.semanticode/INSTRUCTIONS.md`
 
 That separation matters:
 

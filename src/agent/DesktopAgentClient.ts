@@ -10,15 +10,15 @@ import type {
 } from '../schema/api'
 import type { AgentEvent, AgentSessionSummary } from '../schema/agent'
 import {
-  CODEBASE_VISUALIZER_AGENT_AUTH_COMPLETE_ROUTE,
-  CODEBASE_VISUALIZER_AGENT_AUTH_IMPORT_CODEX_ROUTE,
-  CODEBASE_VISUALIZER_AGENT_AUTH_LOGIN_START_ROUTE,
-  CODEBASE_VISUALIZER_AGENT_AUTH_LOGOUT_ROUTE,
-  CODEBASE_VISUALIZER_AGENT_AUTH_SESSION_ROUTE,
-  CODEBASE_VISUALIZER_AGENT_CANCEL_ROUTE,
-  CODEBASE_VISUALIZER_AGENT_MESSAGE_ROUTE,
-  CODEBASE_VISUALIZER_AGENT_SETTINGS_ROUTE,
-  CODEBASE_VISUALIZER_AGENT_SESSION_ROUTE,
+  SEMANTICODE_AGENT_AUTH_COMPLETE_ROUTE,
+  SEMANTICODE_AGENT_AUTH_IMPORT_CODEX_ROUTE,
+  SEMANTICODE_AGENT_AUTH_LOGIN_START_ROUTE,
+  SEMANTICODE_AGENT_AUTH_LOGOUT_ROUTE,
+  SEMANTICODE_AGENT_AUTH_SESSION_ROUTE,
+  SEMANTICODE_AGENT_CANCEL_ROUTE,
+  SEMANTICODE_AGENT_MESSAGE_ROUTE,
+  SEMANTICODE_AGENT_SETTINGS_ROUTE,
+  SEMANTICODE_AGENT_SESSION_ROUTE,
 } from '../shared/constants'
 
 interface DesktopAgentBridge {
@@ -92,7 +92,7 @@ export class DesktopAgentClient {
       return bridge.createSession()
     }
 
-    const state = await this.fetchAgentState(CODEBASE_VISUALIZER_AGENT_SESSION_ROUTE, {
+    const state = await this.fetchAgentState(SEMANTICODE_AGENT_SESSION_ROUTE, {
       method: 'POST',
     })
 
@@ -106,7 +106,7 @@ export class DesktopAgentClient {
       return bridge.sendMessage(message)
     }
 
-    await this.fetchAgentState(CODEBASE_VISUALIZER_AGENT_MESSAGE_ROUTE, {
+    await this.fetchAgentState(SEMANTICODE_AGENT_MESSAGE_ROUTE, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -123,7 +123,7 @@ export class DesktopAgentClient {
       return bridge.cancel()
     }
 
-    await this.fetchAgentState(CODEBASE_VISUALIZER_AGENT_CANCEL_ROUTE, {
+    await this.fetchAgentState(SEMANTICODE_AGENT_CANCEL_ROUTE, {
       method: 'POST',
     })
     return true
@@ -142,24 +142,24 @@ export class DesktopAgentClient {
   private getBridge() {
     return (
       globalThis as typeof globalThis & {
-        codebaseVisualizerDesktop?: DesktopAgentBridge
-        codebaseVisualizerDesktopAgent?: DesktopAgentBridge
+        semanticodeDesktop?: DesktopAgentBridge
+        semanticodeDesktopAgent?: DesktopAgentBridge
       }
-    ).codebaseVisualizerDesktop ?? (
+    ).semanticodeDesktop ?? (
       globalThis as typeof globalThis & {
-        codebaseVisualizerDesktopAgent?: DesktopAgentBridge
+        semanticodeDesktopAgent?: DesktopAgentBridge
       }
-    ).codebaseVisualizerDesktopAgent
+    ).semanticodeDesktopAgent
   }
 
   async getHttpState() {
-    return this.fetchAgentState(CODEBASE_VISUALIZER_AGENT_SESSION_ROUTE, {
+    return this.fetchAgentState(SEMANTICODE_AGENT_SESSION_ROUTE, {
       method: 'GET',
     })
   }
 
   async getSettings() {
-    const response = await fetch(CODEBASE_VISUALIZER_AGENT_SETTINGS_ROUTE, {
+    const response = await fetch(SEMANTICODE_AGENT_SETTINGS_ROUTE, {
       method: 'GET',
     })
 
@@ -174,7 +174,7 @@ export class DesktopAgentClient {
   }
 
   async saveSettings(settings: AgentSettingsUpdateRequest) {
-    const response = await fetch(CODEBASE_VISUALIZER_AGENT_SETTINGS_ROUTE, {
+    const response = await fetch(SEMANTICODE_AGENT_SETTINGS_ROUTE, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -193,7 +193,7 @@ export class DesktopAgentClient {
   }
 
   async getBrokerSession() {
-    const response = await fetch(CODEBASE_VISUALIZER_AGENT_AUTH_SESSION_ROUTE, {
+    const response = await fetch(SEMANTICODE_AGENT_AUTH_SESSION_ROUTE, {
       method: 'GET',
     })
 
@@ -208,7 +208,7 @@ export class DesktopAgentClient {
   }
 
   async beginBrokeredLogin() {
-    const response = await fetch(CODEBASE_VISUALIZER_AGENT_AUTH_LOGIN_START_ROUTE, {
+    const response = await fetch(SEMANTICODE_AGENT_AUTH_LOGIN_START_ROUTE, {
       method: 'POST',
     })
 
@@ -223,7 +223,7 @@ export class DesktopAgentClient {
   }
 
   async completeBrokeredLogin(callbackUrl: string) {
-    const response = await fetch(CODEBASE_VISUALIZER_AGENT_AUTH_COMPLETE_ROUTE, {
+    const response = await fetch(SEMANTICODE_AGENT_AUTH_COMPLETE_ROUTE, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -244,7 +244,7 @@ export class DesktopAgentClient {
   }
 
   async importCodexAuthSession() {
-    const response = await fetch(CODEBASE_VISUALIZER_AGENT_AUTH_IMPORT_CODEX_ROUTE, {
+    const response = await fetch(SEMANTICODE_AGENT_AUTH_IMPORT_CODEX_ROUTE, {
       method: 'POST',
     })
 
@@ -259,7 +259,7 @@ export class DesktopAgentClient {
   }
 
   async logoutBrokeredAuthSession() {
-    const response = await fetch(CODEBASE_VISUALIZER_AGENT_AUTH_LOGOUT_ROUTE, {
+    const response = await fetch(SEMANTICODE_AGENT_AUTH_LOGOUT_ROUTE, {
       method: 'POST',
     })
 

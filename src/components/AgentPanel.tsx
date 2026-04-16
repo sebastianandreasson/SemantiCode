@@ -1163,7 +1163,7 @@ function buildInspectorScopedPrompt(
   }
 
   const contextLines = [
-    'Codebase Visualizer inspector context:',
+    'Semanticode inspector context:',
     'Treat the current inspector selection as the primary target for this request.',
     'If the user is asking for an edit, inspect and modify this file or symbol first unless they clearly redirect you elsewhere.',
   ]

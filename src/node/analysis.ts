@@ -102,7 +102,7 @@ export async function enrichProjectSnapshot(
       }
     } catch (error) {
       console.warn(
-        `[codebase-visualizer] Adapter "${adapter.id}" failed; continuing without its analysis.`,
+        `[semanticode] Adapter "${adapter.id}" failed; continuing without its analysis.`,
         error,
       )
     }

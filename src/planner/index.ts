@@ -32,8 +32,8 @@ import type {
   ProjectSnapshot,
 } from '../schema/snapshot'
 
-const LAYOUTS_DIRECTORY = '.codebase-visualizer/layouts'
-const DRAFTS_DIRECTORY = '.codebase-visualizer/layouts/drafts'
+const LAYOUTS_DIRECTORY = '.semanticode/layouts'
+const DRAFTS_DIRECTORY = '.semanticode/layouts/drafts'
 const PLANNER_EDGE_KINDS = new Set(['contains', 'imports', 'calls'])
 
 export interface BuildLayoutPlannerContextOptions {

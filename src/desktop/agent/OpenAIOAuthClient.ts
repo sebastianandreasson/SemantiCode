@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto'
 
-const OPENAI_OAUTH_CLIENT_ID_ENV_NAME = 'CODEBASE_VISUALIZER_OPENAI_OAUTH_CLIENT_ID'
-const OPENAI_OAUTH_CLIENT_SECRET_ENV_NAME = 'CODEBASE_VISUALIZER_OPENAI_OAUTH_CLIENT_SECRET'
+const OPENAI_OAUTH_CLIENT_ID_ENV_NAME = 'SEMANTICODE_OPENAI_OAUTH_CLIENT_ID'
+const OPENAI_OAUTH_CLIENT_SECRET_ENV_NAME = 'SEMANTICODE_OPENAI_OAUTH_CLIENT_SECRET'
 const OPENAI_OPENID_CONFIGURATION_URL = 'https://auth.openai.com/.well-known/openid-configuration'
 const OPENAI_OAUTH_DEFAULT_SCOPES = [
   'openid',
@@ -57,7 +57,7 @@ export class OpenAIOAuthClient {
     authorizationUrl.searchParams.set('code_challenge_method', 'S256')
     authorizationUrl.searchParams.set('state', state)
     authorizationUrl.searchParams.set('id_token_add_organizations', 'true')
-    authorizationUrl.searchParams.set('originator', 'codebase-visualizer')
+    authorizationUrl.searchParams.set('originator', 'semanticode')
 
     return {
       authorizationUrl: authorizationUrl.toString(),
@@ -179,7 +179,7 @@ export class OpenAIOAuthClient {
 
     if (!clientId) {
       throw new Error(
-        'No OpenAI OAuth client id is configured. Set CODEBASE_VISUALIZER_OPENAI_OAUTH_CLIENT_ID.',
+        'No OpenAI OAuth client id is configured. Set SEMANTICODE_OPENAI_OAUTH_CLIENT_ID.',
       )
     }
 

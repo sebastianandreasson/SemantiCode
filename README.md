@@ -1,4 +1,4 @@
-# codebase-visualizer
+# semanticode
 
 Scaffold for a publishable npm package that exposes:
 
@@ -10,17 +10,17 @@ Scaffold for a publishable npm package that exposes:
 ## Run It Directly
 
 ```bash
-npx codebase-visualizer .
+npx semanticode .
 ```
 
 Optional flags:
 
 ```bash
-npx codebase-visualizer . --port 3210 --host 127.0.0.1
+npx semanticode . --port 3210 --host 127.0.0.1
 ```
 
 This starts a local web app and visualizes the target repository directory.
-It also writes `.codebase-visualizer/INSTRUCTIONS.md` into the target repo and prints a ready-to-paste prompt you can hand to a coding agent for custom layouts.
+It also writes `.semanticode/INSTRUCTIONS.md` into the target repo and prints a ready-to-paste prompt you can hand to a coding agent for custom layouts.
 
 ## Experimental Desktop Host
 
@@ -40,9 +40,9 @@ Current language support:
 ## Package surface
 
 ```ts
-import { CodebaseVisualizer } from 'codebase-visualizer'
-import { readProjectSnapshot } from 'codebase-visualizer/node'
-import { codebaseVisualizerPlugin } from 'codebase-visualizer/vite'
+import { Semanticode } from 'semanticode'
+import { readProjectSnapshot } from 'semanticode/node'
+import { semanticodePlugin } from 'semanticode/vite'
 ```
 
 ## Local development

@@ -33,22 +33,22 @@ import type {
 } from '../types'
 import { readProjectSnapshot } from './readProjectSnapshot'
 import {
-  CODEBASE_VISUALIZER_AGENT_AUTH_COMPLETE_ROUTE,
-  CODEBASE_VISUALIZER_AGENT_AUTH_CALLBACK_ROUTE,
-  CODEBASE_VISUALIZER_AGENT_AUTH_IMPORT_CODEX_ROUTE,
-  CODEBASE_VISUALIZER_AGENT_AUTH_LOGIN_START_ROUTE,
-  CODEBASE_VISUALIZER_AGENT_AUTH_LOGOUT_ROUTE,
-  CODEBASE_VISUALIZER_AGENT_AUTH_SESSION_ROUTE,
-  CODEBASE_VISUALIZER_AGENT_CANCEL_ROUTE,
-  CODEBASE_VISUALIZER_AGENT_MESSAGE_ROUTE,
-  CODEBASE_VISUALIZER_AGENT_SETTINGS_ROUTE,
-  CODEBASE_VISUALIZER_AGENT_SESSION_ROUTE,
-  CODEBASE_VISUALIZER_DRAFTS_ROUTE,
-  CODEBASE_VISUALIZER_LAYOUTS_ROUTE,
-  CODEBASE_VISUALIZER_PREPROCESSING_EMBEDDINGS_ROUTE,
-  CODEBASE_VISUALIZER_PREPROCESSING_ROUTE,
-  CODEBASE_VISUALIZER_PREPROCESSING_SUMMARY_ROUTE,
-  CODEBASE_VISUALIZER_ROUTE,
+  SEMANTICODE_AGENT_AUTH_COMPLETE_ROUTE,
+  SEMANTICODE_AGENT_AUTH_CALLBACK_ROUTE,
+  SEMANTICODE_AGENT_AUTH_IMPORT_CODEX_ROUTE,
+  SEMANTICODE_AGENT_AUTH_LOGIN_START_ROUTE,
+  SEMANTICODE_AGENT_AUTH_LOGOUT_ROUTE,
+  SEMANTICODE_AGENT_AUTH_SESSION_ROUTE,
+  SEMANTICODE_AGENT_CANCEL_ROUTE,
+  SEMANTICODE_AGENT_MESSAGE_ROUTE,
+  SEMANTICODE_AGENT_SETTINGS_ROUTE,
+  SEMANTICODE_AGENT_SESSION_ROUTE,
+  SEMANTICODE_DRAFTS_ROUTE,
+  SEMANTICODE_LAYOUTS_ROUTE,
+  SEMANTICODE_PREPROCESSING_EMBEDDINGS_ROUTE,
+  SEMANTICODE_PREPROCESSING_ROUTE,
+  SEMANTICODE_PREPROCESSING_SUMMARY_ROUTE,
+  SEMANTICODE_ROUTE,
 } from '../shared/constants'
 
 export interface AgentRuntimeRequestBridge {
@@ -71,23 +71,23 @@ export interface AgentRuntimeRequestBridge {
   saveSettings: (settings: AgentSettingsUpdateRequest) => Promise<AgentSettingsResponse['settings']>
 }
 
-export interface CodebaseVisualizerRequestHandlerOptions
+export interface SemanticodeRequestHandlerOptions
   extends ReadProjectSnapshotOptions {
   agentRuntime?: AgentRuntimeRequestBridge
   rootDir: string
   route?: string
 }
 
-export async function handleCodebaseVisualizerRequest(
+export async function handleSemanticodeRequest(
   request: IncomingMessage,
   response: ServerResponse<IncomingMessage>,
-  options: CodebaseVisualizerRequestHandlerOptions,
+  options: SemanticodeRequestHandlerOptions,
 ) {
-  const route = options.route ?? CODEBASE_VISUALIZER_ROUTE
+  const route = options.route ?? SEMANTICODE_ROUTE
   const pathname = request.url?.split('?')[0]
   const method = request.method ?? 'GET'
 
-  if (!pathname?.startsWith('/__codebase-visualizer/')) {
+  if (!pathname?.startsWith('/__semanticode/')) {
     return false
   }
 
@@ -102,7 +102,7 @@ export async function handleCodebaseVisualizerRequest(
       return true
     }
 
-    if (pathname === CODEBASE_VISUALIZER_LAYOUTS_ROUTE && method === 'GET') {
+    if (pathname === SEMANTICODE_LAYOUTS_ROUTE && method === 'GET') {
       const state: LayoutStateResponse = {
         layouts: await listSavedLayouts(options.rootDir),
         draftLayouts: await listLayoutDrafts(options.rootDir),
@@ -114,7 +114,7 @@ export async function handleCodebaseVisualizerRequest(
       return true
     }
 
-    if (pathname === CODEBASE_VISUALIZER_PREPROCESSING_ROUTE) {
+    if (pathname === SEMANTICODE_PREPROCESSING_ROUTE) {
       if (method === 'GET') {
         const result: PreprocessingContextResponse = {
           context: await readPersistedPreprocessedWorkspaceContext(options.rootDir),
@@ -145,7 +145,7 @@ export async function handleCodebaseVisualizerRequest(
       }
     }
 
-    if (pathname === CODEBASE_VISUALIZER_PREPROCESSING_SUMMARY_ROUTE && method === 'POST') {
+    if (pathname === SEMANTICODE_PREPROCESSING_SUMMARY_ROUTE && method === 'POST') {
       if (!options.agentRuntime) {
         sendJson(response, 503, {
           message: 'The embedded PI runtime is not available for this host.',
@@ -173,7 +173,7 @@ export async function handleCodebaseVisualizerRequest(
       return true
     }
 
-    if (pathname === CODEBASE_VISUALIZER_PREPROCESSING_EMBEDDINGS_ROUTE && method === 'POST') {
+    if (pathname === SEMANTICODE_PREPROCESSING_EMBEDDINGS_ROUTE && method === 'POST') {
       const payload = await readJsonBody<PreprocessingEmbeddingRequest>(request)
 
       if (!payload?.texts?.length) {
@@ -194,7 +194,7 @@ export async function handleCodebaseVisualizerRequest(
       return true
     }
 
-    if (pathname === CODEBASE_VISUALIZER_AGENT_SESSION_ROUTE) {
+    if (pathname === SEMANTICODE_AGENT_SESSION_ROUTE) {
       if (!options.agentRuntime) {
         sendJson(response, 503, {
           message: 'The embedded PI runtime is not available for this host.',
@@ -224,7 +224,7 @@ export async function handleCodebaseVisualizerRequest(
       }
     }
 
-    if (pathname === CODEBASE_VISUALIZER_AGENT_MESSAGE_ROUTE && method === 'POST') {
+    if (pathname === SEMANTICODE_AGENT_MESSAGE_ROUTE && method === 'POST') {
       if (!options.agentRuntime) {
         sendJson(response, 503, {
           message: 'The embedded PI runtime is not available for this host.',
@@ -244,7 +244,7 @@ export async function handleCodebaseVisualizerRequest(
       await ensureAgentInstructions(options.rootDir)
       void options.agentRuntime.promptWorkspaceSession(options.rootDir, payload.message).catch((error) => {
         console.error(
-          '[codebase-visualizer][agent] Background prompt failed:',
+          '[semanticode][agent] Background prompt failed:',
           error instanceof Error ? error.message : error,
         )
       })
@@ -257,7 +257,7 @@ export async function handleCodebaseVisualizerRequest(
       return true
     }
 
-    if (pathname === CODEBASE_VISUALIZER_AGENT_CANCEL_ROUTE && method === 'POST') {
+    if (pathname === SEMANTICODE_AGENT_CANCEL_ROUTE && method === 'POST') {
       if (!options.agentRuntime) {
         sendJson(response, 503, {
           message: 'The embedded PI runtime is not available for this host.',
@@ -275,7 +275,7 @@ export async function handleCodebaseVisualizerRequest(
       return true
     }
 
-    if (pathname === CODEBASE_VISUALIZER_AGENT_SETTINGS_ROUTE) {
+    if (pathname === SEMANTICODE_AGENT_SETTINGS_ROUTE) {
       if (!options.agentRuntime) {
         sendJson(response, 503, {
           message: 'The embedded PI runtime is not available for this host.',
@@ -311,7 +311,7 @@ export async function handleCodebaseVisualizerRequest(
       }
     }
 
-    if (pathname === CODEBASE_VISUALIZER_AGENT_AUTH_SESSION_ROUTE && method === 'GET') {
+    if (pathname === SEMANTICODE_AGENT_AUTH_SESSION_ROUTE && method === 'GET') {
       if (!options.agentRuntime) {
         sendJson(response, 503, {
           message: 'The embedded PI runtime is not available for this host.',
@@ -327,7 +327,7 @@ export async function handleCodebaseVisualizerRequest(
       return true
     }
 
-    if (pathname === CODEBASE_VISUALIZER_AGENT_AUTH_LOGIN_START_ROUTE && method === 'POST') {
+    if (pathname === SEMANTICODE_AGENT_AUTH_LOGIN_START_ROUTE && method === 'POST') {
       if (!options.agentRuntime) {
         sendJson(response, 503, {
           message: 'The embedded PI runtime is not available for this host.',
@@ -340,7 +340,7 @@ export async function handleCodebaseVisualizerRequest(
       return true
     }
 
-    if (pathname === CODEBASE_VISUALIZER_AGENT_AUTH_COMPLETE_ROUTE && method === 'POST') {
+    if (pathname === SEMANTICODE_AGENT_AUTH_COMPLETE_ROUTE && method === 'POST') {
       if (!options.agentRuntime) {
         sendJson(response, 503, {
           message: 'The embedded PI runtime is not available for this host.',
@@ -362,7 +362,7 @@ export async function handleCodebaseVisualizerRequest(
       return true
     }
 
-    if (pathname === CODEBASE_VISUALIZER_AGENT_AUTH_IMPORT_CODEX_ROUTE && method === 'POST') {
+    if (pathname === SEMANTICODE_AGENT_AUTH_IMPORT_CODEX_ROUTE && method === 'POST') {
       if (!options.agentRuntime) {
         sendJson(response, 503, {
           message: 'The embedded PI runtime is not available for this host.',
@@ -375,7 +375,7 @@ export async function handleCodebaseVisualizerRequest(
       return true
     }
 
-    if (pathname === CODEBASE_VISUALIZER_AGENT_AUTH_LOGOUT_ROUTE && method === 'POST') {
+    if (pathname === SEMANTICODE_AGENT_AUTH_LOGOUT_ROUTE && method === 'POST') {
       if (!options.agentRuntime) {
         sendJson(response, 503, {
           message: 'The embedded PI runtime is not available for this host.',
@@ -391,7 +391,7 @@ export async function handleCodebaseVisualizerRequest(
       return true
     }
 
-    if (pathname === CODEBASE_VISUALIZER_AGENT_AUTH_CALLBACK_ROUTE && method === 'GET') {
+    if (pathname === SEMANTICODE_AGENT_AUTH_CALLBACK_ROUTE && method === 'GET') {
       if (!options.agentRuntime) {
         response.statusCode = 503
         response.setHeader('Content-Type', 'text/html; charset=utf-8')
@@ -409,7 +409,7 @@ export async function handleCodebaseVisualizerRequest(
     }
 
     const draftMatch = pathname.match(
-      new RegExp(`^${CODEBASE_VISUALIZER_DRAFTS_ROUTE}/([^/]+)/(accept|reject)$`),
+      new RegExp(`^${SEMANTICODE_DRAFTS_ROUTE}/([^/]+)/(accept|reject)$`),
     )
 
     if (draftMatch && method === 'POST') {
@@ -444,7 +444,7 @@ export async function handleCodebaseVisualizerRequest(
       message:
         error instanceof Error
           ? error.message
-          : 'Failed to process codebase visualizer request.',
+          : 'Failed to process semanticode request.',
     })
     return true
   }

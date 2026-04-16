@@ -29,7 +29,7 @@ export async function runCli(options: RunCliOptions = {}) {
     port: parsedArguments.port,
   })
 
-  process.stdout.write(`Codebase Visualizer running at ${serverHandle.url}\n`)
+  process.stdout.write(`Semanticode running at ${serverHandle.url}\n`)
   process.stdout.write(`Visualizing ${rootDir}\n`)
   process.stdout.write(
     `Agent instructions written to ${serverHandle.instructionsPath}\n\n`,
@@ -104,7 +104,7 @@ function parseArguments(args: string[]): ParsedArguments {
 function printHelp() {
   process.stdout.write(
     [
-      'Usage: codebase-visualizer [path] [--port 3210] [--host 127.0.0.1]',
+      'Usage: semanticode [path] [--port 3210] [--host 127.0.0.1]',
       '',
       'Starts a local web app that visualizes the target repository.',
     ].join('\n') + '\n',

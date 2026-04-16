@@ -1,27 +1,38 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { access } from 'node:fs/promises'
 import { basename, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { PiAgentService } from './agent/PiAgentService'
 import { startStandaloneServer, type StandaloneServerHandle } from '../hosts/standaloneServer'
+import {
+  createEmptyWorkspaceHistoryState,
+  loadWorkspaceHistoryState,
+  persistWorkspaceHistoryState,
+  rememberWorkspace,
+  type WorkspaceHistoryState,
+} from './workspaceHistory'
 
 let mainWindow: BrowserWindow | null = null
 let serverHandle: StandaloneServerHandle | null = null
 let activeWorkspaceRootDir: string | null = null
+let workspaceHistoryState: WorkspaceHistoryState = createEmptyWorkspaceHistoryState()
 const piAgentService = new PiAgentService({
   openExternal: (url) => shell.openExternal(url),
 })
 
 void app.whenReady().then(async () => {
+  workspaceHistoryState = await loadWorkspaceHistoryState(app.getPath('userData'))
+
   piAgentService.subscribe((event) => {
     if (!mainWindow || mainWindow.isDestroyed()) {
       return
     }
 
-    mainWindow.webContents.send('codebase-visualizer:agent:event', event)
+    mainWindow.webContents.send('semanticode:agent:event', event)
   })
 
-  ipcMain.handle('codebase-visualizer:open-workspace', async () => {
+  ipcMain.handle('semanticode:open-workspace', async () => {
     if (!mainWindow) {
       return false
     }
@@ -36,7 +47,16 @@ void app.whenReady().then(async () => {
     return true
   })
 
-  ipcMain.handle('codebase-visualizer:close-workspace', async () => {
+  ipcMain.handle('semanticode:open-workspace-root-dir', async (_event, rootDir: string) => {
+    if (!mainWindow || !rootDir) {
+      return false
+    }
+
+    await openWorkspace(mainWindow, rootDir)
+    return true
+  })
+
+  ipcMain.handle('semanticode:close-workspace', async () => {
     if (!mainWindow) {
       return false
     }
@@ -45,7 +65,12 @@ void app.whenReady().then(async () => {
     return true
   })
 
-  ipcMain.handle('codebase-visualizer:agent:create-session', async () => {
+  ipcMain.handle('semanticode:get-workspace-history', async () => ({
+    activeWorkspaceRootDir,
+    recentWorkspaces: workspaceHistoryState.recentWorkspaces,
+  }))
+
+  ipcMain.handle('semanticode:agent:create-session', async () => {
     if (!activeWorkspaceRootDir) {
       return null
     }
@@ -53,24 +78,24 @@ void app.whenReady().then(async () => {
     return piAgentService.ensureWorkspaceSession(activeWorkspaceRootDir)
   })
 
-  ipcMain.handle('codebase-visualizer:agent:send-message', async (_event, message: string) => {
+  ipcMain.handle('semanticode:agent:send-message', async (_event, message: string) => {
     if (!activeWorkspaceRootDir) {
       return false
     }
 
     console.info(
-      `[codebase-visualizer][agent] IPC send-message received for ${activeWorkspaceRootDir}.`,
+      `[semanticode][agent] IPC send-message received for ${activeWorkspaceRootDir}.`,
     )
     void piAgentService.promptWorkspaceSession(activeWorkspaceRootDir, message).catch((error) => {
       console.error(
-        '[codebase-visualizer][agent] Background prompt failed:',
+        '[semanticode][agent] Background prompt failed:',
         error instanceof Error ? error.message : error,
       )
     })
     return true
   })
 
-  ipcMain.handle('codebase-visualizer:agent:cancel', async () => {
+  ipcMain.handle('semanticode:agent:cancel', async () => {
     if (!activeWorkspaceRootDir) {
       return false
     }
@@ -79,7 +104,7 @@ void app.whenReady().then(async () => {
   })
 
   mainWindow = createMainWindow()
-  const workspaceRootDir = resolveCliWorkspaceRootDir()
+  const workspaceRootDir = await resolveInitialWorkspaceRootDir()
 
   if (workspaceRootDir) {
     await openWorkspace(mainWindow, workspaceRootDir)
@@ -93,7 +118,7 @@ void app.whenReady().then(async () => {
 
       if (serverHandle && activeWorkspaceRootDir) {
         await mainWindow.loadURL(serverHandle.url)
-        mainWindow.setTitle(`Codebase Visualizer - ${basename(activeWorkspaceRootDir)}`)
+        mainWindow.setTitle(`Semanticode - ${basename(activeWorkspaceRootDir)}`)
       } else {
         await loadWelcomeScreen(mainWindow)
       }
@@ -106,7 +131,7 @@ void app.whenReady().then(async () => {
   }
 
   dialog.showErrorBox(
-    'Codebase Visualizer failed to start',
+    'Semanticode failed to start',
     error instanceof Error ? error.message : 'Unknown startup error.',
   )
   app.quit()
@@ -119,11 +144,13 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
-  ipcMain.removeHandler('codebase-visualizer:open-workspace')
-  ipcMain.removeHandler('codebase-visualizer:close-workspace')
-  ipcMain.removeHandler('codebase-visualizer:agent:create-session')
-  ipcMain.removeHandler('codebase-visualizer:agent:send-message')
-  ipcMain.removeHandler('codebase-visualizer:agent:cancel')
+  ipcMain.removeHandler('semanticode:open-workspace')
+  ipcMain.removeHandler('semanticode:open-workspace-root-dir')
+  ipcMain.removeHandler('semanticode:close-workspace')
+  ipcMain.removeHandler('semanticode:get-workspace-history')
+  ipcMain.removeHandler('semanticode:agent:create-session')
+  ipcMain.removeHandler('semanticode:agent:send-message')
+  ipcMain.removeHandler('semanticode:agent:cancel')
 
   if (serverHandle) {
     void serverHandle.close()
@@ -144,7 +171,7 @@ function createMainWindow() {
     height: 980,
     minWidth: 1100,
     minHeight: 720,
-    title: 'Codebase Visualizer',
+    title: 'Semanticode',
     backgroundColor: '#f5efe3',
     webPreferences: {
       contextIsolation: true,
@@ -154,7 +181,7 @@ function createMainWindow() {
   })
 
   window.webContents.on('will-navigate', (event, url) => {
-    if (url !== 'codebase-visualizer://open-workspace') {
+    if (url !== 'semanticode://open-workspace') {
       return
     }
 
@@ -186,6 +213,22 @@ function resolveCliWorkspaceRootDir() {
   return null
 }
 
+async function resolveInitialWorkspaceRootDir() {
+  const cliWorkspaceRootDir = resolveCliWorkspaceRootDir()
+
+  if (cliWorkspaceRootDir) {
+    return cliWorkspaceRootDir
+  }
+
+  const lastOpenedRootDir = workspaceHistoryState.lastOpenedRootDir
+
+  if (!lastOpenedRootDir) {
+    return null
+  }
+
+  return (await pathExists(lastOpenedRootDir)) ? lastOpenedRootDir : null
+}
+
 async function promptForWorkspaceRootDir() {
   const result = await dialog.showOpenDialog({
     title: 'Open Repository',
@@ -211,6 +254,14 @@ async function handleOpenWorkspaceRequest(window: BrowserWindow) {
 }
 
 async function openWorkspace(window: BrowserWindow, workspaceRootDir: string) {
+  const normalizedWorkspaceRootDir = resolve(workspaceRootDir)
+
+  if (activeWorkspaceRootDir === normalizedWorkspaceRootDir && serverHandle) {
+    workspaceHistoryState = rememberWorkspace(workspaceHistoryState, normalizedWorkspaceRootDir)
+    await persistWorkspaceHistoryState(app.getPath('userData'), workspaceHistoryState)
+    return
+  }
+
   if (activeWorkspaceRootDir && activeWorkspaceRootDir !== workspaceRootDir) {
     await piAgentService.disposeWorkspaceSession(activeWorkspaceRootDir)
   }
@@ -220,16 +271,21 @@ async function openWorkspace(window: BrowserWindow, workspaceRootDir: string) {
     serverHandle = null
   }
 
-  activeWorkspaceRootDir = workspaceRootDir
+  activeWorkspaceRootDir = normalizedWorkspaceRootDir
   serverHandle = await startStandaloneServer({
     agentRuntime: piAgentService,
-    rootDir: workspaceRootDir,
+    rootDir: normalizedWorkspaceRootDir,
     host: '127.0.0.1',
     port: 0,
   })
 
-  await piAgentService.ensureWorkspaceSession(workspaceRootDir)
-  window.setTitle(`Codebase Visualizer - ${basename(workspaceRootDir)}`)
+  await piAgentService.ensureWorkspaceSession(normalizedWorkspaceRootDir)
+  workspaceHistoryState = rememberWorkspace(
+    workspaceHistoryState,
+    normalizedWorkspaceRootDir,
+  )
+  await persistWorkspaceHistoryState(app.getPath('userData'), workspaceHistoryState)
+  window.setTitle(`Semanticode - ${basename(normalizedWorkspaceRootDir)}`)
   await window.loadURL(serverHandle.url)
 }
 
@@ -245,8 +301,17 @@ async function loadWelcomeScreen(window: BrowserWindow) {
     serverHandle = null
   }
 
-  window.setTitle('Codebase Visualizer')
+  window.setTitle('Semanticode')
   await window.loadURL(buildWelcomeScreenUrl())
+}
+
+async function pathExists(pathValue: string) {
+  try {
+    await access(pathValue)
+    return true
+  } catch {
+    return false
+  }
 }
 
 function buildWelcomeScreenUrl() {
@@ -255,7 +320,7 @@ function buildWelcomeScreenUrl() {
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Codebase Visualizer</title>
+    <title>Semanticode</title>
     <style>
       :root {
         color: #271f17;
@@ -341,10 +406,10 @@ function buildWelcomeScreenUrl() {
   </head>
   <body>
     <main class="stack">
-      <h1>Codebase Visualizer</h1>
+      <h1>Semanticode</h1>
       <p>Open a repository to inspect its structure, explore symbols, and generate custom layouts in a desktop workspace instead of a browser tab.</p>
       <div class="actions">
-        <a class="button" href="codebase-visualizer://open-workspace">Open Folder</a>
+        <a class="button" href="semanticode://open-workspace">Open Folder</a>
       </div>
       <p class="hint">You can still launch a project directly with <code>npm run desktop -- /path/to/repo</code>.</p>
     </main>

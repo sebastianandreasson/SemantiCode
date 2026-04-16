@@ -17,7 +17,7 @@ const DEFAULT_PROVIDER = 'openai'
 const DEFAULT_MODEL_ID = 'gpt-4.1-mini'
 const DEFAULT_CODEX_MODEL_ID = 'gpt-5.4'
 const SETTINGS_FILENAME = 'agent-settings.json'
-const APP_SERVER_URL_ENV_NAME = 'CODEBASE_VISUALIZER_PI_APP_SERVER_URL'
+const APP_SERVER_URL_ENV_NAME = 'SEMANTICODE_PI_APP_SERVER_URL'
 const CODEX_OPENAI_MODELS = [
   'gpt-5.4',
   'gpt-5.2-codex',
@@ -338,7 +338,7 @@ export class PiAgentSettingsStore {
   }
 
   private getOpenAiOAuthClientId(persisted: PersistedSettings) {
-    return persisted.openAiOAuthClientId?.trim() || process.env.CODEBASE_VISUALIZER_OPENAI_OAUTH_CLIENT_ID?.trim() || ''
+    return persisted.openAiOAuthClientId?.trim() || process.env.SEMANTICODE_OPENAI_OAUTH_CLIENT_ID?.trim() || ''
   }
 
   private resolveAppServerUrl(persisted: PersistedSettings) {
@@ -352,7 +352,7 @@ export class PiAgentSettingsStore {
       return this.deserializeSecret(persistedSecret)
     }
 
-    return process.env.CODEBASE_VISUALIZER_OPENAI_OAUTH_CLIENT_SECRET?.trim() || ''
+    return process.env.SEMANTICODE_OPENAI_OAUTH_CLIENT_SECRET?.trim() || ''
   }
 
   async applyConfiguredApiKeys() {
@@ -477,7 +477,7 @@ export class PiAgentSettingsStore {
       return safeStorage.decryptString(Buffer.from(secret.value, 'base64'))
     } catch (error) {
       this.logger.warn(
-        `[codebase-visualizer][pi] Failed to decrypt stored API key: ${
+        `[semanticode][pi] Failed to decrypt stored API key: ${
           error instanceof Error ? error.message : 'Unknown error'
         }`,
       )

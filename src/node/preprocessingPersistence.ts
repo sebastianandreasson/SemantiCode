@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path'
 import type { PreprocessedWorkspaceContext } from '../preprocessing/types'
 import type { SemanticPurposeSummaryRecord } from '../semantic/types'
 
-const PREPROCESSED_DIRECTORY = '.codebase-visualizer/preprocessed'
+const PREPROCESSED_DIRECTORY = '.semanticode/preprocessed'
 const PREPROCESSED_CONTEXT_FILE = 'workspace-context.json'
 
 export async function readPersistedPreprocessedWorkspaceContext(rootDir: string) {

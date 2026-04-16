@@ -1,7 +1,7 @@
 import '@xyflow/react/dist/style.css'
 import './styles.css'
 
-export { CodebaseVisualizer } from './components/CodebaseVisualizer'
+export { Semanticode } from './components/Semanticode'
 export { buildStructuralLayout } from './layouts/structuralLayout'
 export { buildSymbolLayout } from './layouts/symbolLayout'
 export { buildSemanticLayout } from './semantic/semanticLayout'

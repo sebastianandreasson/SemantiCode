@@ -176,11 +176,11 @@ function buildSuccessHtml() {
     '<html lang="en">',
     '<head>',
     '<meta charset="utf-8" />',
-    '<title>Codebase Visualizer Login</title>',
+    '<title>Semanticode Login</title>',
     '<meta name="viewport" content="width=device-width, initial-scale=1" />',
     '<style>body{font-family:ui-sans-serif,system-ui,sans-serif;padding:32px;background:#f5efe3;color:#1b1a17}main{max-width:520px;margin:0 auto;background:#fff9ef;border-radius:16px;padding:24px;border:1px solid #ded6c5}h1{font-size:20px;margin:0 0 8px}p{margin:0;color:#4d473b}</style>',
     '</head>',
-    '<body><main><h1>Sign-in received</h1><p>OpenAI authentication completed. You can close this window and return to Codebase Visualizer.</p></main></body>',
+    '<body><main><h1>Sign-in received</h1><p>OpenAI authentication completed. You can close this window and return to Semanticode.</p></main></body>',
     '</html>',
   ].join('')
 }
@@ -191,7 +191,7 @@ function buildErrorHtml(message: string) {
     '<html lang="en">',
     '<head>',
     '<meta charset="utf-8" />',
-    '<title>Codebase Visualizer Login</title>',
+    '<title>Semanticode Login</title>',
     '<meta name="viewport" content="width=device-width, initial-scale=1" />',
     '<style>body{font-family:ui-sans-serif,system-ui,sans-serif;padding:32px;background:#f5efe3;color:#1b1a17}main{max-width:520px;margin:0 auto;background:#fff9ef;border-radius:16px;padding:24px;border:1px solid #ded6c5}h1{font-size:20px;margin:0 0 8px;color:#8b2e1d}p{margin:0;color:#4d473b}</style>',
     '</head>',

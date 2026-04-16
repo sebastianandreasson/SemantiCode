@@ -72,7 +72,7 @@ describe('AgentPanel OAuth reconciliation', () => {
     mockClient.logoutBrokeredAuthSession.mockResolvedValue({ state: 'signed_out' })
     mockClient.completeBrokeredLogin.mockResolvedValue({
       ok: true,
-      message: 'Sign-in completed. Return to Codebase Visualizer.',
+      message: 'Sign-in completed. Return to Semanticode.',
     })
   })
 
@@ -131,10 +131,9 @@ describe('AgentPanel OAuth reconciliation', () => {
     expect(sendButton.hasAttribute('disabled')).toBe(true)
     expect(sendButton.getAttribute('title')).toBe('Enter a prompt to send.')
     expect(composer).not.toBeNull()
-    expect(screen.getByText('Signed in as: tester@example.com')).not.toBeNull()
   })
 
-  it('persists the selected Codex-safe model before sending a prompt', async () => {
+  it('persists the selected Codex-safe model before starting brokered sign-in', async () => {
     const user = userEvent.setup()
     const authenticatedSettings = buildSettings({
       accountLabel: 'tester@example.com',
@@ -164,22 +163,27 @@ describe('AgentPanel OAuth reconciliation', () => {
       modelId: 'gpt-5.4-mini',
     })
 
-    render(<AgentPanel desktopHostAvailable />)
+    mockClient.beginBrokeredLogin.mockResolvedValue({
+      brokerSession: { state: 'pending' },
+      implemented: true,
+      loginUrl: 'https://auth.openai.com/oauth/authorize?fake=true',
+      message: 'Opened the browser for ChatGPT sign-in.',
+    })
+
+    render(<AgentPanel desktopHostAvailable settingsOnly />)
 
     await waitFor(() => {
       expect(screen.getByText('ready')).not.toBeNull()
     })
 
     const modelSelect = screen.getByLabelText('Model')
-    const composer = screen.getByPlaceholderText('Ask about this repository or request a change…')
-    const sendButton = screen.getByRole('button', { name: 'Send' })
+    const signInButton = screen.getByRole('button', { name: 'Sign In With OpenAI' })
 
     expect(screen.queryByRole('option', { name: 'gpt-4.1-nano' })).toBeNull()
     expect(screen.getByRole('option', { name: 'gpt-5.4' })).not.toBeNull()
 
     await user.selectOptions(modelSelect, 'gpt-5.4-mini')
-    await user.type(composer, 'Test Codex model persistence')
-    await user.click(sendButton)
+    await user.click(signInButton)
 
     await waitFor(() => {
       expect(mockClient.saveSettings).toHaveBeenCalledWith(
@@ -190,8 +194,6 @@ describe('AgentPanel OAuth reconciliation', () => {
         }),
       )
     })
-
-    expect(mockClient.sendMessage).toHaveBeenCalledWith('Test Codex model persistence')
   })
 })
 

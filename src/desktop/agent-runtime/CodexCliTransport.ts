@@ -151,7 +151,7 @@ export class CodexCliTransport implements AgentTransport {
     const partialState = createPartialAssistantState(config.model)
 
     this.logger.info(
-      `[codebase-visualizer][codex-cli-transport] Spawned run ${processId} for ${this.workspaceRootDir} with model ${config.model.id}.`,
+      `[semanticode][codex-cli-transport] Spawned run ${processId} for ${this.workspaceRootDir} with model ${config.model.id}.`,
     )
 
     let aborted = Boolean(signal?.aborted)
@@ -185,7 +185,7 @@ export class CodexCliTransport implements AgentTransport {
       if (!activeRunState.hasLoggedStderrLine) {
         activeRunState.hasLoggedStderrLine = true
         this.logger.warn(
-          `[codebase-visualizer][codex-cli-transport] First stderr line for ${processId}: ${normalizedLine}`,
+          `[semanticode][codex-cli-transport] First stderr line for ${processId}: ${normalizedLine}`,
         )
       }
 
@@ -205,7 +205,7 @@ export class CodexCliTransport implements AgentTransport {
     })
 
     this.logger.info(
-      `[codebase-visualizer][codex-cli-transport] Run ${processId} exited with status ${exitCode}.`,
+      `[semanticode][codex-cli-transport] Run ${processId} exited with status ${exitCode}.`,
     )
 
     finalizeOpenContent(partialState, stream)
@@ -261,7 +261,7 @@ export class CodexCliTransport implements AgentTransport {
     if (actions.length > 0 && !activeRunState.hasLoggedStdoutLine) {
       activeRunState.hasLoggedStdoutLine = true
       this.logger.info(
-        `[codebase-visualizer][codex-cli-transport] First stdout event for ${activeRunState.processId}.`,
+        `[semanticode][codex-cli-transport] First stdout event for ${activeRunState.processId}.`,
       )
     }
 
@@ -393,7 +393,7 @@ export class CodexCliTransport implements AgentTransport {
       await readFile(authFilePath, 'utf8')
     } catch (error) {
       this.logger.error(
-        `[codebase-visualizer][codex-cli-transport] Failed to materialize Codex auth at ${authFilePath}: ${
+        `[semanticode][codex-cli-transport] Failed to materialize Codex auth at ${authFilePath}: ${
           error instanceof Error ? error.message : 'Unknown error.'
         }`,
       )

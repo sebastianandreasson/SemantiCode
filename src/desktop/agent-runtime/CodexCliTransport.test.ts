@@ -11,7 +11,7 @@ const readFileMock = vi.fn()
 
 vi.mock('electron', () => ({
   app: {
-    getPath: vi.fn(() => '/tmp/codebase-visualizer-tests'),
+    getPath: vi.fn(() => '/tmp/semanticode-tests'),
   },
 }))
 
@@ -78,7 +78,7 @@ describe('CodexCliTransport', () => {
 
     const transport = new CodexCliTransport({
       authProvider: {
-        materializeCodexCliAuth: vi.fn().mockResolvedValue('/tmp/codebase-visualizer-tests/auth.json'),
+        materializeCodexCliAuth: vi.fn().mockResolvedValue('/tmp/semanticode-tests/auth.json'),
       } as never,
       logger: {
         error: vi.fn(),
@@ -179,7 +179,7 @@ describe('CodexCliTransport', () => {
 
     const transport = new CodexCliTransport({
       authProvider: {
-        materializeCodexCliAuth: vi.fn().mockResolvedValue('/tmp/codebase-visualizer-tests/auth.json'),
+        materializeCodexCliAuth: vi.fn().mockResolvedValue('/tmp/semanticode-tests/auth.json'),
       } as never,
       logger: {
         error: vi.fn(),

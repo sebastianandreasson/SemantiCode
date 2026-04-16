@@ -31,9 +31,9 @@ import { OpenAICodexProvider } from '../providers/openai-codex/provider'
 
 const DEFAULT_PI_PROVIDER = 'openai'
 const DEFAULT_PI_MODEL_ID = 'gpt-4.1-mini'
-const BOOT_PROMPT_ENV_NAME = 'CODEBASE_VISUALIZER_PI_BOOT_PROMPT'
-const PI_PROVIDER_ENV_NAME = 'CODEBASE_VISUALIZER_PI_PROVIDER'
-const PI_MODEL_ENV_NAME = 'CODEBASE_VISUALIZER_PI_MODEL'
+const BOOT_PROMPT_ENV_NAME = 'SEMANTICODE_PI_BOOT_PROMPT'
+const PI_PROVIDER_ENV_NAME = 'SEMANTICODE_PI_PROVIDER'
+const PI_MODEL_ENV_NAME = 'SEMANTICODE_PI_MODEL'
 
 interface PiAgentSessionRecord {
   kind: 'pi'
@@ -166,12 +166,12 @@ export class PiAgentService {
     })
 
     this.logger.info(
-      `[codebase-visualizer][pi] Created ${summary.transport === 'codex_cli' ? 'Codex CLI' : 'provider'} workspace session ${summary.id} for ${workspaceRootDir} using ${summary.provider}/${summary.modelId}.`,
+      `[semanticode][pi] Created ${summary.transport === 'codex_cli' ? 'Codex CLI' : 'provider'} workspace session ${summary.id} for ${workspaceRootDir} using ${summary.provider}/${summary.modelId}.`,
     )
 
     if (disabledReason) {
       this.logger.warn(
-        `[codebase-visualizer][pi] ${summary.lastError}`,
+        `[semanticode][pi] ${summary.lastError}`,
       )
       return summary
     }
@@ -196,7 +196,7 @@ export class PiAgentService {
 
     this.sessionsByWorkspaceRootDir.delete(workspaceRootDir)
     this.logger.info(
-      `[codebase-visualizer][pi] Disposed workspace session ${record.summary.id} for ${workspaceRootDir}.`,
+      `[semanticode][pi] Disposed workspace session ${record.summary.id} for ${workspaceRootDir}.`,
     )
   }
 
@@ -262,13 +262,13 @@ export class PiAgentService {
 
   async promptWorkspaceSession(workspaceRootDir: string, message: string) {
     this.logger.info(
-      `[codebase-visualizer][agent] promptWorkspaceSession called for ${workspaceRootDir}.`,
+      `[semanticode][agent] promptWorkspaceSession called for ${workspaceRootDir}.`,
     )
     let record = this.sessionsByWorkspaceRootDir.get(workspaceRootDir)
 
     if (!record) {
       this.logger.info(
-        `[codebase-visualizer][agent] No existing session for ${workspaceRootDir}; creating one lazily.`,
+        `[semanticode][agent] No existing session for ${workspaceRootDir}; creating one lazily.`,
       )
       await this.ensureWorkspaceSession(workspaceRootDir)
       record = this.sessionsByWorkspaceRootDir.get(workspaceRootDir)
@@ -312,7 +312,7 @@ export class PiAgentService {
 
     try {
       this.logger.info(
-        `[codebase-visualizer][agent] Prompting ${record.summary.transport === 'codex_cli' ? 'Codex CLI' : 'PI'} session ${record.summary.id} with model ${record.summary.modelId}.`,
+        `[semanticode][agent] Prompting ${record.summary.transport === 'codex_cli' ? 'Codex CLI' : 'PI'} session ${record.summary.id} with model ${record.summary.modelId}.`,
       )
       await record.agent.prompt(message)
     } catch (error) {
@@ -421,14 +421,14 @@ export class PiAgentService {
 
     try {
       this.logger.info(
-        `[codebase-visualizer][pi] Running boot prompt for workspace ${record.workspaceRootDir}.`,
+        `[semanticode][pi] Running boot prompt for workspace ${record.workspaceRootDir}.`,
       )
       await record.agent.prompt(prompt)
       record.summary = updateSessionSummary(record.summary, {
         runState: 'ready',
       })
       this.logger.info(
-        `[codebase-visualizer][pi] Boot prompt completed for workspace ${record.workspaceRootDir}.`,
+        `[semanticode][pi] Boot prompt completed for workspace ${record.workspaceRootDir}.`,
       )
     } catch (error) {
       const message =
@@ -438,7 +438,7 @@ export class PiAgentService {
         lastError: message,
       })
       this.logger.error(
-        `[codebase-visualizer][pi] Boot prompt failed for workspace ${record.workspaceRootDir}: ${message}`,
+        `[semanticode][pi] Boot prompt failed for workspace ${record.workspaceRootDir}: ${message}`,
       )
     }
   }
@@ -476,7 +476,7 @@ export class PiAgentService {
           startedAt: new Date().toISOString(),
         })
         this.logger.info(
-          `[codebase-visualizer][pi] ${sessionId} tool start: ${event.toolName}`,
+          `[semanticode][pi] ${sessionId} tool start: ${event.toolName}`,
         )
         this.emit({
           type: 'tool',
@@ -489,11 +489,11 @@ export class PiAgentService {
         this.finishToolInvocation(record, sessionId, event)
         if (event.isError) {
           this.logger.warn(
-            `[codebase-visualizer][pi] ${sessionId} tool error: ${event.toolName}`,
+            `[semanticode][pi] ${sessionId} tool error: ${event.toolName}`,
           )
         } else {
           this.logger.info(
-            `[codebase-visualizer][pi] ${sessionId} tool end: ${event.toolName}`,
+            `[semanticode][pi] ${sessionId} tool end: ${event.toolName}`,
           )
         }
         break
@@ -502,7 +502,7 @@ export class PiAgentService {
         this.emitNormalizedMessage(record, event.message, true)
         if (event.assistantMessageEvent.type === 'text_delta') {
           this.logger.info(
-            `[codebase-visualizer][pi] ${sessionId} delta: ${event.assistantMessageEvent.delta}`,
+            `[semanticode][pi] ${sessionId} delta: ${event.assistantMessageEvent.delta}`,
           )
         }
         break
@@ -697,7 +697,7 @@ function tryGetModel(provider: KnownProvider, modelId: string) {
 
 function buildWorkspaceSystemPrompt(workspaceRootDir: string) {
   return [
-    'You are embedded inside Codebase Visualizer, a desktop code exploration and editing environment.',
+    'You are embedded inside Semanticode, a desktop code exploration and editing environment.',
     `The active workspace root is: ${workspaceRootDir}`,
     'Prefer reasoning about the active repository and use tools rather than making assumptions about the workspace state.',
   ].join('\n')

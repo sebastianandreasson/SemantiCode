@@ -3,7 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { CodebaseVisualizer } from './CodebaseVisualizer'
+import { Semanticode } from './Semanticode'
 import { visualizerStore } from '../store/visualizerStore'
 import type {
   LayoutDraft,
@@ -173,7 +173,7 @@ const preprocessingStatus: PreprocessingStatus = {
   totalSymbols: 2,
 }
 
-describe('CodebaseVisualizer semantic compare overlay', () => {
+describe('Semanticode semantic compare overlay', () => {
   beforeEach(() => {
     ;(globalThis as typeof globalThis & {
       ResizeObserver?: new (callback: ResizeObserverCallback) => ResizeObserver
@@ -196,7 +196,7 @@ describe('CodebaseVisualizer semantic compare overlay', () => {
     const user = userEvent.setup()
 
     render(
-      <CodebaseVisualizer
+      <Semanticode
         preprocessedWorkspaceContext={preprocessedWorkspaceContext}
         preprocessingStatus={preprocessingStatus}
         snapshot={snapshot}

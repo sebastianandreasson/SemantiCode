@@ -2,23 +2,26 @@ import { contextBridge, ipcRenderer } from 'electron'
 
 import type { AgentEvent } from '../schema/agent'
 
-contextBridge.exposeInMainWorld('codebaseVisualizerDesktop', {
+contextBridge.exposeInMainWorld('semanticodeDesktop', {
   host: 'electron',
   isDesktop: true,
-  openWorkspaceDialog: () => ipcRenderer.invoke('codebase-visualizer:open-workspace'),
-  closeWorkspace: () => ipcRenderer.invoke('codebase-visualizer:close-workspace'),
-  createSession: () => ipcRenderer.invoke('codebase-visualizer:agent:create-session'),
+  getWorkspaceHistory: () => ipcRenderer.invoke('semanticode:get-workspace-history'),
+  openWorkspaceDialog: () => ipcRenderer.invoke('semanticode:open-workspace'),
+  openWorkspaceRootDir: (rootDir: string) =>
+    ipcRenderer.invoke('semanticode:open-workspace-root-dir', rootDir),
+  closeWorkspace: () => ipcRenderer.invoke('semanticode:close-workspace'),
+  createSession: () => ipcRenderer.invoke('semanticode:agent:create-session'),
   sendMessage: (message: string) =>
-    ipcRenderer.invoke('codebase-visualizer:agent:send-message', message),
-  cancel: () => ipcRenderer.invoke('codebase-visualizer:agent:cancel'),
+    ipcRenderer.invoke('semanticode:agent:send-message', message),
+  cancel: () => ipcRenderer.invoke('semanticode:agent:cancel'),
   onEvent: (listener: (event: AgentEvent) => void) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, payload: AgentEvent) => {
       listener(payload)
     }
 
-    ipcRenderer.on('codebase-visualizer:agent:event', wrappedListener)
+    ipcRenderer.on('semanticode:agent:event', wrappedListener)
     return () => {
-      ipcRenderer.off('codebase-visualizer:agent:event', wrappedListener)
+      ipcRenderer.off('semanticode:agent:event', wrappedListener)
     }
   },
 })

@@ -26,7 +26,7 @@ export async function refreshOpenAICodexTokenIfNeeded(
   }
 
   if (!tokenSet.refreshToken) {
-    options.logger?.warn?.('[codebase-visualizer][openai-codex] Access token expired and no refresh token is available.')
+    options.logger?.warn?.('[semanticode][openai-codex] Access token expired and no refresh token is available.')
     return tokenSet
   }
 

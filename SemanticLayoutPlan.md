@@ -177,7 +177,7 @@ Semantic indexing must be cached aggressively.
 
 Recommended storage:
 
-- workspace-local cache under `.codebase-visualizer/semantic/`
+- workspace-local cache under `.semanticode/semantic/`
 
 Suggested cached artifacts:
 
@@ -431,7 +431,7 @@ src/semantic/projection/refinement.ts
 src/schema/layout.ts
 src/schema/store.ts
 src/store/visualizerStore.ts
-src/components/CodebaseVisualizer.tsx
+src/components/Semanticode.tsx
 src/types.ts
 src/node/http.ts
 src/hosts/standaloneServer.ts

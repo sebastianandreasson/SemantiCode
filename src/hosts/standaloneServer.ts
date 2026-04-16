@@ -4,7 +4,7 @@ import { dirname, extname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { ensureAgentInstructions } from '../cli/agentInstructions'
-import { handleCodebaseVisualizerRequest } from '../node/http'
+import { handleSemanticodeRequest } from '../node/http'
 import type { AgentRuntimeRequestBridge } from '../node/http'
 
 export const DEFAULT_STANDALONE_HOST = '127.0.0.1'
@@ -42,7 +42,7 @@ export async function startStandaloneServer(
   )
 
   const server = createServer(async (request, response) => {
-    const handled = await handleCodebaseVisualizerRequest(request, response, {
+    const handled = await handleSemanticodeRequest(request, response, {
       agentRuntime: options.agentRuntime,
       rootDir,
       analyzeCalls: true,
@@ -92,10 +92,10 @@ export async function startStandaloneServer(
 
 export function buildAgentPromptText(instructionsPath: string) {
   return [
-    `Look up "${instructionsPath}" and follow it to construct a new Codebase Visualizer layout draft for this repository.`,
+    `Look up "${instructionsPath}" and follow it to construct a new Semanticode layout draft for this repository.`,
     'Use the following layout brief:',
     '"REPLACE WITH YOUR CUSTOM STRUCTURE HERE"',
-    'Save the result as a draft layout so it appears in Codebase Visualizer.',
+    'Save the result as a draft layout so it appears in Semanticode.',
   ].join('\n')
 }
 

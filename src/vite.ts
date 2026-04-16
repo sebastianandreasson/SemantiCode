@@ -3,24 +3,24 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Plugin } from 'vite'
 
 import type { ReadProjectSnapshotOptions } from './types'
-import { handleCodebaseVisualizerRequest } from './node/http'
-import { CODEBASE_VISUALIZER_ROUTE } from './shared/constants'
+import { handleSemanticodeRequest } from './node/http'
+import { SEMANTICODE_ROUTE } from './shared/constants'
 
-export interface CodebaseVisualizerViteOptions
+export interface SemanticodeViteOptions
   extends ReadProjectSnapshotOptions {
   route?: string
 }
 
-export function codebaseVisualizerPlugin(
-  options: CodebaseVisualizerViteOptions = {},
+export function semanticodePlugin(
+  options: SemanticodeViteOptions = {},
 ): Plugin {
-  const route = options.route ?? CODEBASE_VISUALIZER_ROUTE
+  const route = options.route ?? SEMANTICODE_ROUTE
 
   return {
-    name: 'codebase-visualizer',
+    name: 'semanticode',
     configureServer(server) {
       server.middlewares.use((request, response, next) => {
-        void handleCodebaseVisualizerMiddleware(
+        void handleSemanticodeMiddleware(
           request,
           response,
           next,
@@ -32,7 +32,7 @@ export function codebaseVisualizerPlugin(
     },
     configurePreviewServer(server) {
       server.middlewares.use((request, response, next) => {
-        void handleCodebaseVisualizerMiddleware(
+        void handleSemanticodeMiddleware(
           request,
           response,
           next,
@@ -45,15 +45,15 @@ export function codebaseVisualizerPlugin(
   }
 }
 
-async function handleCodebaseVisualizerMiddleware(
+async function handleSemanticodeMiddleware(
   request: IncomingMessage,
   response: ServerResponse<IncomingMessage>,
   next: () => void,
   rootDir: string,
   route: string,
-  options: CodebaseVisualizerViteOptions,
+  options: SemanticodeViteOptions,
 ) {
-  const handled = await handleCodebaseVisualizerRequest(request, response, {
+  const handled = await handleSemanticodeRequest(request, response, {
     ...options,
     rootDir,
     route,
