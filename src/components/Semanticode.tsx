@@ -15,7 +15,9 @@ import {
   type XYPosition,
 } from '@xyflow/react'
 import {
+  Suspense,
   useEffect,
+  lazy,
   useMemo,
   useRef,
   useState,
@@ -47,18 +49,27 @@ import { buildStructuralLayout } from '../layouts/structuralLayout'
 import { buildSymbolLayout } from '../layouts/symbolLayout'
 import { buildSemanticLayout } from '../semantic/semanticLayout'
 import { CodebaseAnnotationNode } from './CodebaseAnnotationNode'
-import { AgentPanel } from './AgentPanel'
 import { CodebaseCanvasNode } from './CodebaseCanvasNode'
 import { CodebaseSymbolNode } from './CodebaseSymbolNode'
-import { InspectorPane } from './inspector/InspectorPane'
 import { getInspectorHeaderSummary } from './inspector/inspectorUtils'
 import { ProjectsSidebar } from './shell/ProjectsSidebar'
+import { WorkspaceSyncModal } from './shell/WorkspaceSyncModal'
 import { WorkspaceToolbar } from './shell/WorkspaceToolbar'
 import {
   canCompareLayoutAgainstSemantic,
   resolveCanvasScene,
   resolveLayoutCompareOverlay,
 } from '../visualizer/canvasScene'
+
+const LazyInspectorPane = lazy(async () => {
+  const module = await import('./inspector/InspectorPane')
+  return { default: module.InspectorPane }
+})
+
+const LazyAgentPanel = lazy(async () => {
+  const module = await import('./AgentPanel')
+  return { default: module.AgentPanel }
+})
 
 interface SemanticodeProps {
   snapshot?: CodebaseSnapshot | null
@@ -123,6 +134,11 @@ interface NodeDimensions {
   width: number
   height: number
   compact: boolean
+}
+
+interface FlowModel {
+  nodes: Node[]
+  edges: Edge[]
 }
 
 const CLUSTERABLE_SYMBOL_KINDS = new Set([
@@ -192,6 +208,7 @@ export function Semanticode({
   workspaceProfile = null,
 }: SemanticodeProps) {
   const [agentSettingsOpen, setAgentSettingsOpen] = useState(false)
+  const [workspaceSyncOpen, setWorkspaceSyncOpen] = useState(false)
   const [projectsSidebarOpen, setProjectsSidebarOpen] = useState(true)
   const [draftActionError, setDraftActionError] = useState<string | null>(null)
   const [layoutSuggestionText, setLayoutSuggestionText] = useState('')
@@ -514,14 +531,12 @@ export function Semanticode({
     [effectiveSnapshot, expandedClusterIds, resolvedScene, symbolClusterState],
   )
 
-  useEffect(() => {
+  const baseFlowModel = useMemo<FlowModel | null>(() => {
     if (!effectiveSnapshot || !resolvedScene) {
-      setNodes([])
-      setEdges([])
-      return
+      return null
     }
 
-    const flowModel = buildFlowModel(
+    return buildFlowModel(
       effectiveSnapshot,
       resolvedScene.layoutSpec,
       graphLayers,
@@ -529,28 +544,65 @@ export function Semanticode({
       symbolClusterState,
       expandedClusterIds,
       expandedClusterLayouts,
-      selectedNodeIdSet,
-      {
-        active: compareOverlayActive,
-        nodeIds: overlayNodeIdSet,
-      },
     )
-
-    setNodes(flowModel.nodes)
-    setEdges(flowModel.edges)
   }, [
-    compareOverlayActive,
     expandedClusterLayouts,
     effectiveSnapshot,
     expandedClusterIds,
     graphLayers,
-    overlayNodeIdSet,
     resolvedScene,
+    symbolClusterState,
+    viewMode,
+  ])
+
+  useEffect(() => {
+    if (!baseFlowModel) {
+      setNodes([])
+      setEdges([])
+      return
+    }
+
+    const compareOverlayState = {
+      active: compareOverlayActive,
+      nodeIds: overlayNodeIdSet,
+    }
+
+    setNodes(
+      applyFlowNodePresentation(baseFlowModel.nodes, selectedNodeIdSet, compareOverlayState),
+    )
+    setEdges(applyFlowEdgePresentation(baseFlowModel.edges, compareOverlayState))
+  }, [
+    baseFlowModel,
+    compareOverlayActive,
+    overlayNodeIdSet,
     selectedNodeIdSet,
     setEdges,
     setNodes,
-    symbolClusterState,
-    viewMode,
+  ])
+
+  useEffect(() => {
+    if (!baseFlowModel) {
+      return
+    }
+
+    const compareOverlayState = {
+      active: compareOverlayActive,
+      nodeIds: overlayNodeIdSet,
+    }
+
+    setNodes((currentNodes) =>
+      applyFlowNodePresentation(currentNodes, selectedNodeIdSet, compareOverlayState),
+    )
+    setEdges((currentEdges) =>
+      applyFlowEdgePresentation(currentEdges, compareOverlayState),
+    )
+  }, [
+    baseFlowModel,
+    compareOverlayActive,
+    overlayNodeIdSet,
+    selectedNodeIdSet,
+    setEdges,
+    setNodes,
   ])
 
   const visibleNodeCount = useMemo(
@@ -934,6 +986,9 @@ export function Semanticode({
             onBuildSemanticEmbeddings={onBuildSemanticEmbeddings}
             onClearCompareOverlay={compareOverlayActive ? handleClearCompareOverlay : undefined}
             onOpenAgentSettings={() => setAgentSettingsOpen(true)}
+            onOpenWorkspaceSync={
+              workspaceSyncStatus ? () => setWorkspaceSyncOpen(true) : undefined
+            }
             onRejectDraft={
               activeDraft && onRejectDraft
                 ? async () => {
@@ -1111,30 +1166,32 @@ export function Semanticode({
           ) : null}
 
           {inspectorOpen ? (
-            <InspectorPane
-              activeDraft={activeDraft}
-              compareOverlayActive={compareOverlayActive}
-              desktopHostAvailable={isDesktopHost}
-              draftActionError={draftActionError}
-              graphSummary={graphSummary}
-              header={inspectorHeader}
-              inspectorBodyRef={inspectorBodyRef}
-              inspectorTab={inspectorTab}
-              onAgentRunSettled={onAgentRunSettled}
-              onClearCompareOverlay={handleClearCompareOverlay}
-              onClose={() => setInspectorOpen(false)}
-              onOpenAgentSettings={() => setAgentSettingsOpen(true)}
-              onSetInspectorTab={setInspectorTab}
-              preprocessedWorkspaceContext={preprocessedWorkspaceContext}
-              resolvedCompareOverlay={resolvedCompareOverlay}
-              selectedEdge={selectedEdge}
-              selectedFile={selectedFile}
-              selectedFiles={selectedFiles}
-              selectedNode={selectedNode}
-              selectedSymbol={selectedSymbol}
-              selectedSymbols={selectedSymbols}
-              workspaceProfile={workspaceProfile}
-            />
+            <Suspense fallback={<InspectorFallback header={inspectorHeader} onClose={() => setInspectorOpen(false)} />}>
+              <LazyInspectorPane
+                activeDraft={activeDraft}
+                compareOverlayActive={compareOverlayActive}
+                desktopHostAvailable={isDesktopHost}
+                draftActionError={draftActionError}
+                graphSummary={graphSummary}
+                header={inspectorHeader}
+                inspectorBodyRef={inspectorBodyRef}
+                inspectorTab={inspectorTab}
+                onAgentRunSettled={onAgentRunSettled}
+                onClearCompareOverlay={handleClearCompareOverlay}
+                onClose={() => setInspectorOpen(false)}
+                onOpenAgentSettings={() => setAgentSettingsOpen(true)}
+                onSetInspectorTab={setInspectorTab}
+                preprocessedWorkspaceContext={preprocessedWorkspaceContext}
+                resolvedCompareOverlay={resolvedCompareOverlay}
+                selectedEdge={selectedEdge}
+                selectedFile={selectedFile}
+                selectedFiles={selectedFiles}
+                selectedNode={selectedNode}
+                selectedSymbol={selectedSymbol}
+                selectedSymbols={selectedSymbols}
+                workspaceProfile={workspaceProfile}
+              />
+            </Suspense>
           ) : null}
         </div>
         {agentSettingsOpen ? (
@@ -1162,18 +1219,71 @@ export function Semanticode({
                   ×
                 </button>
               </div>
-              <AgentPanel
-                desktopHostAvailable={isDesktopHost}
-                preprocessedWorkspaceContext={preprocessedWorkspaceContext}
-                settingsOnly
-                workspaceProfile={workspaceProfile}
-              />
+              <Suspense fallback={<AgentSettingsFallback />}>
+                <LazyAgentPanel
+                  desktopHostAvailable={isDesktopHost}
+                  preprocessedWorkspaceContext={preprocessedWorkspaceContext}
+                  settingsOnly
+                  workspaceProfile={workspaceProfile}
+                />
+              </Suspense>
             </section>
           </div>
+        ) : null}
+        {workspaceSyncOpen && workspaceSyncStatus ? (
+          <WorkspaceSyncModal
+            onBuildEmbeddings={onBuildSemanticEmbeddings}
+            onClose={() => setWorkspaceSyncOpen(false)}
+            onRebuildSummaries={onStartPreprocessing}
+            status={workspaceSyncStatus}
+          />
         ) : null}
       </section>
       </div>
     </ReactFlowProvider>
+  )
+}
+
+function InspectorFallback({
+  header,
+  onClose,
+}: {
+  header: {
+    eyebrow: string
+    title: string
+  }
+  onClose: () => void
+}) {
+  return (
+    <aside className="cbv-inspector">
+      <div className="cbv-panel-header">
+        <div className="cbv-panel-header-copy">
+          <p className="cbv-eyebrow">{header.eyebrow ?? 'Inspector'}</p>
+          <strong title={header.title}>{header.title}</strong>
+        </div>
+        <button
+          aria-label="Close inspector"
+          className="cbv-inspector-close"
+          onClick={onClose}
+          type="button"
+        >
+          ×
+        </button>
+      </div>
+      <div className="cbv-empty">
+        <h2>Loading inspector…</h2>
+        <p>Preparing the code and agent tools for this selection.</p>
+      </div>
+    </aside>
+  )
+}
+
+function AgentSettingsFallback() {
+  return (
+    <div className="cbv-empty">
+      <h2>Loading agent settings…</h2>
+      <p>Preparing the agent configuration panel.</p>
+    </div>
   )
 }
 
@@ -1469,11 +1579,6 @@ function buildFlowModel(
   symbolClusterState: SymbolClusterState,
   expandedClusterIds: Set<string>,
   expandedClusterLayouts: Map<string, ExpandedClusterLayout>,
-  selectedNodeIds: Set<string>,
-  compareOverlayState: {
-    active: boolean
-    nodeIds: Set<string>
-  },
 ) {
   const hiddenNodeIds = new Set(layout.hiddenNodeIds)
   const annotationNodes = layout.annotations.map((annotation) => ({
@@ -1520,8 +1625,6 @@ function buildFlowModel(
         symbolClusterState,
         expandedClusterIds,
         expandedClusterLayouts,
-        selectedNodeIds,
-        compareOverlayState,
       ),
     )
   const nodes = [...annotationNodes, ...codeNodes]
@@ -1543,7 +1646,6 @@ function buildFlowModel(
             edge.target,
             undefined,
             undefined,
-            compareOverlayState,
           ),
         ),
     )
@@ -1565,7 +1667,6 @@ function buildFlowModel(
             edge.target,
             edge.label,
             undefined,
-            compareOverlayState,
           ),
         ),
     )
@@ -1580,7 +1681,6 @@ function buildFlowModel(
             visibleNodeIds,
             symbolClusterState,
             expandedClusterIds,
-            compareOverlayState,
           )
         : aggregateFileEdges(snapshot, 'calls').filter(
             (edge) =>
@@ -1592,6 +1692,104 @@ function buildFlowModel(
   return { nodes, edges }
 }
 
+function applyFlowNodePresentation(
+  nodes: Node[],
+  selectedNodeIds: Set<string>,
+  compareOverlayState: {
+    active: boolean
+    nodeIds: Set<string>
+  },
+) {
+  let changed = false
+  const nextNodes = nodes.map((node) => {
+    const highlighted = compareOverlayState.nodeIds.has(node.id)
+    const dimmed = compareOverlayState.active && !highlighted
+    const selected = selectedNodeIds.has(node.id)
+    const data =
+      node.data && typeof node.data === 'object'
+        ? (node.data as Record<string, unknown>)
+        : null
+    const currentHighlighted = Boolean(data?.highlighted)
+    const currentDimmed = Boolean(data?.dimmed)
+
+    if (
+      node.selected === selected &&
+      currentHighlighted === highlighted &&
+      currentDimmed === dimmed
+    ) {
+      return node
+    }
+
+    changed = true
+    return {
+      ...node,
+      selected,
+      data: data
+        ? {
+            ...data,
+            dimmed,
+            highlighted,
+          }
+        : node.data,
+    }
+  })
+
+  return changed ? nextNodes : nodes
+}
+
+function applyFlowEdgePresentation(
+  edges: Edge[],
+  compareOverlayState: {
+    active: boolean
+    nodeIds: Set<string>
+  },
+) {
+  let changed = false
+  const nextEdges = edges.map((edge) => {
+    const highlighted = Boolean(
+      compareOverlayState.active &&
+        compareOverlayState.nodeIds.has(edge.source) &&
+        compareOverlayState.nodeIds.has(edge.target),
+    )
+    const dimmed = Boolean(compareOverlayState.active && !highlighted)
+    const data = getFlowEdgeData(edge)
+    const currentHighlighted = Boolean(data?.highlighted)
+    const currentDimmed = Boolean(data?.dimmed)
+    const kind = data?.kind ?? 'contains'
+    const strokeWidth = highlighted ? 2.4 : kind === 'contains' ? 1.2 : 1.8
+    const currentOpacity = edge.style?.opacity ?? 1
+    const currentStrokeWidth = edge.style?.strokeWidth ?? (kind === 'contains' ? 1.2 : 1.8)
+
+    if (
+      currentHighlighted === highlighted &&
+      currentDimmed === dimmed &&
+      currentOpacity === (dimmed ? 0.2 : 1) &&
+      currentStrokeWidth === strokeWidth
+    ) {
+      return edge
+    }
+
+    changed = true
+    return {
+      ...edge,
+      data: data
+        ? {
+            ...data,
+            dimmed,
+            highlighted,
+          }
+        : edge.data,
+      style: {
+        ...edge.style,
+        opacity: dimmed ? 0.2 : 1,
+        strokeWidth,
+      },
+    }
+  })
+
+  return changed ? nextEdges : edges
+}
+
 function buildFlowNode(
   node: ProjectNode,
   placement: LayoutSpec['placements'][string],
@@ -1600,15 +1798,7 @@ function buildFlowNode(
   symbolClusterState: SymbolClusterState,
   expandedClusterIds: Set<string>,
   expandedClusterLayouts: Map<string, ExpandedClusterLayout>,
-  selectedNodeIds: Set<string>,
-  compareOverlayState: {
-    active: boolean
-    nodeIds: Set<string>
-  },
 ): Node {
-  const isCompareMember = compareOverlayState.nodeIds.has(node.id)
-  const dimmed = compareOverlayState.active && !isCompareMember
-
   if (viewMode === 'symbols' && isSymbolNode(node)) {
     const cluster = symbolClusterState.clusterByNodeId[node.id]
     const clusterSize =
@@ -1645,7 +1835,6 @@ function buildFlowNode(
           ? symbolDimensions.height
           : (clusterLayout?.height ?? symbolDimensions.height),
       draggable: true,
-      selected: selectedNodeIds.has(node.id),
       parentId: isContainedNode && cluster ? cluster.rootNodeId : undefined,
       extent: isContainedNode ? 'parent' : undefined,
       data: {
@@ -1660,8 +1849,8 @@ function buildFlowNode(
         sharedCallerCount: symbolClusterState.callerCounts[node.id],
         contained: isContainedNode,
         compact: symbolDimensions.compact,
-        dimmed,
-        highlighted: isCompareMember,
+        dimmed: false,
+        highlighted: false,
       },
     }
   }
@@ -1678,14 +1867,13 @@ function buildFlowNode(
     width: placement.width,
     height: placement.height,
     draggable: true,
-    selected: selectedNodeIds.has(node.id),
     data: {
       title: node.name,
       subtitle: getNodeSubtitle(node),
       kind: node.kind,
       tags: node.tags.slice(0, 3),
-      dimmed,
-      highlighted: isCompareMember,
+      dimmed: false,
+      highlighted: false,
     },
   }
 }
@@ -1717,18 +1905,8 @@ function buildFlowEdge(
   target: string,
   label?: string,
   data?: FlowEdgeData,
-  compareOverlayState?: {
-    active: boolean
-    nodeIds: Set<string>
-  },
 ): Edge {
   const stroke = getEdgeColor(kind)
-  const highlighted = Boolean(
-    compareOverlayState?.active &&
-      compareOverlayState.nodeIds.has(source) &&
-      compareOverlayState.nodeIds.has(target),
-  )
-  const dimmed = Boolean(compareOverlayState?.active && !highlighted)
 
   return {
     id,
@@ -1738,8 +1916,8 @@ function buildFlowEdge(
     data: {
       kind,
       ...data,
-      dimmed,
-      highlighted,
+      dimmed: false,
+      highlighted: false,
     },
     animated: kind !== 'contains',
     markerEnd: {
@@ -1747,9 +1925,9 @@ function buildFlowEdge(
       color: stroke,
     },
     style: {
-      opacity: dimmed ? 0.2 : 1,
+      opacity: 1,
       stroke,
-      strokeWidth: highlighted ? 2.4 : kind === 'contains' ? 1.2 : 1.8,
+      strokeWidth: kind === 'contains' ? 1.2 : 1.8,
     },
   }
 }
@@ -1808,10 +1986,6 @@ function aggregateSymbolEdges(
   visibleNodeIds: Set<string>,
   symbolClusterState: SymbolClusterState,
   expandedClusterIds: Set<string>,
-  compareOverlayState?: {
-    active: boolean
-    nodeIds: Set<string>
-  },
 ) {
   const edges = new Map<string, Edge>()
 
@@ -1852,7 +2026,7 @@ function aggregateSymbolEdges(
         buildFlowEdge(key, kind, mappedSource, mappedTarget, undefined, {
           kind,
           count: 1,
-        }, compareOverlayState),
+        }),
       )
       continue
     }

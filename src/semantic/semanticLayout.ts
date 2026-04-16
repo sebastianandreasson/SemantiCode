@@ -130,12 +130,20 @@ function buildSemanticEmbeddingRecords(
       text: record.embeddingText,
     })),
   )
+  const canUseCachedEmbeddings = hasCompleteCachedEmbeddingCoverage(
+    purposeSummaries,
+    cachedEmbeddingsBySymbolId,
+  )
 
   return purposeSummaries.map((record) => {
     const cachedEmbedding = cachedEmbeddingsBySymbolId.get(record.symbolId)
     const embeddingTextHash = hashSemanticText(record.embeddingText)
 
-    if (cachedEmbedding && cachedEmbedding.textHash === embeddingTextHash) {
+    if (
+      canUseCachedEmbeddings &&
+      cachedEmbedding &&
+      cachedEmbedding.textHash === embeddingTextHash
+    ) {
       return cachedEmbedding
     }
 
@@ -148,6 +156,32 @@ function buildSemanticEmbeddingRecords(
       generatedAt: record.generatedAt,
     }
   })
+}
+
+function hasCompleteCachedEmbeddingCoverage(
+  purposeSummaries: SemanticPurposeSummaryRecord[],
+  cachedEmbeddingsBySymbolId: Map<string, SemanticEmbeddingVectorRecord>,
+) {
+  if (purposeSummaries.length === 0) {
+    return false
+  }
+
+  const dimensions = new Set<number>()
+  const modelIds = new Set<string>()
+
+  for (const record of purposeSummaries) {
+    const embedding = cachedEmbeddingsBySymbolId.get(record.symbolId)
+    const expectedTextHash = hashSemanticText(record.embeddingText)
+
+    if (!embedding || embedding.textHash !== expectedTextHash || embedding.values.length === 0) {
+      return false
+    }
+
+    dimensions.add(embedding.dimensions)
+    modelIds.add(embedding.modelId)
+  }
+
+  return dimensions.size === 1 && modelIds.size === 1
 }
 
 function isSupportedSemanticSymbol(

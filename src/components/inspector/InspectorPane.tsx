@@ -1,9 +1,23 @@
-import { useEffect, useRef, type RefObject } from 'react'
+import { useEffect, useMemo, useRef, type RefObject } from 'react'
 import type { Edge } from '@xyflow/react'
+import CodeMirror from '@uiw/react-codemirror'
+import { EditorState, RangeSetBuilder, StateField, type Extension } from '@uiw/react-codemirror'
+import { Decoration, EditorView, type DecorationSet } from '@uiw/react-codemirror'
+import { css as cssLanguage } from '@codemirror/lang-css'
+import { html as htmlLanguage } from '@codemirror/lang-html'
+import { javascript } from '@codemirror/lang-javascript'
+import { json as jsonLanguage } from '@codemirror/lang-json'
+import { markdown } from '@codemirror/lang-markdown'
+import { python } from '@codemirror/lang-python'
+import { rust } from '@codemirror/lang-rust'
+import { sql } from '@codemirror/lang-sql'
+import { xml } from '@codemirror/lang-xml'
+import { yaml } from '@codemirror/lang-yaml'
 
 import { type ResolvedCanvasOverlay } from '../../visualizer/canvasScene'
 import {
   type CodebaseFile,
+  type InspectorTab,
   type LayoutDraft,
   type PreprocessedWorkspaceContext,
   type ProjectNode,
@@ -32,12 +46,12 @@ interface InspectorPaneProps {
     title: string
   }
   inspectorBodyRef: RefObject<HTMLDivElement | null>
-  inspectorTab: 'file' | 'agent' | 'graph'
+  inspectorTab: InspectorTab
   onAgentRunSettled?: () => Promise<void>
   onClearCompareOverlay: () => void
   onClose: () => void
   onOpenAgentSettings: () => void
-  onSetInspectorTab: (tab: 'file' | 'agent' | 'graph') => void
+  onSetInspectorTab: (tab: InspectorTab) => void
   preprocessedWorkspaceContext: PreprocessedWorkspaceContext | null
   resolvedCompareOverlay: ResolvedCanvasOverlay | null
   selectedEdge: Edge | null
@@ -451,62 +465,196 @@ function CodePreview({
   file: CodebaseFile
   highlightedRange?: SourceRange
 }) {
-  const previewRef = useRef<HTMLPreElement | null>(null)
+  const viewRef = useRef<EditorView | null>(null)
+  const extensions = useMemo(
+    () => [
+      getLanguageExtension(file),
+      codePreviewTheme,
+      createHighlightedLineExtension(highlightedRange),
+    ].flatMap((extension) => (extension ? [extension] : [])),
+    [file, highlightedRange],
+  )
 
   useEffect(() => {
-    if (!previewRef.current || !highlightedRange) {
+    if (!viewRef.current || !highlightedRange) {
       return
     }
 
-    const targetLine = previewRef.current.querySelector(
-      `[data-line="${highlightedRange.start.line}"]`,
+    const lineNumber = Math.max(
+      1,
+      Math.min(highlightedRange.start.line, viewRef.current.state.doc.lines),
     )
+    const line = viewRef.current.state.doc.line(lineNumber)
 
-    if (targetLine instanceof HTMLElement) {
-      targetLine.scrollIntoView({
-        block: 'center',
-      })
-    }
+    viewRef.current.dispatch({
+      selection: { anchor: line.from },
+      effects: EditorView.scrollIntoView(line.from, {
+        y: 'center',
+      }),
+    })
   }, [file.id, highlightedRange])
 
   if (!file.content) {
     return (
-      <pre className="cbv-code">
-        <code>{'// File content unavailable.'}</code>
-      </pre>
+      <CodeMirror
+        basicSetup={false}
+        className="cbv-code-editor"
+        editable={false}
+        extensions={[codePreviewTheme]}
+        readOnly
+        theme="light"
+        value="// File content unavailable."
+      />
     )
   }
 
-  const lines = file.content.split('\n')
-  const highlightedStartLine = highlightedRange?.start.line ?? -1
-  const highlightedEndLine = highlightedRange?.end.line ?? -1
-
   return (
-    <pre className="cbv-code" ref={previewRef}>
-      <code>
-        {lines.map((line, index) => {
-          const lineNumber = index + 1
-          const isHighlighted =
-            highlightedRange !== undefined &&
-            lineNumber >= highlightedStartLine &&
-            lineNumber <= highlightedEndLine
-
-          return (
-            <span
-              className={`cbv-code-line${isHighlighted ? ' is-highlighted' : ''}`}
-              data-line={lineNumber}
-              key={`${file.id}:${lineNumber}`}
-            >
-              <span className="cbv-code-line-number">{lineNumber}</span>
-              <span className="cbv-code-line-content">
-                {line.length > 0 ? line : ' '}
-              </span>
-            </span>
-          )
-        })}
-      </code>
-    </pre>
+    <CodeMirror
+      basicSetup={{
+        autocompletion: false,
+        closeBrackets: false,
+        completionKeymap: false,
+        defaultKeymap: false,
+        drawSelection: true,
+        dropCursor: false,
+        foldGutter: false,
+        highlightActiveLine: false,
+        highlightActiveLineGutter: false,
+        history: false,
+        indentOnInput: false,
+        lintKeymap: false,
+        searchKeymap: false,
+      }}
+      className="cbv-code-editor"
+      editable={false}
+      extensions={extensions}
+      onCreateEditor={(view) => {
+        viewRef.current = view
+      }}
+      readOnly
+      theme="light"
+      value={file.content}
+    />
   )
+}
+
+const codePreviewTheme = EditorView.theme({
+  '&': {
+    backgroundColor: '#f7f1e5',
+    border: '1px solid rgba(138, 119, 99, 0.16)',
+    borderRadius: '16px',
+    fontSize: '12px',
+  },
+  '.cm-content': {
+    fontFamily:
+      'ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace',
+    padding: '14px 0',
+  },
+  '.cm-scroller': {
+    overflow: 'auto',
+  },
+  '.cm-gutters': {
+    backgroundColor: '#efe4cf',
+    border: 'none',
+    color: '#8a7763',
+    paddingRight: '10px',
+  },
+  '.cm-activeLine': {
+    backgroundColor: 'transparent',
+  },
+  '.cm-activeLineGutter': {
+    backgroundColor: 'transparent',
+  },
+  '.cm-line.cm-semanticode-highlighted-line': {
+    backgroundColor: 'rgba(184, 122, 55, 0.12)',
+  },
+  '.cm-selectionBackground': {
+    backgroundColor: 'rgba(73, 104, 139, 0.18) !important',
+  },
+})
+
+function createHighlightedLineExtension(highlightedRange?: SourceRange): Extension | null {
+  if (!highlightedRange) {
+    return null
+  }
+
+  const { start, end } = highlightedRange
+  const startLine = Math.max(1, Math.min(start.line, end.line))
+  const endLine = Math.max(startLine, Math.max(start.line, end.line))
+
+  return StateField.define<DecorationSet>({
+    create(state) {
+      return buildHighlightedLineDecorations(state, startLine, endLine)
+    },
+    update(value) {
+      return value
+    },
+    provide(field) {
+      return EditorView.decorations.from(field)
+    },
+  })
+}
+
+function buildHighlightedLineDecorations(
+  state: EditorState,
+  startLine: number,
+  endLine: number,
+) {
+  const builder = new RangeSetBuilder<Decoration>()
+  const maxLine = Math.min(endLine, state.doc.lines)
+
+  for (let lineNumber = startLine; lineNumber <= maxLine; lineNumber += 1) {
+    const line = state.doc.line(lineNumber)
+    builder.add(
+      line.from,
+      line.from,
+      Decoration.line({
+        class: 'cm-semanticode-highlighted-line',
+      }),
+    )
+  }
+
+  return builder.finish()
+}
+
+function getLanguageExtension(file: CodebaseFile): Extension | null {
+  const extension = file.extension?.toLowerCase()
+
+  switch (extension) {
+    case 'ts':
+      return javascript({ typescript: true })
+    case 'tsx':
+      return javascript({ jsx: true, typescript: true })
+    case 'js':
+      return javascript()
+    case 'jsx':
+      return javascript({ jsx: true })
+    case 'json':
+      return jsonLanguage()
+    case 'css':
+    case 'scss':
+    case 'less':
+      return cssLanguage()
+    case 'html':
+      return htmlLanguage()
+    case 'md':
+    case 'mdx':
+      return markdown()
+    case 'py':
+      return python()
+    case 'rs':
+      return rust()
+    case 'sql':
+      return sql()
+    case 'xml':
+    case 'svg':
+      return xml()
+    case 'yml':
+    case 'yaml':
+      return yaml()
+    default:
+      return null
+  }
 }
 
 function getFlowEdgeData(edge: Edge | null | undefined) {

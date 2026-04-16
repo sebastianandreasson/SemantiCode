@@ -37,6 +37,7 @@ interface WorkspaceToolbarProps {
       title: string
     } | null
   } | null
+  onOpenWorkspaceSync?: () => void
   projectsSidebarOpen: boolean
   selectedLayoutValue: string
   showCompareAction: boolean
@@ -56,6 +57,7 @@ export function WorkspaceToolbar({
   onBuildSemanticEmbeddings,
   onClearCompareOverlay,
   onOpenAgentSettings,
+  onOpenWorkspaceSync,
   onRejectDraft,
   onSelectLayoutValue,
   onStartPreprocessing,
@@ -133,12 +135,14 @@ export function WorkspaceToolbar({
               <p className="cbv-preprocessing-error">{preprocessingStatus.lastError}</p>
             ) : null}
             {preprocessingStatus.workspaceSync ? (
-              <p
+              <button
                 className={`cbv-sync-summary${preprocessingStatus.workspaceSync.isOutdated ? ' is-outdated' : ''}`}
+                onClick={onOpenWorkspaceSync}
                 title={preprocessingStatus.workspaceSync.title}
+                type="button"
               >
                 {preprocessingStatus.workspaceSync.label}
-              </p>
+              </button>
             ) : null}
           </div>
         ) : null}
