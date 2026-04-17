@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
 import {
+  SEMANTICODE_FILE_DIFF_ROUTE,
   SEMANTICODE_GROUP_PROTOTYPES_ROUTE,
   SEMANTICODE_PREPROCESSING_EMBEDDINGS_ROUTE,
   SEMANTICODE_PREPROCESSING_ROUTE,
@@ -10,6 +11,7 @@ import {
   SEMANTICODE_WORKSPACE_HISTORY_ROUTE,
 } from '../../shared/constants'
 import type {
+  GitFileDiffResponse,
   GroupPrototypeCacheResponse,
   GroupPrototypeCacheUpdateRequest,
   PreprocessingContextResponse,
@@ -23,6 +25,7 @@ import type {
   WorkspaceHistoryResponse,
   WorkspaceSyncStatusResponse,
 } from '../../types'
+import { getGitFileDiff } from '../gitFileDiff'
 import { readPersistedGroupPrototypeCache, writePersistedGroupPrototypeCache } from '../groupPrototypePersistence'
 import { readPersistedPreprocessedWorkspaceContext, writePersistedPreprocessedWorkspaceContext } from '../preprocessingPersistence'
 import { embedSemanticTexts } from '../semanticEmbeddingService'
@@ -31,7 +34,7 @@ import { getGitWorkspaceStatus } from '../gitWorkspaceSync'
 import { listLayoutDrafts, listSavedLayouts } from '../../planner'
 import { readProjectSnapshot } from '../readProjectSnapshot'
 import type { SemanticodeRequestHandlerOptions } from './types'
-import { readJsonBody, sendJson } from './utils'
+import { buildRequestUrl, readJsonBody, sendJson } from './utils'
 
 export async function handlePreprocessingRoute(
   request: IncomingMessage,
@@ -123,6 +126,25 @@ export async function handlePreprocessingRoute(
         draftLayouts,
         git,
       }),
+    }
+
+    sendJson(response, 200, result)
+    return true
+  }
+
+  if (pathname === SEMANTICODE_FILE_DIFF_ROUTE && method === 'GET') {
+    const url = new URL(buildRequestUrl(request))
+    const path = url.searchParams.get('path')?.trim()
+
+    if (!path) {
+      sendJson(response, 400, {
+        message: 'A file path is required.',
+      })
+      return true
+    }
+
+    const result: GitFileDiffResponse = {
+      diff: await getGitFileDiff(options.rootDir, path),
     }
 
     sendJson(response, 200, result)

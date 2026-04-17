@@ -42,7 +42,7 @@ export const CodebaseCanvasNode = memo(function CodebaseCanvasNode({
       style={
         (nodeData.heatWeight ?? 0) > 0
           ? ({
-              '--cbv-agent-heat-strength': `${Math.max(0.18, Math.min(0.92, nodeData.heatWeight ?? 0))}`,
+              '--cbv-agent-heat-strength': `${Math.max(0.28, Math.min(1, nodeData.heatWeight ?? 0))}`,
             } as CSSProperties)
           : undefined
       }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, type RefObject } from 'react'
+import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import type { Edge } from '@xyflow/react'
 import CodeMirror from '@uiw/react-codemirror'
 import { EditorState, type Extension } from '@uiw/react-codemirror'
@@ -19,6 +19,7 @@ import { type ResolvedCanvasOverlay } from '../../visualizer/canvasScene'
 import {
   type WorkingSetState,
   type CodebaseFile,
+  type GitFileDiff,
   type InspectorTab,
   type LayoutGroup,
   type LayoutDraft,
@@ -28,6 +29,7 @@ import {
   type SymbolNode,
   type WorkspaceProfile,
 } from '../../types'
+import { fetchGitFileDiff } from '../../app/apiClient'
 import { AgentPanel, type AgentScopeContext } from '../AgentPanel'
 import type { ThemeMode } from '../settings/GeneralSettingsPanel'
 import type { GroupPrototypeRecord } from '../../semantic/groups/groupPrototypes'
@@ -658,14 +660,50 @@ function CodePreview({
   themeMode: ThemeMode
 }) {
   const viewRef = useRef<EditorView | null>(null)
+  const diffCacheRef = useRef(new Map<string, GitFileDiff | null>())
+  const [fileDiff, setFileDiff] = useState<GitFileDiff | null>(null)
   const extensions = useMemo(
     () => [
       getLanguageExtension(file),
       themeMode === 'dark' ? codePreviewThemeDark : codePreviewThemeLight,
       createHighlightedLineExtension(highlightedRange),
+      createDiffLineExtension(fileDiff),
     ].flatMap((extension) => (extension ? [extension] : [])),
-    [file, highlightedRange, themeMode],
+    [file, fileDiff, highlightedRange, themeMode],
   )
+
+  useEffect(() => {
+    let cancelled = false
+    const cachedDiff = diffCacheRef.current.get(file.path)
+
+    if (cachedDiff !== undefined) {
+      setFileDiff(cachedDiff)
+      return () => {
+        cancelled = true
+      }
+    }
+
+    setFileDiff(null)
+    void fetchGitFileDiff(file.path)
+      .then((diff) => {
+        diffCacheRef.current.set(file.path, diff)
+
+        if (!cancelled) {
+          setFileDiff(diff)
+        }
+      })
+      .catch(() => {
+        diffCacheRef.current.set(file.path, null)
+
+        if (!cancelled) {
+          setFileDiff(null)
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [file.path])
 
   useEffect(() => {
     if (!viewRef.current || !highlightedRange) {
@@ -687,45 +725,65 @@ function CodePreview({
 
   if (!file.content) {
     return (
-      <CodeMirror
-        basicSetup={false}
-        className="cbv-code-editor"
-        editable={false}
-        extensions={[themeMode === 'dark' ? codePreviewThemeDark : codePreviewThemeLight]}
-        readOnly
-        theme={themeMode}
-        value="// File content unavailable."
-      />
+      <>
+        {fileDiff?.hasDiff ? <CodeDiffSummary diff={fileDiff} /> : null}
+        <CodeMirror
+          basicSetup={false}
+          className="cbv-code-editor"
+          editable={false}
+          extensions={[themeMode === 'dark' ? codePreviewThemeDark : codePreviewThemeLight]}
+          readOnly
+          theme={themeMode}
+          value="// File content unavailable."
+        />
+      </>
     )
   }
 
   return (
-    <CodeMirror
-      basicSetup={{
-        autocompletion: false,
-        closeBrackets: false,
-        completionKeymap: false,
-        defaultKeymap: false,
-        drawSelection: true,
-        dropCursor: false,
-        foldGutter: false,
-        highlightActiveLine: false,
-        highlightActiveLineGutter: false,
-        history: false,
-        indentOnInput: false,
-        lintKeymap: false,
-        searchKeymap: false,
-      }}
-      className="cbv-code-editor"
-      editable={false}
-      extensions={extensions}
-      onCreateEditor={(view) => {
-        viewRef.current = view
-      }}
-      readOnly
-      theme={themeMode}
-      value={file.content}
-    />
+    <>
+      {fileDiff?.hasDiff ? <CodeDiffSummary diff={fileDiff} /> : null}
+      <CodeMirror
+        basicSetup={{
+          autocompletion: false,
+          closeBrackets: false,
+          completionKeymap: false,
+          defaultKeymap: false,
+          drawSelection: true,
+          dropCursor: false,
+          foldGutter: false,
+          highlightActiveLine: false,
+          highlightActiveLineGutter: false,
+          history: false,
+          indentOnInput: false,
+          lintKeymap: false,
+          searchKeymap: false,
+        }}
+        className="cbv-code-editor"
+        editable={false}
+        extensions={extensions}
+        onCreateEditor={(view) => {
+          viewRef.current = view
+        }}
+        readOnly
+        theme={themeMode}
+        value={file.content}
+      />
+    </>
+  )
+}
+
+function CodeDiffSummary({ diff }: { diff: GitFileDiff }) {
+  return (
+    <div className="cbv-code-diff-summary">
+      <p className="cbv-eyebrow">Uncommitted edits</p>
+      <div className="cbv-code-diff-summary-row">
+        <span className="cbv-code-diff-pill is-added">+{diff.addedLineCount}</span>
+        <span className="cbv-code-diff-pill is-modified">~{diff.modifiedLineCount}</span>
+        <span className="cbv-code-diff-pill is-deleted">-{diff.deletedLineCount}</span>
+        <strong>{diff.isUntracked ? 'New file' : 'Diff against HEAD'}</strong>
+      </div>
+    </div>
   )
 }
 
@@ -762,6 +820,19 @@ const codePreviewThemeLight = EditorView.theme({
     fontWeight: '700',
   },
   '.cm-lineNumbers .cm-gutterElement.cm-semanticode-highlighted-gutter': {
+    borderRadius: '0.45rem',
+  },
+  '.cm-gutterElement.cm-semanticode-diff-added-gutter': {
+    boxShadow: 'inset 3px 0 0 0 var(--app-success)',
+    color: 'var(--app-code-gutter-highlight-text)',
+    fontWeight: '700',
+  },
+  '.cm-gutterElement.cm-semanticode-diff-modified-gutter': {
+    boxShadow: 'inset 3px 0 0 0 var(--app-warning)',
+    color: 'var(--app-code-gutter-highlight-text)',
+    fontWeight: '700',
+  },
+  '.cm-lineNumbers .cm-gutterElement.cm-semanticode-diff-added-gutter, .cm-lineNumbers .cm-gutterElement.cm-semanticode-diff-modified-gutter': {
     borderRadius: '0.45rem',
   },
   '.cm-selectionBackground': {
@@ -805,6 +876,19 @@ const codePreviewThemeDark = EditorView.theme({
   '.cm-lineNumbers .cm-gutterElement.cm-semanticode-highlighted-gutter': {
     borderRadius: '0.45rem',
   },
+  '.cm-gutterElement.cm-semanticode-diff-added-gutter': {
+    boxShadow: 'inset 3px 0 0 0 var(--app-success)',
+    color: 'var(--app-code-gutter-highlight-text)',
+    fontWeight: '700',
+  },
+  '.cm-gutterElement.cm-semanticode-diff-modified-gutter': {
+    boxShadow: 'inset 3px 0 0 0 var(--app-warning)',
+    color: 'var(--app-code-gutter-highlight-text)',
+    fontWeight: '700',
+  },
+  '.cm-lineNumbers .cm-gutterElement.cm-semanticode-diff-added-gutter, .cm-lineNumbers .cm-gutterElement.cm-semanticode-diff-modified-gutter': {
+    borderRadius: '0.45rem',
+  },
   '.cm-selectionBackground': {
     backgroundColor: 'var(--app-code-selection) !important',
   },
@@ -832,11 +916,40 @@ function createHighlightedLineExtension(highlightedRange?: SourceRange): Extensi
   })
 }
 
+function createDiffLineExtension(diff?: GitFileDiff | null): Extension | null {
+  if (!diff?.changes.length) {
+    return null
+  }
+
+  return StateField.define<RangeSet<GutterMarker>>({
+    create(state) {
+      return buildDiffGutterMarkers(state, diff.changes)
+    },
+    update(value) {
+      return value
+    },
+    provide(field) {
+      return gutterLineClass.from(field)
+    },
+  })
+}
+
 class HighlightedGutterMarker extends GutterMarker {
   elementClass = 'cm-semanticode-highlighted-gutter'
 }
 
 const highlightedGutterMarker = new HighlightedGutterMarker()
+
+class AddedDiffGutterMarker extends GutterMarker {
+  elementClass = 'cm-semanticode-diff-added-gutter'
+}
+
+class ModifiedDiffGutterMarker extends GutterMarker {
+  elementClass = 'cm-semanticode-diff-modified-gutter'
+}
+
+const addedDiffGutterMarker = new AddedDiffGutterMarker()
+const modifiedDiffGutterMarker = new ModifiedDiffGutterMarker()
 
 function buildHighlightedGutterMarkers(
   state: EditorState,
@@ -849,6 +962,29 @@ function buildHighlightedGutterMarkers(
   for (let lineNumber = startLine; lineNumber <= maxLine; lineNumber += 1) {
     const line = state.doc.line(lineNumber)
     builder.add(line.from, line.from, highlightedGutterMarker)
+  }
+
+  return builder.finish()
+}
+
+function buildDiffGutterMarkers(
+  state: EditorState,
+  changes: GitFileDiff['changes'],
+) {
+  const builder = new RangeSetBuilder<GutterMarker>()
+
+  for (const change of changes) {
+    const marker =
+      change.kind === 'added'
+        ? addedDiffGutterMarker
+        : modifiedDiffGutterMarker
+    const startLine = Math.max(1, change.startLine)
+    const endLine = Math.min(state.doc.lines, Math.max(startLine, change.endLine))
+
+    for (let lineNumber = startLine; lineNumber <= endLine; lineNumber += 1) {
+      const line = state.doc.line(lineNumber)
+      builder.add(line.from, line.from, marker)
+    }
   }
 
   return builder.finish()

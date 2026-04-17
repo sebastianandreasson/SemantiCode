@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
-import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, stat, unlink, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { createRequire } from 'node:module'
 
@@ -28,6 +28,11 @@ interface ActiveRunProcess {
   process: ReturnType<typeof spawn>
   runId: string | null
   scope: AutonomousRunScope | null
+}
+
+interface ResolvedActiveRunState {
+  runId: string | null
+  staleRunId: string | null
 }
 
 interface RunStateRecord {
@@ -91,7 +96,7 @@ export class AutonomousRunService {
 
   async listRuns(rootDir: string) {
     const paths = await resolvePiHarnessPaths(rootDir)
-    const activeRun = await readActiveRunLock(paths.activeRunFile)
+    const activeRun = await this.resolveActiveRunState(rootDir)
     const runsDir = join(paths.piRuntimeDir, 'runs')
     let entries: { name: string }[] = []
 
@@ -104,11 +109,13 @@ export class AutonomousRunService {
     }
 
     const runs = await Promise.all(
-      entries.map(async (entry) => this.buildRunSummary(rootDir, entry.name, activeRun?.runId ?? null)),
+      entries.map(async (entry) =>
+        this.buildRunSummary(rootDir, entry.name, activeRun.runId, activeRun.staleRunId),
+      ),
     )
 
     return {
-      activeRunId: activeRun?.runId ?? null,
+      activeRunId: activeRun.runId,
       runs: runs
         .filter((run): run is AutonomousRunSummary => run !== null)
         .sort((left, right) => String(right.updatedAt ?? '').localeCompare(String(left.updatedAt ?? ''))),
@@ -116,14 +123,14 @@ export class AutonomousRunService {
   }
 
   async getRunDetail(rootDir: string, runId: string): Promise<AutonomousRunDetail | null> {
-    const paths = await resolvePiHarnessPaths(rootDir)
-    const activeRun = await readActiveRunLock(paths.activeRunFile)
-    const summary = await this.buildRunSummary(rootDir, runId, activeRun?.runId ?? null)
+    const activeRun = await this.resolveActiveRunState(rootDir)
+    const summary = await this.buildRunSummary(rootDir, runId, activeRun.runId, activeRun.staleRunId)
 
     if (!summary) {
       return null
     }
 
+    const paths = await resolvePiHarnessPaths(rootDir)
     const runPaths = getPiRunScopedPaths(paths, runId)
     const [scope, logExcerpt, lastOutputExcerpt, runTelemetryEvents] = await Promise.all([
       readRunScopeMetadata(rootDir, runId),
@@ -251,8 +258,17 @@ export class AutonomousRunService {
       const activeRun = await readActiveRunLock(paths.activeRunFile)
 
       if (activeRun?.runId === runId && typeof activeRun.pid === 'number') {
-        process.kill(activeRun.pid, 'SIGTERM')
-        stopped = true
+        try {
+          process.kill(activeRun.pid, 'SIGTERM')
+          stopped = true
+        } catch (error) {
+          if (isMissingProcessError(error)) {
+            await clearActiveRunLock(paths.activeRunFile)
+            stopped = true
+          } else {
+            throw error
+          }
+        }
       }
     }
 
@@ -270,6 +286,7 @@ export class AutonomousRunService {
     rootDir: string,
     runId: string,
     activeRunId: string | null,
+    staleRunId: string | null,
   ): Promise<AutonomousRunSummary | null> {
     const paths = await resolvePiHarnessPaths(rootDir)
     const runDir = getPiRunDir(paths, runId)
@@ -292,8 +309,10 @@ export class AutonomousRunService {
       directoryStat.mtime.toISOString()
     const status = deriveRunStatus({
       activeRunId,
+      hasInProgress: Boolean(state?.inProgress),
       lastStatus: String(state?.lastStatus ?? ''),
       runId,
+      staleRunId,
       stoppedAt: scope?.stoppedAt,
       terminalReason: String(lastIteration?.terminalReason ?? ''),
     })
@@ -365,6 +384,49 @@ export class AutonomousRunService {
 
     throw new Error('The autonomous run started but did not publish an active run id in time.')
   }
+
+  private async resolveActiveRunState(rootDir: string): Promise<ResolvedActiveRunState> {
+    const normalizedRootDir = resolve(rootDir)
+    const inMemoryRun = this.activeRunsByRootDir.get(normalizedRootDir)
+
+    if (inMemoryRun?.process.exitCode === null && inMemoryRun.runId) {
+      return {
+        runId: inMemoryRun.runId,
+        staleRunId: null,
+      }
+    }
+
+    const paths = await resolvePiHarnessPaths(normalizedRootDir)
+    const activeRun = await readActiveRunLock(paths.activeRunFile)
+
+    if (!activeRun?.runId) {
+      return {
+        runId: null,
+        staleRunId: null,
+      }
+    }
+
+    const pidAlive =
+      typeof activeRun.pid === 'number' ? isProcessAlive(activeRun.pid) : null
+    const heartbeatFresh = isHeartbeatFresh(activeRun.heartbeatAt)
+
+    if (pidAlive === true || (pidAlive === null && heartbeatFresh)) {
+      return {
+        runId: activeRun.runId,
+        staleRunId: null,
+      }
+    }
+
+    await clearActiveRunLock(paths.activeRunFile)
+    this.logger.warn(
+      `[semanticode][autonomous-run] Cleared stale active run lock for ${normalizedRootDir} run=${activeRun.runId} pid=${String(activeRun.pid ?? '')}.`,
+    )
+
+    return {
+      runId: null,
+      staleRunId: activeRun.runId,
+    }
+  }
 }
 
 function normalizeScope(scope: AutonomousRunScope | null) {
@@ -384,8 +446,10 @@ function normalizeScope(scope: AutonomousRunScope | null) {
 
 function deriveRunStatus(input: {
   activeRunId: string | null
+  hasInProgress: boolean
   lastStatus: string
   runId: string
+  staleRunId: string | null
   stoppedAt?: string
   terminalReason: string
 }): AutonomousRunStatus {
@@ -410,6 +474,10 @@ function deriveRunStatus(input: {
     return 'failed'
   }
 
+  if (input.staleRunId === input.runId && input.hasInProgress) {
+    return 'stopped'
+  }
+
   return 'idle'
 }
 
@@ -421,6 +489,50 @@ async function readActiveRunLock(filePath: string) {
     startedAt?: string
     status?: string
   }>(filePath)
+}
+
+async function clearActiveRunLock(filePath: string) {
+  try {
+    await unlink(filePath)
+  } catch {
+    // Ignore cleanup failures; the caller will simply treat the lock as absent.
+  }
+}
+
+function isHeartbeatFresh(heartbeatAt: string | undefined, maxAgeMs = 120_000) {
+  if (!heartbeatAt) {
+    return false
+  }
+
+  const heartbeatTime = new Date(heartbeatAt).getTime()
+
+  if (!Number.isFinite(heartbeatTime)) {
+    return false
+  }
+
+  return Date.now() - heartbeatTime <= maxAgeMs
+}
+
+function isProcessAlive(pid: number) {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    if (isMissingProcessError(error)) {
+      return false
+    }
+
+    return true
+  }
+}
+
+function isMissingProcessError(error: unknown) {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as { code?: string }).code === 'ESRCH'
+  )
 }
 
 function deriveRunTimeline(events: RunTelemetryEventRecord[]): AutonomousRunTimelinePoint[] {

@@ -707,6 +707,43 @@
   line-height: 1.35;
 }
 
+.cbv-agent-heat-follow-toggle {
+  justify-self: start;
+  border: 1px solid var(--app-border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--app-surface) 72%, transparent);
+  color: var(--app-text);
+  padding: 0.42rem 0.72rem;
+  font-size: 0.78rem;
+  line-height: 1.2;
+  transition:
+    border-color 140ms ease,
+    background 140ms ease,
+    color 140ms ease,
+    transform 140ms ease;
+}
+
+.cbv-agent-heat-follow-toggle:hover {
+  border-color: color-mix(in srgb, var(--app-accent) 35%, var(--app-border));
+  background: color-mix(in srgb, var(--app-accent-soft) 44%, var(--app-surface));
+}
+
+.cbv-agent-heat-follow-toggle.is-active {
+  border-color: color-mix(in srgb, var(--app-accent) 55%, var(--app-border));
+  background: color-mix(in srgb, var(--app-accent-soft) 64%, var(--app-surface));
+  color: var(--app-text);
+}
+
+.cbv-agent-heat-follow-meta {
+  margin: -0.12rem 0 0;
+  color: var(--app-muted);
+  font-size: 0.73rem;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .cbv-canvas-layer-toggles {
   display: flex;
   gap: 0.35rem;
@@ -1350,25 +1387,45 @@
     var(--app-accent) calc(var(--cbv-agent-heat-strength, 0.35) * 100%),
     var(--app-border)
   );
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(
+        in srgb,
+        var(--app-accent-soft) calc(var(--cbv-agent-heat-strength, 0.35) * 52%),
+        var(--app-surface-soft)
+      ) 0%,
+      color-mix(
+        in srgb,
+        var(--app-accent-soft) calc(var(--cbv-agent-heat-strength, 0.35) * 18%),
+        var(--app-surface-soft-2)
+      ) 100%
+    );
   box-shadow:
     0 0 0 1px color-mix(
       in srgb,
-      var(--app-accent) calc(var(--cbv-agent-heat-strength, 0.35) * 46%),
+      var(--app-accent) calc(var(--cbv-agent-heat-strength, 0.35) * 58%),
+      transparent
+    ),
+    0 0 0 4px color-mix(
+      in srgb,
+      var(--app-accent-soft) calc(var(--cbv-agent-heat-strength, 0.35) * 28%),
       transparent
     ),
     0 14px 28px color-mix(
       in srgb,
-      var(--app-accent) calc(var(--cbv-agent-heat-strength, 0.35) * 30%),
+      var(--app-accent) calc(var(--cbv-agent-heat-strength, 0.35) * 42%),
       transparent
     );
 }
 
 .cbv-node.has-agent-heat.is-selected {
   box-shadow:
-    0 0 0 2px color-mix(in srgb, var(--app-accent) 28%, transparent),
+    0 0 0 2px color-mix(in srgb, var(--app-accent) 34%, transparent),
+    0 0 0 5px color-mix(in srgb, var(--app-accent-soft) 18%, transparent),
     0 14px 30px color-mix(
       in srgb,
-      var(--app-accent) calc(var(--cbv-agent-heat-strength, 0.35) * 40%),
+      var(--app-accent) calc(var(--cbv-agent-heat-strength, 0.35) * 52%),
       transparent
     );
 }
@@ -1376,16 +1433,17 @@
 .cbv-node.is-agent-heat-pulse::after {
   content: '';
   position: absolute;
-  inset: -0.2rem;
+  inset: -0.28rem;
   border-radius: inherit;
-  border: 1px solid color-mix(in srgb, var(--app-accent) 34%, transparent);
+  border: 1.5px solid color-mix(in srgb, var(--app-accent) 44%, transparent);
   opacity: 0;
   animation: cbv-agent-heat-pulse 1.8s ease-out infinite;
   pointer-events: none;
 }
 
 .cbv-node.is-dimmed {
-  opacity: 0.42;
+  opacity: 0.34;
+  filter: saturate(0.78);
 }
 
 .cbv-annotation-node {
@@ -1407,7 +1465,8 @@
 }
 
 .cbv-annotation-node.is-dimmed {
-  opacity: 0.42;
+  opacity: 0.34;
+  filter: saturate(0.78);
 }
 
 .cbv-node-meta {
@@ -1599,6 +1658,50 @@
 
 .cbv-code-editor {
   min-width: 0;
+}
+
+.cbv-code-diff-summary {
+  display: grid;
+  gap: 0.45rem;
+  margin: 0.9rem 1.25rem 0;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--app-border);
+  border-radius: 0.95rem;
+  background: var(--app-surface-soft);
+}
+
+.cbv-code-diff-summary-row {
+  display: flex;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.cbv-code-diff-summary-row strong {
+  color: var(--app-text);
+  font-size: 0.88rem;
+}
+
+.cbv-code-diff-pill {
+  border-radius: 999px;
+  padding: 0.18rem 0.52rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.cbv-code-diff-pill.is-added {
+  background: color-mix(in srgb, var(--app-success) 18%, transparent);
+  color: var(--app-success);
+}
+
+.cbv-code-diff-pill.is-modified {
+  background: color-mix(in srgb, var(--app-warning) 18%, transparent);
+  color: var(--app-warning);
+}
+
+.cbv-code-diff-pill.is-deleted {
+  background: color-mix(in srgb, var(--app-danger) 18%, transparent);
+  color: var(--app-danger);
 }
 
 .cbv-code-editor .cm-editor {

@@ -71,6 +71,27 @@ export interface WorkspaceSyncStatusResponse {
   sync: WorkspaceArtifactSyncStatus
 }
 
+export interface GitFileDiffLineChange {
+  kind: 'added' | 'modified'
+  startLine: number
+  endLine: number
+}
+
+export interface GitFileDiff {
+  path: string
+  baseline: 'HEAD'
+  addedLineCount: number
+  modifiedLineCount: number
+  deletedLineCount: number
+  changes: GitFileDiffLineChange[]
+  hasDiff: boolean
+  isUntracked: boolean
+}
+
+export interface GitFileDiffResponse {
+  diff: GitFileDiff | null
+}
+
 export interface WorkspaceHistoryResponse {
   activeWorkspaceRootDir: string | null
   recentWorkspaces: {

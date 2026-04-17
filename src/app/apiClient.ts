@@ -9,6 +9,7 @@ import type {
   AutonomousRunsResponse,
   CodebaseSnapshot,
   DraftMutationResponse,
+  GitFileDiffResponse,
   GroupPrototypeCacheResponse,
   GroupPrototypeCacheUpdateRequest,
   LayoutStateResponse,
@@ -33,6 +34,7 @@ import {
   buildSemanticodeRunRoute,
   buildSemanticodeRunStopRoute,
   buildSemanticodeRunTimelineRoute,
+  SEMANTICODE_FILE_DIFF_ROUTE,
   SEMANTICODE_LAYOUTS_ROUTE,
   SEMANTICODE_GROUP_PROTOTYPES_ROUTE,
   SEMANTICODE_PREPROCESSING_EMBEDDINGS_ROUTE,
@@ -171,6 +173,22 @@ export async function fetchWorkspaceSyncStatus(): Promise<WorkspaceArtifactSyncS
 
   const payload = (await response.json()) as WorkspaceSyncStatusResponse
   return payload.sync
+}
+
+export async function fetchGitFileDiff(path: string) {
+  const url = new URL(SEMANTICODE_FILE_DIFF_ROUTE, window.location.origin)
+  url.searchParams.set('path', path)
+  const response = await fetch(url)
+
+  if (!response.ok) {
+    throw new Error(await getResponseErrorMessage(
+      response,
+      `File diff request failed with status ${response.status}.`,
+    ))
+  }
+
+  const payload = (await response.json()) as GitFileDiffResponse
+  return payload.diff
 }
 
 export async function fetchWorkspaceHistory() {

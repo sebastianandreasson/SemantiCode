@@ -43,6 +43,7 @@ import {
   type LayoutNodeScope,
   type LayoutSpec,
   type ProjectNode,
+  type ProjectSnapshot,
   type PreprocessedWorkspaceContext,
   type PreprocessingStatus,
   type SymbolNode,
@@ -409,6 +410,7 @@ export function Semanticode({
   const [telemetryActivityEvents, setTelemetryActivityEvents] = useState<TelemetryActivityEvent[]>([])
   const [telemetryError, setTelemetryError] = useState<string | null>(null)
   const [telemetryObservedAt, setTelemetryObservedAt] = useState(0)
+  const [followActiveAgent, setFollowActiveAgent] = useState(false)
   const hasRunningAutonomousRun = autonomousRuns.some((run) => run.status === 'running')
   const currentSnapshot = useVisualizerStore((state) => state.snapshot)
   const draftLayouts = useVisualizerStore((state) => state.draftLayouts)
@@ -469,6 +471,7 @@ export function Semanticode({
   const workspaceRef = useRef<HTMLDivElement | null>(null)
   const inspectorBodyRef = useRef<HTMLDivElement | null>(null)
   const lastFittedCompareKeyRef = useRef<string | null>(null)
+  const lastFollowedAgentActivityKeyRef = useRef<string | null>(null)
   const selectionAutoOpenInitializedRef = useRef(false)
   const semanticSearchCacheRef = useRef(new Map<string, SemanticSearchResult[]>())
   const containerDragPreviewPositionsRef = useRef(new Map<string, XYPosition>())
@@ -1519,6 +1522,13 @@ export function Semanticode({
 
     return nextMap
   }, [effectiveSnapshot, telemetryHeatSamples, telemetryMode, telemetryObservedAt])
+  const latestAgentActivityTarget = getLatestAgentActivityTarget({
+    snapshot: effectiveSnapshot,
+    telemetryActivityEvents,
+    telemetryEnabled,
+    telemetryMode,
+    visibleNodes: nodes,
+  })
 
   const presentedFlowModel = useMemo<FlowModel | null>(() => {
     if (!baseFlowModel) {
@@ -1871,6 +1881,21 @@ export function Semanticode({
 
     return `${requestText} · ${tokenText}${runText}`
   }, [telemetryEnabled, telemetryError, telemetryOverview, telemetryWindow])
+  const agentHeatFollowText = useMemo(() => {
+    if (!followActiveAgent) {
+      return 'Follow active agent off.'
+    }
+
+    if (!telemetryEnabled) {
+      return 'Enable agent heat to follow activity.'
+    }
+
+    if (!latestAgentActivityTarget) {
+      return 'Waiting for visible agent activity.'
+    }
+
+    return `Following ${latestAgentActivityTarget.path}`
+  }, [followActiveAgent, latestAgentActivityTarget, telemetryEnabled])
 
   const handleOpenRunsPanel = useCallback(() => {
     setRunsPanelOpen(true)
@@ -1889,6 +1914,11 @@ export function Semanticode({
   const handleTelemetryModeChange = useCallback((mode: TelemetryMode) => {
     setTelemetryEnabled(true)
     setTelemetryMode(mode)
+  }, [])
+  const handleToggleFollowActiveAgent = useCallback(() => {
+    setTelemetryEnabled(true)
+    lastFollowedAgentActivityKeyRef.current = null
+    setFollowActiveAgent((current) => !current)
   }, [])
   const inspectorWidthRatio = 1 - canvasWidthRatio
   const workspaceViewReady =
@@ -1950,6 +1980,35 @@ export function Semanticode({
     overlayNodeIdSet,
     resolvedCompareOverlay,
   ])
+
+  useEffect(() => {
+    if (!followActiveAgent || !flowInstance || !latestAgentActivityTarget) {
+      return
+    }
+
+    const followKey = `${telemetryMode}:${latestAgentActivityTarget.eventKey}`
+
+    if (lastFollowedAgentActivityKeyRef.current === followKey) {
+      return
+    }
+
+    const targetNodeIdSet = new Set(latestAgentActivityTarget.nodeIds)
+    const nodesToFit = nodes.filter((node) => targetNodeIdSet.has(node.id))
+
+    if (nodesToFit.length === 0) {
+      return
+    }
+
+    lastFollowedAgentActivityKeyRef.current = followKey
+    window.setTimeout(() => {
+      void flowInstance.fitView({
+        duration: 240,
+        maxZoom: telemetryMode === 'symbols' ? 2.4 : 1.8,
+        nodes: nodesToFit,
+        padding: 0.24,
+      })
+    }, 0)
+  }, [flowInstance, followActiveAgent, latestAgentActivityTarget, nodes, telemetryMode])
 
   useEffect(() => {
     if (!inspectorOpen || !inspectorBodyRef.current) {
@@ -2485,6 +2544,8 @@ export function Semanticode({
           >
           <MemoizedCanvasViewport
               agentHeatHelperText={agentHeatHelperText}
+              agentHeatFollowEnabled={followActiveAgent}
+              agentHeatFollowText={agentHeatFollowText}
               agentHeatMode={telemetryMode}
               agentHeatSource={telemetrySource}
               agentHeatWindow={telemetryWindow}
@@ -2500,6 +2561,7 @@ export function Semanticode({
               onInit={setFlowInstance}
               onAgentHeatModeChange={handleTelemetryModeChange}
               onAgentHeatSourceChange={handleTelemetrySourceChange}
+              onToggleAgentHeatFollow={handleToggleFollowActiveAgent}
               onAgentHeatWindowChange={handleTelemetryWindowChange}
               onLayoutSuggestionChange={handleLayoutSuggestionChange}
               onLayoutSuggestionSubmit={handleLayoutSuggestionSubmit}
@@ -2667,6 +2729,8 @@ export function Semanticode({
 
 interface CanvasViewportProps {
   agentHeatHelperText: string
+  agentHeatFollowEnabled: boolean
+  agentHeatFollowText: string
   agentHeatMode: TelemetryMode
   agentHeatSource: TelemetrySource
   agentHeatWindow: TelemetryWindow
@@ -2682,6 +2746,7 @@ interface CanvasViewportProps {
   onInit: (instance: ReactFlowInstance<Node, Edge>) => void
   onAgentHeatModeChange: (mode: TelemetryMode) => void
   onAgentHeatSourceChange: (source: TelemetrySource) => void
+  onToggleAgentHeatFollow: () => void
   onAgentHeatWindowChange: (window: TelemetryWindow) => void
   onLayoutSuggestionChange: (value: string) => void
   onLayoutSuggestionSubmit: () => void
@@ -2719,6 +2784,8 @@ interface CanvasViewportProps {
 
 const MemoizedCanvasViewport = memo(function CanvasViewport({
   agentHeatHelperText,
+  agentHeatFollowEnabled,
+  agentHeatFollowText,
   agentHeatMode,
   agentHeatSource,
   agentHeatWindow,
@@ -2734,6 +2801,7 @@ const MemoizedCanvasViewport = memo(function CanvasViewport({
   onInit,
   onAgentHeatModeChange,
   onAgentHeatSourceChange,
+  onToggleAgentHeatFollow,
   onAgentHeatWindowChange,
   onLayoutSuggestionChange,
   onLayoutSuggestionSubmit,
@@ -2842,7 +2910,16 @@ const MemoizedCanvasViewport = memo(function CanvasViewport({
                 </select>
               </label>
             </div>
+            <button
+              aria-pressed={agentHeatFollowEnabled}
+              className={`cbv-agent-heat-follow-toggle${agentHeatFollowEnabled ? ' is-active' : ''}`}
+              onClick={onToggleAgentHeatFollow}
+              type="button"
+            >
+              {agentHeatFollowEnabled ? 'Following active agent' : 'Follow active agent'}
+            </button>
             <p className="cbv-agent-heat-meta">{agentHeatHelperText}</p>
+            <p className="cbv-agent-heat-follow-meta">{agentHeatFollowText}</p>
           </div>
           {showSemanticSearch ? (
             <form
@@ -3585,14 +3662,17 @@ function applyFlowNodePresentation(
   },
   telemetryHeatByNodeId: Map<string, { pulse: boolean; weight: number }>,
 ) {
+  const heatActive = telemetryHeatByNodeId.size > 0
   let changed = false
   const nextNodes = nodes.map((node) => {
     const highlighted = compareOverlayState.nodeIds.has(node.id)
-    const dimmed = compareOverlayState.active && !highlighted
     const selected = selectedNodeIds.has(node.id)
     const heat = telemetryHeatByNodeId.get(node.id)
     const heatWeight = heat?.weight ?? 0
     const heatPulse = heat?.pulse ?? false
+    const dimmed = compareOverlayState.active
+      ? !highlighted
+      : heatActive && heatWeight <= 0 && !selected
     const data =
       node.data && typeof node.data === 'object'
         ? (node.data as Record<string, unknown>)
@@ -5664,6 +5744,72 @@ function getLayerTogglesForViewMode(
   return viewMode === 'symbols'
     ? ['contains', 'calls']
     : ['contains', 'imports', 'calls']
+}
+
+function getLatestAgentActivityTarget(input: {
+  snapshot: ProjectSnapshot | null
+  telemetryActivityEvents: TelemetryActivityEvent[]
+  telemetryEnabled: boolean
+  telemetryMode: TelemetryMode
+  visibleNodes: Node[]
+}) {
+  if (
+    !input.telemetryEnabled ||
+    !input.snapshot ||
+    input.telemetryActivityEvents.length === 0
+  ) {
+    return null
+  }
+
+  const visibleNodeIds = new Set(input.visibleNodes.map((node) => node.id))
+  const fileIdsByPath = new Map<string, string>()
+  const symbolIdsByFileId = new Map<string, string[]>()
+
+  for (const node of Object.values(input.snapshot.nodes)) {
+    if (isFileNode(node)) {
+      fileIdsByPath.set(node.path, node.id)
+      continue
+    }
+
+    if (isSymbolNode(node)) {
+      const currentSymbolIds = symbolIdsByFileId.get(node.fileId) ?? []
+      currentSymbolIds.push(node.id)
+      symbolIdsByFileId.set(node.fileId, currentSymbolIds)
+    }
+  }
+
+  for (const event of input.telemetryActivityEvents) {
+    const fileNodeId = fileIdsByPath.get(event.path)
+
+    if (!fileNodeId) {
+      continue
+    }
+
+    const targetNodeIds =
+      input.telemetryMode === 'symbols'
+        ? (symbolIdsByFileId.get(fileNodeId) ?? []).filter((nodeId) =>
+            visibleNodeIds.has(nodeId),
+          )
+        : visibleNodeIds.has(fileNodeId)
+          ? [fileNodeId]
+          : []
+    const fallbackNodeIds =
+      targetNodeIds.length === 0 && visibleNodeIds.has(fileNodeId)
+        ? [fileNodeId]
+        : targetNodeIds
+
+    if (fallbackNodeIds.length === 0) {
+      continue
+    }
+
+    return {
+      eventKey: event.key,
+      nodeIds: fallbackNodeIds,
+      path: event.path,
+    }
+  }
+
+  return null
 }
 
 function clampNumber(value: number, min: number, max: number) {
