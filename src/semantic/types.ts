@@ -54,6 +54,24 @@ export interface SemanticProjectionRecord {
   generatedAt: string
 }
 
+export interface GroupPrototypeCacheSnapshot {
+  records: {
+    layoutId: string
+    groupId: string
+    groupTitle: string
+    inputHash: string
+    memberNodeIds: string[]
+    usableMemberNodeIds: string[]
+    usableMemberCount: number
+    modelId: string
+    dimensions: number
+    values: number[]
+    cohesionScore: number | null
+    generatedAt: string
+  }[]
+  updatedAt: string
+}
+
 export interface SemanticLayoutBuildResult {
   layout: LayoutSpec
   symbolTexts: SemanticSymbolTextRecord[]

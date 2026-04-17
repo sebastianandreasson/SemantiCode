@@ -54,8 +54,10 @@ describe('groupPrototypes', () => {
       queryValues: [1, 0, 0],
       prototypes: [
         {
+          layoutId: 'layout:agent:test',
           groupId: 'setup',
           groupTitle: 'Setup',
+          inputHash: 'hash:setup',
           memberNodeIds: ['symbol:start', 'symbol:init'],
           usableMemberNodeIds: ['symbol:start', 'symbol:init'],
           usableMemberCount: 2,
@@ -63,10 +65,13 @@ describe('groupPrototypes', () => {
           dimensions: 3,
           values: [0.9, 0.1, 0],
           cohesionScore: 0.9,
+          generatedAt: '2026-04-17T00:00:00.000Z',
         },
         {
+          layoutId: 'layout:agent:test',
           groupId: 'combat',
           groupTitle: 'Combat',
+          inputHash: 'hash:combat',
           memberNodeIds: ['symbol:encounter', 'symbol:reward'],
           usableMemberNodeIds: ['symbol:encounter', 'symbol:reward'],
           usableMemberCount: 2,
@@ -74,6 +79,7 @@ describe('groupPrototypes', () => {
           dimensions: 3,
           values: [0.1, 0.9, 0],
           cohesionScore: 0.9,
+          generatedAt: '2026-04-17T00:00:00.000Z',
         },
       ],
       limit: 1,
@@ -89,8 +95,10 @@ describe('groupPrototypes', () => {
   it('suggests nearby non-member symbols for a group prototype', () => {
     const matches = rankNearbySymbolsForGroupPrototype({
       prototype: {
+        layoutId: 'layout:agent:test',
         groupId: 'setup',
         groupTitle: 'Setup',
+        inputHash: 'hash:setup',
         memberNodeIds: ['symbol:start', 'symbol:init'],
         usableMemberNodeIds: ['symbol:start', 'symbol:init'],
         usableMemberCount: 2,
@@ -98,6 +106,7 @@ describe('groupPrototypes', () => {
         dimensions: 3,
         values: [0.8, 0.2, 0],
         cohesionScore: 0.9,
+        generatedAt: '2026-04-17T00:00:00.000Z',
       },
       embeddings: [
         createEmbedding('symbol:start', 'model:a', [1, 0, 0]),
@@ -113,6 +122,61 @@ describe('groupPrototypes', () => {
         symbolId: 'symbol:route',
       }),
     ])
+  })
+
+  it('reuses cached prototype records when the input hash is unchanged', () => {
+    const [previousRecord] = buildGroupPrototypeRecords(
+      {
+        id: 'layout:agent:test',
+        title: 'Gameplay loop',
+        strategy: 'agent',
+        nodeScope: 'symbols',
+        placements: {},
+        groups: [
+          {
+            id: 'setup',
+            title: 'Setup',
+            nodeIds: ['symbol:start', 'symbol:init'],
+          },
+        ],
+        lanes: [],
+        annotations: [],
+        hiddenNodeIds: [],
+      },
+      [
+        createEmbedding('symbol:start', 'model:a', [1, 0, 0]),
+        createEmbedding('symbol:init', 'model:a', [0.5, 0.5, 0]),
+      ],
+    )
+
+    expect(previousRecord).toBeDefined()
+
+    const [reusedRecord] = buildGroupPrototypeRecords(
+      {
+        id: 'layout:agent:test',
+        title: 'Gameplay loop',
+        strategy: 'agent',
+        nodeScope: 'symbols',
+        placements: {},
+        groups: [
+          {
+            id: 'setup',
+            title: 'Setup',
+            nodeIds: ['symbol:start', 'symbol:init'],
+          },
+        ],
+        lanes: [],
+        annotations: [],
+        hiddenNodeIds: [],
+      },
+      [
+        createEmbedding('symbol:start', 'model:a', [1, 0, 0]),
+        createEmbedding('symbol:init', 'model:a', [0.5, 0.5, 0]),
+      ],
+      previousRecord ? [previousRecord] : [],
+    )
+
+    expect(reusedRecord).toBe(previousRecord)
   })
 })
 

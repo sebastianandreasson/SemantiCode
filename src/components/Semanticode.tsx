@@ -47,6 +47,7 @@ import {
   type WorkspaceUiState,
   type WorkspaceProfile,
   type WorkspaceArtifactSyncStatus,
+  type GroupPrototypeCacheSnapshot,
 } from '../types'
 import { useVisualizerStore } from '../store/visualizerStore'
 import { buildStructuralLayout } from '../layouts/structuralLayout'
@@ -63,8 +64,10 @@ import { ProjectsSidebar } from './shell/ProjectsSidebar'
 import { WorkspaceSyncModal } from './shell/WorkspaceSyncModal'
 import { WorkspaceToolbar } from './shell/WorkspaceToolbar'
 import {
+  fetchGroupPrototypeCache,
   fetchUiPreferences,
   fetchWorkspaceHistory,
+  persistGroupPrototypeCache,
   persistUiPreferences as persistUiPreferencesRequest,
   requestSemanticEmbeddings,
 } from '../app/apiClient'
@@ -84,6 +87,7 @@ import {
 } from '../semantic/semanticSearch'
 import {
   buildGroupPrototypeRecords,
+  mergeGroupPrototypeRecords,
   rankNearbySymbolsForGroupPrototype,
   rankGroupPrototypeMatches,
   type GroupPrototypeSearchMatch,
@@ -360,6 +364,10 @@ export function Semanticode({
   const [semanticSearchRankedMatches, setSemanticSearchRankedMatches] = useState<SemanticSearchResult[]>(
     [],
   )
+  const [groupPrototypeCache, setGroupPrototypeCache] = useState<GroupPrototypeCacheSnapshot | null>(
+    null,
+  )
+  const [groupPrototypeCacheLoaded, setGroupPrototypeCacheLoaded] = useState(false)
   const [semanticSearchMatchLimit, setSemanticSearchMatchLimit] = useState(
     SEMANTIC_SEARCH_RESULT_LIMIT,
   )
@@ -612,6 +620,35 @@ export function Semanticode({
       cancelled = true
     }
   }, [canManageProjects, desktopBridge])
+
+  useEffect(() => {
+    let cancelled = false
+
+    if (!effectiveSnapshot?.rootDir) {
+      setGroupPrototypeCache(null)
+      setGroupPrototypeCacheLoaded(false)
+      return
+    }
+
+    setGroupPrototypeCacheLoaded(false)
+    void fetchGroupPrototypeCache()
+      .then((cache) => {
+        if (!cancelled) {
+          setGroupPrototypeCache(cache)
+          setGroupPrototypeCacheLoaded(true)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setGroupPrototypeCache(null)
+          setGroupPrototypeCacheLoaded(true)
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [effectiveSnapshot?.rootDir])
 
   useEffect(() => {
     if (snapshot === undefined) {
@@ -895,13 +932,27 @@ export function Semanticode({
 
     return layoutSpec
   }, [resolvedScene])
+  const semanticSearchCachedGroupPrototypes = useMemo(() => {
+    if (!semanticSearchGroupSourceLayout || !groupPrototypeCache?.records.length) {
+      return []
+    }
+
+    return groupPrototypeCache.records.filter(
+      (record) => record.layoutId === semanticSearchGroupSourceLayout.id,
+    )
+  }, [groupPrototypeCache?.records, semanticSearchGroupSourceLayout])
   const semanticSearchGroupPrototypes = useMemo(
     () =>
       buildGroupPrototypeRecords(
         semanticSearchGroupSourceLayout,
         semanticSearchEmbeddings,
+        semanticSearchCachedGroupPrototypes,
       ),
-    [semanticSearchEmbeddings, semanticSearchGroupSourceLayout],
+    [
+      semanticSearchCachedGroupPrototypes,
+      semanticSearchEmbeddings,
+      semanticSearchGroupSourceLayout,
+    ],
   )
   const semanticGroupSearchAvailable =
     semanticSearchAvailable && semanticSearchGroupPrototypes.length > 0
@@ -997,6 +1048,35 @@ export function Semanticode({
     semanticSearchEmbeddings.length,
     semanticSearchGroupPrototypes.length,
     semanticSearchModelId,
+  ])
+
+  useEffect(() => {
+    if (!semanticSearchGroupSourceLayout || !groupPrototypeCacheLoaded) {
+      return
+    }
+
+    const nextCache: GroupPrototypeCacheSnapshot = {
+      records: mergeGroupPrototypeRecords(
+        groupPrototypeCache?.records ?? [],
+        semanticSearchGroupPrototypes,
+        semanticSearchGroupSourceLayout.id,
+      ),
+      updatedAt: new Date().toISOString(),
+    }
+
+    if (areGroupPrototypeCachesEquivalent(groupPrototypeCache, nextCache)) {
+      return
+    }
+
+    setGroupPrototypeCache(nextCache)
+    void persistGroupPrototypeCache(nextCache).catch(() => {
+      // Ignore persistence failures; in-memory cache still works for this session.
+    })
+  }, [
+    groupPrototypeCache,
+    groupPrototypeCacheLoaded,
+    semanticSearchGroupPrototypes,
+    semanticSearchGroupSourceLayout,
   ])
 
   useEffect(() => {
@@ -4893,6 +4973,28 @@ function areLayoutListsEquivalent(
       Object.keys(layout.placements).length === Object.keys(rightLayout?.placements ?? {}).length &&
       layout.annotations.length === (rightLayout?.annotations.length ?? 0) &&
       layout.hiddenNodeIds.length === (rightLayout?.hiddenNodeIds.length ?? 0)
+    )
+  })
+}
+
+function areGroupPrototypeCachesEquivalent(
+  left: GroupPrototypeCacheSnapshot | null,
+  right: GroupPrototypeCacheSnapshot | null,
+) {
+  const leftRecords = left?.records ?? []
+  const rightRecords = right?.records ?? []
+
+  if (leftRecords.length !== rightRecords.length) {
+    return false
+  }
+
+  return leftRecords.every((record, index) => {
+    const rightRecord = rightRecords[index]
+
+    return (
+      record.layoutId === rightRecord?.layoutId &&
+      record.groupId === rightRecord?.groupId &&
+      record.inputHash === rightRecord?.inputHash
     )
   })
 }

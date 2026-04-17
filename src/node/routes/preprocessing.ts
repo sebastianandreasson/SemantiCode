@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
 import {
+  SEMANTICODE_GROUP_PROTOTYPES_ROUTE,
   SEMANTICODE_PREPROCESSING_EMBEDDINGS_ROUTE,
   SEMANTICODE_PREPROCESSING_ROUTE,
   SEMANTICODE_PREPROCESSING_SUMMARY_ROUTE,
@@ -9,6 +10,8 @@ import {
   SEMANTICODE_WORKSPACE_HISTORY_ROUTE,
 } from '../../shared/constants'
 import type {
+  GroupPrototypeCacheResponse,
+  GroupPrototypeCacheUpdateRequest,
   PreprocessingContextResponse,
   PreprocessingContextUpdateRequest,
   PreprocessingEmbeddingRequest,
@@ -20,6 +23,7 @@ import type {
   WorkspaceHistoryResponse,
   WorkspaceSyncStatusResponse,
 } from '../../types'
+import { readPersistedGroupPrototypeCache, writePersistedGroupPrototypeCache } from '../groupPrototypePersistence'
 import { readPersistedPreprocessedWorkspaceContext, writePersistedPreprocessedWorkspaceContext } from '../preprocessingPersistence'
 import { embedSemanticTexts } from '../semanticEmbeddingService'
 import { analyzeWorkspaceArtifactSync } from '../../preprocessing/workspaceSync'
@@ -61,6 +65,37 @@ export async function handlePreprocessingRoute(
 
       const result: PreprocessingContextResponse = {
         context: payload.context,
+      }
+
+      sendJson(response, 200, result)
+      return true
+    }
+  }
+
+  if (pathname === SEMANTICODE_GROUP_PROTOTYPES_ROUTE) {
+    if (method === 'GET') {
+      const result: GroupPrototypeCacheResponse = {
+        cache: await readPersistedGroupPrototypeCache(options.rootDir),
+      }
+
+      sendJson(response, 200, result)
+      return true
+    }
+
+    if (method === 'POST') {
+      const payload = await readJsonBody<GroupPrototypeCacheUpdateRequest>(request)
+
+      if (!payload?.cache || !Array.isArray(payload.cache.records)) {
+        sendJson(response, 400, {
+          message: 'A group prototype cache payload is required.',
+        })
+        return true
+      }
+
+      await writePersistedGroupPrototypeCache(options.rootDir, payload.cache)
+
+      const result: GroupPrototypeCacheResponse = {
+        cache: payload.cache,
       }
 
       sendJson(response, 200, result)

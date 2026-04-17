@@ -1,9 +1,12 @@
 import type { LayoutSpec } from '../../schema/layout'
 import type { SemanticEmbeddingVectorRecord } from '../types'
+import { hashSemanticText } from '../symbolText'
 
 export interface GroupPrototypeRecord {
+  layoutId: string
   groupId: string
   groupTitle: string
+  inputHash: string
   memberNodeIds: string[]
   usableMemberNodeIds: string[]
   usableMemberCount: number
@@ -11,9 +14,11 @@ export interface GroupPrototypeRecord {
   dimensions: number
   values: number[]
   cohesionScore: number | null
+  generatedAt: string
 }
 
 export interface GroupPrototypeSearchMatch {
+  layoutId: string
   groupId: string
   groupTitle: string
   memberNodeIds: string[]
@@ -28,6 +33,7 @@ export interface NearbyGroupPrototypeSymbolMatch {
 export function buildGroupPrototypeRecords(
   layout: LayoutSpec | null,
   embeddings: SemanticEmbeddingVectorRecord[],
+  previousRecords: GroupPrototypeRecord[] = [],
 ) {
   if (!layout || layout.groups.length === 0 || embeddings.length === 0) {
     return []
@@ -35,6 +41,9 @@ export function buildGroupPrototypeRecords(
 
   const embeddingsBySymbolId = new Map(
     embeddings.map((embedding) => [embedding.symbolId, embedding]),
+  )
+  const previousRecordsByGroupId = new Map(
+    previousRecords.map((record) => [record.groupId, record]),
   )
   const prototypes: GroupPrototypeRecord[] = []
 
@@ -59,6 +68,17 @@ export function buildGroupPrototypeRecords(
     const coherentMemberEmbeddings = memberEmbeddings.filter((embedding) => {
       return embedding.modelId === modelId && embedding.dimensions === dimensions
     })
+    const inputHash = buildGroupPrototypeInputHash(layout.id, group, coherentMemberEmbeddings)
+    const previousRecord = previousRecordsByGroupId.get(group.id)
+
+    if (
+      previousRecord &&
+      previousRecord.layoutId === layout.id &&
+      previousRecord.inputHash === inputHash
+    ) {
+      prototypes.push(previousRecord)
+      continue
+    }
 
     if (coherentMemberEmbeddings.length < 2) {
       continue
@@ -70,8 +90,10 @@ export function buildGroupPrototypeRecords(
     )
 
     prototypes.push({
+      layoutId: layout.id,
       groupId: group.id,
       groupTitle: group.title,
+      inputHash,
       memberNodeIds: group.nodeIds,
       usableMemberNodeIds: coherentMemberEmbeddings.map((embedding) => embedding.symbolId),
       usableMemberCount: coherentMemberEmbeddings.length,
@@ -82,6 +104,7 @@ export function buildGroupPrototypeRecords(
         coherentMemberEmbeddings.map((embedding) => embedding.values),
         values,
       ),
+      generatedAt: new Date().toISOString(),
     })
   }
 
@@ -120,6 +143,7 @@ export function rankGroupPrototypeMatches(input: {
     }
 
     matches.push({
+      layoutId: prototype.layoutId,
       groupId: prototype.groupId,
       groupTitle: prototype.groupTitle,
       memberNodeIds: prototype.memberNodeIds,
@@ -232,4 +256,36 @@ function vectorMagnitude(values: number[]) {
   }
 
   return Math.sqrt(total)
+}
+
+export function mergeGroupPrototypeRecords(
+  existingRecords: GroupPrototypeRecord[],
+  nextRecords: GroupPrototypeRecord[],
+  layoutId: string,
+) {
+  const preservedRecords = existingRecords.filter((record) => record.layoutId !== layoutId)
+  return [...preservedRecords, ...nextRecords]
+}
+
+function buildGroupPrototypeInputHash(
+  layoutId: string,
+  group: LayoutSpec['groups'][number],
+  embeddings: SemanticEmbeddingVectorRecord[],
+) {
+  return hashSemanticText(
+    JSON.stringify({
+      layoutId,
+      groupId: group.id,
+      groupTitle: group.title,
+      memberNodeIds: [...group.nodeIds].sort(),
+      embeddings: embeddings
+        .map((embedding) => ({
+          dimensions: embedding.dimensions,
+          modelId: embedding.modelId,
+          symbolId: embedding.symbolId,
+          textHash: embedding.textHash,
+        }))
+        .sort((left, right) => left.symbolId.localeCompare(right.symbolId)),
+    }),
+  )
 }

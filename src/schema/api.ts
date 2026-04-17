@@ -4,6 +4,7 @@ import type {
   PreprocessedWorkspaceContext,
   WorkspaceArtifactSyncStatus,
 } from '../preprocessing/types'
+import type { GroupPrototypeCacheSnapshot } from '../semantic/types'
 import type { GraphEdge, ProjectSnapshot } from './snapshot'
 import type { LayoutSpec } from './layout'
 import type {
@@ -103,6 +104,14 @@ export interface PreprocessingEmbeddingResponse {
     values: number[]
     generatedAt: string
   }[]
+}
+
+export interface GroupPrototypeCacheResponse {
+  cache: GroupPrototypeCacheSnapshot | null
+}
+
+export interface GroupPrototypeCacheUpdateRequest {
+  cache: GroupPrototypeCacheSnapshot
 }
 
 export interface DraftMutationResponse {

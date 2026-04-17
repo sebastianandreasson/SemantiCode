@@ -2,6 +2,8 @@ import type {
   AgentStateResponse,
   CodebaseSnapshot,
   DraftMutationResponse,
+  GroupPrototypeCacheResponse,
+  GroupPrototypeCacheUpdateRequest,
   LayoutStateResponse,
   PreprocessedWorkspaceContext,
   PreprocessingEmbeddingResponse,
@@ -18,6 +20,7 @@ import {
   SEMANTICODE_AGENT_SESSION_ROUTE,
   buildSemanticodeDraftActionRoute,
   SEMANTICODE_LAYOUTS_ROUTE,
+  SEMANTICODE_GROUP_PROTOTYPES_ROUTE,
   SEMANTICODE_PREPROCESSING_EMBEDDINGS_ROUTE,
   SEMANTICODE_PREPROCESSING_ROUTE,
   SEMANTICODE_PREPROCESSING_SUMMARY_ROUTE,
@@ -215,6 +218,42 @@ export async function persistPreprocessedWorkspaceContext(
       `Preprocessing persistence failed with status ${response.status}.`,
     ))
   }
+}
+
+export async function fetchGroupPrototypeCache() {
+  const response = await fetch(SEMANTICODE_GROUP_PROTOTYPES_ROUTE)
+
+  if (!response.ok) {
+    throw new Error(await getResponseErrorMessage(
+      response,
+      `Group prototype cache request failed with status ${response.status}.`,
+    ))
+  }
+
+  const payload = (await response.json()) as GroupPrototypeCacheResponse
+  return payload.cache
+}
+
+export async function persistGroupPrototypeCache(
+  cache: GroupPrototypeCacheUpdateRequest['cache'],
+) {
+  const response = await fetch(SEMANTICODE_GROUP_PROTOTYPES_ROUTE, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ cache }),
+  })
+
+  if (!response.ok) {
+    throw new Error(await getResponseErrorMessage(
+      response,
+      `Group prototype cache persistence failed with status ${response.status}.`,
+    ))
+  }
+
+  const payload = (await response.json()) as GroupPrototypeCacheResponse
+  return payload.cache
 }
 
 export async function requestLLMSemanticSummary(message: string) {
