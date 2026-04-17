@@ -83,6 +83,7 @@ interface InspectorPaneProps {
   selectedNode: ProjectNode | null
   selectedSymbol: SymbolNode | null
   selectedSymbols: SymbolNode[]
+  scrollToDiffRequestKey?: string | null
   themeMode: ThemeMode
   workingSet: WorkingSetState | null
   workingSetContext: AgentScopeContext | null
@@ -117,6 +118,7 @@ export function InspectorPane({
   selectedNode,
   selectedSymbol,
   selectedSymbols,
+  scrollToDiffRequestKey = null,
   themeMode,
   workingSet,
   workingSetContext,
@@ -206,6 +208,7 @@ export function InspectorPane({
         ) : selectedFiles.length > 1 ? (
           <MultiFileInspector
             primaryFile={selectedFile}
+            scrollToDiffRequestKey={scrollToDiffRequestKey}
             selectedFiles={selectedFiles}
             themeMode={themeMode}
           />
@@ -236,6 +239,7 @@ export function InspectorPane({
             <CodePreview
               file={selectedFile}
               highlightedRange={selectedSymbol?.range}
+              scrollToDiffRequestKey={scrollToDiffRequestKey}
               themeMode={themeMode}
             />
           </>
@@ -370,10 +374,12 @@ function InspectorContextSummary({
 
 function MultiFileInspector({
   primaryFile,
+  scrollToDiffRequestKey,
   selectedFiles,
   themeMode,
 }: {
   primaryFile: CodebaseFile | null
+  scrollToDiffRequestKey?: string | null
   selectedFiles: CodebaseFile[]
   themeMode: ThemeMode
 }) {
@@ -422,7 +428,11 @@ function MultiFileInspector({
                 : 'Primary preview'}
             </span>
           </div>
-          <CodePreview file={primaryFile} themeMode={themeMode} />
+          <CodePreview
+            file={primaryFile}
+            scrollToDiffRequestKey={scrollToDiffRequestKey}
+            themeMode={themeMode}
+          />
         </>
       ) : null}
     </div>
@@ -653,13 +663,16 @@ function LayoutGroupInspector({
 function CodePreview({
   file,
   highlightedRange,
+  scrollToDiffRequestKey,
   themeMode,
 }: {
   file: CodebaseFile
   highlightedRange?: SourceRange
+  scrollToDiffRequestKey?: string | null
   themeMode: ThemeMode
 }) {
   const viewRef = useRef<EditorView | null>(null)
+  const diffSummaryRef = useRef<HTMLDivElement | null>(null)
   const diffCacheRef = useRef(new Map<string, GitFileDiff | null>())
   const [fileDiff, setFileDiff] = useState<GitFileDiff | null>(null)
   const extensions = useMemo(
@@ -723,10 +736,37 @@ function CodePreview({
     })
   }, [file.id, highlightedRange])
 
+  useEffect(() => {
+    if (
+      !scrollToDiffRequestKey ||
+      !viewRef.current ||
+      !fileDiff?.hasDiff ||
+      fileDiff.changes.length === 0
+    ) {
+      return
+    }
+
+    const firstChangedLineNumber = Math.max(
+      1,
+      Math.min(fileDiff.changes[0].startLine, viewRef.current.state.doc.lines),
+    )
+    const firstChangedLine = viewRef.current.state.doc.line(firstChangedLineNumber)
+
+    diffSummaryRef.current?.scrollIntoView({
+      block: 'nearest',
+      behavior: 'smooth',
+    })
+    viewRef.current.dispatch({
+      effects: EditorView.scrollIntoView(firstChangedLine.from, {
+        y: 'start',
+      }),
+    })
+  }, [file.id, fileDiff, scrollToDiffRequestKey])
+
   if (!file.content) {
     return (
       <>
-        {fileDiff?.hasDiff ? <CodeDiffSummary diff={fileDiff} /> : null}
+        {fileDiff?.hasDiff ? <CodeDiffSummary diff={fileDiff} summaryRef={diffSummaryRef} /> : null}
         <CodeMirror
           basicSetup={false}
           className="cbv-code-editor"
@@ -742,7 +782,7 @@ function CodePreview({
 
   return (
     <>
-      {fileDiff?.hasDiff ? <CodeDiffSummary diff={fileDiff} /> : null}
+      {fileDiff?.hasDiff ? <CodeDiffSummary diff={fileDiff} summaryRef={diffSummaryRef} /> : null}
       <CodeMirror
         basicSetup={{
           autocompletion: false,
@@ -773,9 +813,15 @@ function CodePreview({
   )
 }
 
-function CodeDiffSummary({ diff }: { diff: GitFileDiff }) {
+function CodeDiffSummary({
+  diff,
+  summaryRef,
+}: {
+  diff: GitFileDiff
+  summaryRef?: RefObject<HTMLDivElement | null>
+}) {
   return (
-    <div className="cbv-code-diff-summary">
+    <div className="cbv-code-diff-summary" ref={summaryRef}>
       <p className="cbv-eyebrow">Uncommitted edits</p>
       <div className="cbv-code-diff-summary-row">
         <span className="cbv-code-diff-pill is-added">+{diff.addedLineCount}</span>

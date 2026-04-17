@@ -411,6 +411,7 @@ export function Semanticode({
   const [telemetryError, setTelemetryError] = useState<string | null>(null)
   const [telemetryObservedAt, setTelemetryObservedAt] = useState(0)
   const [followActiveAgent, setFollowActiveAgent] = useState(false)
+  const [followedEditDiffRequestKey, setFollowedEditDiffRequestKey] = useState<string | null>(null)
   const hasRunningAutonomousRun = autonomousRuns.some((run) => run.status === 'running')
   const currentSnapshot = useVisualizerStore((state) => state.snapshot)
   const draftLayouts = useVisualizerStore((state) => state.draftLayouts)
@@ -2000,7 +2001,15 @@ export function Semanticode({
     }
 
     lastFollowedAgentActivityKeyRef.current = followKey
+
     window.setTimeout(() => {
+      if (isEditTelemetryEvent(latestAgentActivityTarget.toolNames)) {
+        selectNode(latestAgentActivityTarget.fileNodeId)
+        setInspectorTab('file')
+        setInspectorOpen(true)
+        setFollowedEditDiffRequestKey(followKey)
+      }
+
       void flowInstance.fitView({
         duration: 240,
         maxZoom: telemetryMode === 'symbols' ? 2.4 : 1.8,
@@ -2008,7 +2017,15 @@ export function Semanticode({
         padding: 0.24,
       })
     }, 0)
-  }, [flowInstance, followActiveAgent, latestAgentActivityTarget, nodes, telemetryMode])
+  }, [
+    flowInstance,
+    followActiveAgent,
+    latestAgentActivityTarget,
+    nodes,
+    selectNode,
+    setInspectorTab,
+    telemetryMode,
+  ])
 
   useEffect(() => {
     if (!inspectorOpen || !inspectorBodyRef.current) {
@@ -2640,6 +2657,7 @@ export function Semanticode({
                 selectedNode={selectedNode}
                 selectedSymbol={selectedSymbol}
                 selectedSymbols={selectedSymbols}
+                scrollToDiffRequestKey={followedEditDiffRequestKey}
                 themeMode={themeMode}
                 workingSet={workingSet.nodeIds.length > 0 ? workingSet : null}
                 workingSetContext={workingSetContext}
@@ -5803,13 +5821,29 @@ function getLatestAgentActivityTarget(input: {
     }
 
     return {
+      fileNodeId,
       eventKey: event.key,
       nodeIds: fallbackNodeIds,
       path: event.path,
+      toolNames: event.toolNames,
     }
   }
 
   return null
+}
+
+function isEditTelemetryEvent(toolNames: string[]) {
+  return toolNames.some((toolName) => {
+    const normalizedToolName = toolName.trim().toLowerCase()
+
+    return (
+      normalizedToolName.includes('apply') ||
+      normalizedToolName.includes('write') ||
+      normalizedToolName.includes('edit') ||
+      normalizedToolName.includes('patch') ||
+      normalizedToolName.includes('replace')
+    )
+  })
 }
 
 function clampNumber(value: number, min: number, max: number) {
