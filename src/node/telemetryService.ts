@@ -1,23 +1,22 @@
 import { randomUUID } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
+import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
+import { dirname, join, relative, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 import {
   appendRequestTelemetryArtifacts,
   deriveRequestTelemetryAnalytics,
   deriveRequestTelemetryBreakdown,
   deriveToolPaths,
-  ensureBundledRequestTelemetryExtension,
   getRequestTelemetryPaths,
   readRequestTelemetryRecords,
   readTokenUsageSummary,
   summarizeRequestSpans,
 } from '@sebastianandreasson/pi-autonomous-agents'
 
-import { readProjectSnapshot } from './readProjectSnapshot'
 import { getPiRunScopedPaths, resolvePiHarnessPaths } from './piHarnessPaths'
 import {
-  isFileNode,
-  isSymbolNode,
   type AgentHeatSample,
   type TelemetryActivityEvent,
   type TelemetryConfidence,
@@ -100,12 +99,72 @@ interface SpanRecord {
   toolName?: string
 }
 
+const require = createRequire(import.meta.url)
+const REQUEST_TELEMETRY_EXTENSION_DIRNAME = 'pi-harness-request-telemetry'
+const REQUEST_TELEMETRY_SHIM_HEADER = [
+  '// Managed by Semanticode.',
+  '// This shim lets Pi auto-discover the packaged request telemetry extension.',
+].join('\n')
+
+function getManagedRequestTelemetryExtensionPaths(rootDir: string) {
+  const repoRoot = resolve(rootDir)
+  const extensionRoot = join(repoRoot, '.pi', 'extensions')
+  const extensionDir = join(extensionRoot, REQUEST_TELEMETRY_EXTENSION_DIRNAME)
+  const packageEntry = require.resolve('@sebastianandreasson/pi-autonomous-agents')
+  const sourceFile = join(dirname(dirname(packageEntry)), 'pi-extensions', 'request-telemetry', 'index.mjs')
+
+  return {
+    entryFile: join(extensionDir, 'index.mjs'),
+    extensionDir,
+    manifestFile: join(extensionDir, 'package.json'),
+    sourceFile,
+  }
+}
+
+function renderRequestTelemetryExtensionShim(sourceFile: string) {
+  const sourceUrl = pathToFileURL(sourceFile).href
+
+  return [
+    REQUEST_TELEMETRY_SHIM_HEADER,
+    `export * from ${JSON.stringify(sourceUrl)}`,
+    `export { default } from ${JSON.stringify(sourceUrl)}`,
+    '',
+  ].join('\n')
+}
+
+function renderRequestTelemetryExtensionManifest() {
+  return `${JSON.stringify(
+    {
+      name: REQUEST_TELEMETRY_EXTENSION_DIRNAME,
+      private: true,
+      type: 'module',
+      pi: {
+        extensions: ['./index.mjs'],
+      },
+    },
+    null,
+    2,
+  )}\n`
+}
+
 export class AgentTelemetryService {
+  private readonly telemetryPreparationByRootDir = new Map<string, Promise<void>>()
+
   async ensureWorkspaceTelemetry(rootDir: string) {
-    return ensureBundledRequestTelemetryExtension({
-      cwd: rootDir,
-      enabled: true,
+    const normalizedRootDir = resolve(rootDir)
+    const existing = this.telemetryPreparationByRootDir.get(normalizedRootDir)
+
+    if (existing) {
+      return existing
+    }
+
+    const preparation = this.installRequestTelemetryExtension(normalizedRootDir).catch((error) => {
+      this.telemetryPreparationByRootDir.delete(normalizedRootDir)
+      throw error
     })
+
+    this.telemetryPreparationByRootDir.set(normalizedRootDir, preparation)
+    return preparation
   }
 
   async recordInteractivePrompt(input: InteractiveTelemetryInput) {
@@ -257,32 +316,8 @@ export class AgentTelemetryService {
     source: TelemetrySource
     window: TelemetryWindow
   }): Promise<AgentHeatSample[]> {
-    const [telemetry, snapshot] = await Promise.all([
-      this.readFilteredTelemetry(input),
-      readProjectSnapshot({
-        analyzeCalls: true,
-        analyzeImports: true,
-        analyzeSymbols: true,
-        rootDir: input.rootDir,
-      }),
-    ])
+    const telemetry = await this.readFilteredTelemetry(input)
     const spansByRequestId = indexSpansByRequestId(telemetry.spans)
-    const filesByPath = new Map<string, string>()
-    const symbolsByFileId = new Map<string, string[]>()
-
-    for (const node of Object.values(snapshot.nodes)) {
-      if (isFileNode(node)) {
-        filesByPath.set(node.path, node.id)
-        continue
-      }
-
-      if (isSymbolNode(node)) {
-        const existing = symbolsByFileId.get(node.fileId) ?? []
-        existing.push(node.id)
-        symbolsByFileId.set(node.fileId, existing)
-      }
-    }
-
     const byPath = new Map<string, {
       confidence: TelemetryConfidence
       lastSeenAt: string
@@ -325,25 +360,10 @@ export class AgentTelemetryService {
 
     const samples = [...byPath.entries()]
       .map(([pathValue, value]) => {
-        const fileNodeId = filesByPath.get(pathValue)
-
-        if (!fileNodeId) {
-          return null
-        }
-
-        const nodeIds =
-          input.mode === 'symbols'
-            ? (symbolsByFileId.get(fileNodeId) ?? [])
-            : [fileNodeId]
-
-        if (nodeIds.length === 0) {
-          return null
-        }
-
         return {
           confidence: value.confidence,
           lastSeenAt: value.lastSeenAt,
-          nodeIds,
+          nodeIds: [] as string[],
           path: pathValue,
           requestCount: value.requestCount,
           source: value.source,
@@ -405,14 +425,48 @@ export class AgentTelemetryService {
 
       requestIds.add(String(request.requestId ?? ''))
       return true
-    })
-    const spans = requestTelemetry.spans.filter((span: Record<string, unknown>) =>
-      requestIds.has(String(span.requestId ?? '')),
-    )
+    }).map((request: Record<string, unknown>) => normalizeTelemetryRequestPaths(input.rootDir, request))
+    const spans = requestTelemetry.spans
+      .filter((span: Record<string, unknown>) =>
+        requestIds.has(String(span.requestId ?? '')),
+      )
+      .map((span: Record<string, unknown>) => normalizeTelemetrySpanPaths(input.rootDir, span))
 
     return {
       requests,
       spans,
+    }
+  }
+
+  private async installRequestTelemetryExtension(rootDir: string) {
+    const paths = getManagedRequestTelemetryExtensionPaths(rootDir)
+
+    await access(paths.sourceFile)
+    await mkdir(paths.extensionDir, { recursive: true })
+
+    const entryContent = renderRequestTelemetryExtensionShim(paths.sourceFile)
+    const manifestContent = renderRequestTelemetryExtensionManifest()
+    let existingEntry = ''
+    let existingManifest = ''
+
+    try {
+      existingEntry = await readFile(paths.entryFile, 'utf8')
+    } catch {
+      existingEntry = ''
+    }
+
+    try {
+      existingManifest = await readFile(paths.manifestFile, 'utf8')
+    } catch {
+      existingManifest = ''
+    }
+
+    if (existingEntry !== entryContent) {
+      await writeFile(paths.entryFile, entryContent, 'utf8')
+    }
+
+    if (existingManifest !== manifestContent) {
+      await writeFile(paths.manifestFile, manifestContent, 'utf8')
     }
   }
 }
@@ -635,6 +689,57 @@ function byteLength(value: string) {
 
 function normalizeRelativePath(pathValue: string) {
   return pathValue.replace(/\\/g, '/').replace(/^\.\//, '').trim()
+}
+
+function normalizeTelemetryPath(rootDir: string, pathValue: unknown) {
+  const normalizedValue = normalizeRelativePath(String(pathValue ?? ''))
+
+  if (!normalizedValue) {
+    return ''
+  }
+
+  const normalizedRootDir = resolve(rootDir)
+  const resolvedPath = resolve(normalizedRootDir, normalizedValue)
+
+  if (resolvedPath === normalizedRootDir || resolvedPath.startsWith(`${normalizedRootDir}/`)) {
+    return normalizeRelativePath(relative(normalizedRootDir, resolvedPath))
+  }
+
+  return normalizedValue
+}
+
+function normalizeTelemetryRequestPaths(
+  rootDir: string,
+  request: Record<string, unknown>,
+): RequestRecord {
+  const files = Array.isArray(request.files)
+    ? request.files
+        .map((pathValue) => normalizeTelemetryPath(rootDir, pathValue))
+        .filter(Boolean)
+    : []
+
+  return {
+    ...request,
+    files,
+  } as RequestRecord
+}
+
+function normalizeTelemetrySpanPaths(
+  rootDir: string,
+  span: Record<string, unknown>,
+): SpanRecord {
+  const paths = Array.isArray(span.paths)
+    ? span.paths
+        .map((pathValue) => normalizeTelemetryPath(rootDir, pathValue))
+        .filter(Boolean)
+    : []
+  const primaryPath = normalizeTelemetryPath(rootDir, span.primaryPath)
+
+  return {
+    ...span,
+    paths,
+    primaryPath,
+  } as SpanRecord
 }
 
 function roundMetric(value: number) {

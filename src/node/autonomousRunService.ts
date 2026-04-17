@@ -52,10 +52,23 @@ interface LastIterationRecord {
   terminalReason?: string
 }
 
+interface RunTelemetryEventRecord {
+  [key: string]: unknown
+  iteration?: number
+  kind?: string
+  notes?: string
+  phase?: string
+  reason?: string
+  role?: string
+  status?: string
+  task?: string
+  timestamp?: string
+  totalTokens?: number
+}
+
 const require = createRequire(import.meta.url)
 const PI_HARNESS_ENTRY = resolve(
-  dirname(require.resolve('@sebastianandreasson/pi-autonomous-agents/package.json')),
-  'src',
+  dirname(require.resolve('@sebastianandreasson/pi-autonomous-agents')),
   'cli.mjs',
 )
 
@@ -112,11 +125,11 @@ export class AutonomousRunService {
     }
 
     const runPaths = getPiRunScopedPaths(paths, runId)
-    const [scope, logExcerpt, lastOutputExcerpt, analytics] = await Promise.all([
+    const [scope, logExcerpt, lastOutputExcerpt, runTelemetryEvents] = await Promise.all([
       readRunScopeMetadata(rootDir, runId),
       readExcerpt(runPaths.logFile, 7000),
       readExcerpt(runPaths.lastOutputFile, 4000),
-      this.telemetryService.getRunAnalytics(rootDir, runId),
+      readRunTelemetryEvents(rootDir, runId),
     ])
 
     return {
@@ -129,16 +142,16 @@ export class AutonomousRunService {
               layoutTitle: scope.layoutTitle,
               paths: scope.paths,
               symbolPaths: scope.symbolPaths,
-              title: scope.title,
-            }
+            title: scope.title,
+          }
           : null,
-      todos: analytics.todos,
+      todos: deriveRunTodoSummaries(runTelemetryEvents),
     }
   }
 
   async getRunTimeline(rootDir: string, runId: string): Promise<AutonomousRunTimelinePoint[]> {
-    const analytics = await this.telemetryService.getRunAnalytics(rootDir, runId)
-    return analytics.timeline
+    const runTelemetryEvents = await readRunTelemetryEvents(rootDir, runId)
+    return deriveRunTimeline(runTelemetryEvents)
   }
 
   async startRun(rootDir: string, input: AutonomousRunStartRequest) {
@@ -261,12 +274,12 @@ export class AutonomousRunService {
     const paths = await resolvePiHarnessPaths(rootDir)
     const runDir = getPiRunDir(paths, runId)
     const runPaths = getPiRunScopedPaths(paths, runId)
-    const [directoryStat, state, lastIteration, tokenSummary, analytics, scope] = await Promise.all([
+    const [directoryStat, state, lastIteration, tokenSummary, runTelemetryEvents, scope] = await Promise.all([
       stat(runDir).catch(() => null),
       readJsonFile<RunStateRecord>(runPaths.stateFile),
       readJsonFile<LastIterationRecord>(runPaths.lastIterationSummaryFile),
       this.telemetryService.getRunTokenSummary(rootDir, runId),
-      this.telemetryService.getRunAnalytics(rootDir, runId),
+      readRunTelemetryEvents(rootDir, runId),
       readRunScopeMetadata(rootDir, runId),
     ])
 
@@ -285,12 +298,15 @@ export class AutonomousRunService {
       terminalReason: String(lastIteration?.terminalReason ?? ''),
     })
 
+    const todoSummaries = deriveRunTodoSummaries(runTelemetryEvents)
+    const timeline = deriveRunTimeline(runTelemetryEvents)
+
     return {
-      completedTodoCount: analytics.todos.length,
+      completedTodoCount: todoSummaries.length,
       isActive: activeRunId === runId,
       iteration: Number(state?.iteration ?? lastIteration?.iteration ?? 0),
       phase: String(state?.inProgress?.phase ?? state?.lastPhase ?? lastIteration?.phase ?? ''),
-      requestCount: analytics.source.requestCount,
+      requestCount: timeline.length,
       runId,
       startedAt: directoryStat.birthtime?.toISOString?.() ?? directoryStat.mtime.toISOString(),
       status,
@@ -407,6 +423,62 @@ async function readActiveRunLock(filePath: string) {
   }>(filePath)
 }
 
+function deriveRunTimeline(events: RunTelemetryEventRecord[]): AutonomousRunTimelinePoint[] {
+  return events
+    .filter((event) => Number(event.totalTokens ?? 0) > 0)
+    .map((event, index) => {
+      const iteration = Number(event.iteration ?? 0)
+      const labelParts = [
+        event.role ? String(event.role) : '',
+        event.kind ? String(event.kind) : '',
+        iteration > 0 ? `iteration ${iteration}` : '',
+      ].filter(Boolean)
+
+      return {
+        key: `${String(event.timestamp ?? '')}:${String(event.kind ?? '')}:${index}`,
+        timestamp: String(event.timestamp ?? ''),
+        label: labelParts.join(' · ') || String(event.reason ?? event.status ?? 'run event'),
+        requestCount: 1,
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: Number(event.totalTokens ?? 0),
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      } satisfies AutonomousRunTimelinePoint
+    })
+    .sort((left, right) => left.timestamp.localeCompare(right.timestamp))
+}
+
+function deriveRunTodoSummaries(events: RunTelemetryEventRecord[]) {
+  const iterationSummaries = events.filter((event) => event.kind === 'iteration_summary')
+
+  return iterationSummaries.map((event, index) => {
+    const iteration = Number(event.iteration ?? index + 1)
+    const task =
+      String(event.task ?? '').trim() ||
+      String(event.reason ?? '').trim() ||
+      `Iteration ${iteration}`
+
+    return {
+      key: `todo:${iteration}:${String(event.timestamp ?? index)}`,
+      iteration,
+      phase: String(event.phase ?? ''),
+      task,
+      status: String(event.status ?? 'success'),
+      requestCount: 1,
+      firstTimestamp: String(event.timestamp ?? ''),
+      lastTimestamp: String(event.timestamp ?? ''),
+      roles: [],
+      kinds: ['iteration_summary'],
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: Number(event.totalTokens ?? 0),
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+    }
+  })
+}
+
 async function readJsonFile<T>(filePath: string): Promise<T | null> {
   try {
     const raw = await readFile(filePath, 'utf8')
@@ -428,6 +500,22 @@ async function readExcerpt(filePath: string, maxCharacters: number) {
     return `${text.slice(0, maxCharacters - 18)}\n... [truncated]`
   } catch {
     return ''
+  }
+}
+
+async function readRunTelemetryEvents(rootDir: string, runId: string): Promise<RunTelemetryEventRecord[]> {
+  const paths = await resolvePiHarnessPaths(rootDir)
+  const runPaths = getPiRunScopedPaths(paths, runId)
+
+  try {
+    const raw = await readFile(runPaths.telemetryJsonl, 'utf8')
+    return raw
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as RunTelemetryEventRecord)
+  } catch {
+    return []
   }
 }
 

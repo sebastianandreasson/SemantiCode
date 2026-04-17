@@ -232,26 +232,7 @@ export function AgentPanel({
       void syncAll()
     }, 1000)
 
-    void agentClient.createSession().then(async (nextSession) => {
-      if (cancelled) {
-        return
-      }
-
-      if (nextSession) {
-        setSession(nextSession)
-      }
-
-      await syncAll()
-      setErrorMessage(null)
-    }).catch((error) => {
-      if (cancelled) {
-        return
-      }
-
-      setErrorMessage(
-        error instanceof Error ? error.message : 'Failed to initialize the agent session.',
-      )
-    })
+    void syncAll()
 
     return () => {
       cancelled = true

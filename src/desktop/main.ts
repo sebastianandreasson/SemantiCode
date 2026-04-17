@@ -370,7 +370,6 @@ async function openWorkspace(window: BrowserWindow, workspaceRootDir: string) {
     port: 0,
   })
 
-  await piAgentService.ensureWorkspaceSession(normalizedWorkspaceRootDir)
   workspaceHistoryState = rememberWorkspace(
     workspaceHistoryState,
     normalizedWorkspaceRootDir,

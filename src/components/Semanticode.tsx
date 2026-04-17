@@ -403,11 +403,13 @@ export function Semanticode({
   const [telemetrySource, setTelemetrySource] = useState<TelemetrySource>('all')
   const [telemetryWindow, setTelemetryWindow] = useState<TelemetryWindow>(60)
   const [telemetryMode, setTelemetryMode] = useState<TelemetryMode>('symbols')
+  const [telemetryEnabled, setTelemetryEnabled] = useState(false)
   const [telemetryOverview, setTelemetryOverview] = useState<TelemetryOverview | null>(null)
   const [telemetryHeatSamples, setTelemetryHeatSamples] = useState<AgentHeatSample[]>([])
   const [telemetryActivityEvents, setTelemetryActivityEvents] = useState<TelemetryActivityEvent[]>([])
   const [telemetryError, setTelemetryError] = useState<string | null>(null)
   const [telemetryObservedAt, setTelemetryObservedAt] = useState(0)
+  const hasRunningAutonomousRun = autonomousRuns.some((run) => run.status === 'running')
   const currentSnapshot = useVisualizerStore((state) => state.snapshot)
   const draftLayouts = useVisualizerStore((state) => state.draftLayouts)
   const activeDraftId = useVisualizerStore((state) => state.activeDraftId)
@@ -697,7 +699,7 @@ export function Semanticode({
   useEffect(() => {
     let cancelled = false
 
-    if (!effectiveSnapshot?.rootDir) {
+    if (!effectiveSnapshot?.rootDir || !telemetryEnabled) {
       return
     }
 
@@ -709,8 +711,7 @@ export function Semanticode({
           source: telemetrySource,
           window: telemetryWindow,
         } as const
-        const [runsResponse, overviewResponse, heatmapResponse, activityResponse] = await Promise.all([
-          fetchAutonomousRuns(),
+        const [overviewResponse, heatmapResponse, activityResponse] = await Promise.all([
           fetchTelemetryOverview(telemetryQuery),
           fetchTelemetryHeatmap(telemetryQuery),
           fetchTelemetryActivity(telemetryQuery),
@@ -720,20 +721,11 @@ export function Semanticode({
           return
         }
 
-        setAutonomousRuns(runsResponse.runs)
-        setDetectedTaskFile(runsResponse.detectedTaskFile)
         setTelemetryOverview(overviewResponse.overview)
         setTelemetryHeatSamples(heatmapResponse.samples)
         setTelemetryActivityEvents(activityResponse.events)
         setTelemetryError(null)
         setTelemetryObservedAt(Date.now())
-        setSelectedRunId((currentRunId) => {
-          if (currentRunId && runsResponse.runs.some((run) => run.runId === currentRunId)) {
-            return currentRunId
-          }
-
-          return runsResponse.activeRunId ?? runsResponse.runs[0]?.runId ?? null
-        })
       } catch (error) {
         if (!cancelled) {
           setTelemetryError(
@@ -744,28 +736,67 @@ export function Semanticode({
     }
 
     void refreshTelemetry()
-    const intervalId = window.setInterval(
-      () => {
-        void refreshTelemetry()
-      },
-      runsPanelOpen || telemetryWindow === 'run' || autonomousRuns.some((run) => run.status === 'running')
-        ? 2500
-        : 5000,
-    )
+    const intervalId = window.setInterval(() => {
+      void refreshTelemetry()
+    }, runsPanelOpen || telemetryWindow === 'run' || hasRunningAutonomousRun ? 2500 : 5000)
 
     return () => {
       cancelled = true
       window.clearInterval(intervalId)
     }
   }, [
-    autonomousRuns,
     effectiveSnapshot?.rootDir,
+    hasRunningAutonomousRun,
     runsPanelOpen,
     selectedRunId,
+    telemetryEnabled,
     telemetryMode,
     telemetrySource,
     telemetryWindow,
   ])
+
+  useEffect(() => {
+    let cancelled = false
+
+    if (!runsPanelOpen || !effectiveSnapshot?.rootDir) {
+      return
+    }
+
+    const refreshRuns = async () => {
+      try {
+        const runsResponse = await fetchAutonomousRuns()
+
+        if (cancelled) {
+          return
+        }
+
+        setAutonomousRuns(runsResponse.runs)
+        setDetectedTaskFile(runsResponse.detectedTaskFile)
+        setRunActionError(null)
+        setSelectedRunId((currentRunId) =>
+          currentRunId && runsResponse.runs.some((run) => run.runId === currentRunId)
+            ? currentRunId
+            : null,
+        )
+      } catch (error) {
+        if (!cancelled) {
+          setRunActionError(
+            error instanceof Error ? error.message : 'Failed to load autonomous runs.',
+          )
+        }
+      }
+    }
+
+    void refreshRuns()
+    const intervalId = window.setInterval(() => {
+      void refreshRuns()
+    }, hasRunningAutonomousRun ? 2500 : 5000)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(intervalId)
+    }
+  }, [effectiveSnapshot?.rootDir, hasRunningAutonomousRun, runsPanelOpen])
 
   useEffect(() => {
     let cancelled = false
@@ -1431,11 +1462,42 @@ export function Semanticode({
   const telemetryHeatByNodeId = useMemo(() => {
     const recentCutoff = telemetryObservedAt - 10_000
     const nextMap = new Map<string, { pulse: boolean; weight: number }>()
+    const fileIdsByPath = new Map<string, string>()
+    const symbolIdsByFileId = new Map<string, string[]>()
+
+    if (effectiveSnapshot) {
+      for (const node of Object.values(effectiveSnapshot.nodes)) {
+        if (isFileNode(node)) {
+          fileIdsByPath.set(node.path, node.id)
+          continue
+        }
+
+        if (isSymbolNode(node)) {
+          const current = symbolIdsByFileId.get(node.fileId) ?? []
+          current.push(node.id)
+          symbolIdsByFileId.set(node.fileId, current)
+        }
+      }
+    }
 
     for (const sample of telemetryHeatSamples) {
       const pulse = new Date(sample.lastSeenAt).getTime() >= recentCutoff
+      const fileNodeId = fileIdsByPath.get(sample.path)
 
-      for (const nodeId of sample.nodeIds) {
+      if (!fileNodeId) {
+        continue
+      }
+
+      const targetNodeIds =
+        telemetryMode === 'symbols'
+          ? (symbolIdsByFileId.get(fileNodeId) ?? [])
+          : [fileNodeId]
+
+      if (targetNodeIds.length === 0) {
+        continue
+      }
+
+      for (const nodeId of targetNodeIds) {
         const current = nextMap.get(nodeId)
 
         if (!current || sample.weight > current.weight) {
@@ -1456,7 +1518,7 @@ export function Semanticode({
     }
 
     return nextMap
-  }, [telemetryHeatSamples, telemetryObservedAt])
+  }, [effectiveSnapshot, telemetryHeatSamples, telemetryMode, telemetryObservedAt])
 
   const presentedFlowModel = useMemo<FlowModel | null>(() => {
     if (!baseFlowModel) {
@@ -1782,6 +1844,10 @@ export function Semanticode({
     autonomousRuns.find((run) => run.status === 'running')?.runId ?? null
   const runsActive = activeRunId !== null
   const agentHeatHelperText = useMemo(() => {
+    if (!telemetryEnabled) {
+      return 'Agent heat is off. Adjust these controls to load telemetry.'
+    }
+
     if (telemetryError) {
       return telemetryError
     }
@@ -1804,7 +1870,26 @@ export function Semanticode({
         : ''
 
     return `${requestText} · ${tokenText}${runText}`
-  }, [telemetryError, telemetryOverview, telemetryWindow])
+  }, [telemetryEnabled, telemetryError, telemetryOverview, telemetryWindow])
+
+  const handleOpenRunsPanel = useCallback(() => {
+    setRunsPanelOpen(true)
+  }, [])
+
+  const handleTelemetrySourceChange = useCallback((source: TelemetrySource) => {
+    setTelemetryEnabled(true)
+    setTelemetrySource(source)
+  }, [])
+
+  const handleTelemetryWindowChange = useCallback((windowValue: TelemetryWindow) => {
+    setTelemetryEnabled(true)
+    setTelemetryWindow(windowValue)
+  }, [])
+
+  const handleTelemetryModeChange = useCallback((mode: TelemetryMode) => {
+    setTelemetryEnabled(true)
+    setTelemetryMode(mode)
+  }, [])
   const inspectorWidthRatio = 1 - canvasWidthRatio
   const workspaceViewReady =
     !effectiveSnapshot ||
@@ -2355,7 +2440,7 @@ export function Semanticode({
             onBuildSemanticEmbeddings={onBuildSemanticEmbeddings}
             onClearCompareOverlay={compareOverlayActive ? handleClearCompareOverlay : undefined}
             onOpenAgentSettings={() => setSettingsOpen(true)}
-            onOpenRunsPanel={() => setRunsPanelOpen(true)}
+            onOpenRunsPanel={handleOpenRunsPanel}
             onOpenWorkspaceSync={
               workspaceSyncStatus ? () => setWorkspaceSyncOpen(true) : undefined
             }
@@ -2413,9 +2498,9 @@ export function Semanticode({
               onEdgeClick={handleCanvasEdgeClick}
               onEdgesChange={onEdgesChange}
               onInit={setFlowInstance}
-              onAgentHeatModeChange={setTelemetryMode}
-              onAgentHeatSourceChange={setTelemetrySource}
-              onAgentHeatWindowChange={setTelemetryWindow}
+              onAgentHeatModeChange={handleTelemetryModeChange}
+              onAgentHeatSourceChange={handleTelemetrySourceChange}
+              onAgentHeatWindowChange={handleTelemetryWindowChange}
               onLayoutSuggestionChange={handleLayoutSuggestionChange}
               onLayoutSuggestionSubmit={handleLayoutSuggestionSubmit}
               onMoveEnd={handleCanvasMoveEnd}

@@ -101,28 +101,7 @@ export function WorkspaceAgentActivity({
       void syncState()
     }, 1000)
 
-    void agentClient
-      .createSession()
-      .then(async (nextSession) => {
-        if (cancelled) {
-          return
-        }
-
-        if (nextSession) {
-          setSession(nextSession)
-        }
-
-        await syncState()
-      })
-      .catch((error) => {
-        if (cancelled) {
-          return
-        }
-
-        setErrorMessage(
-          error instanceof Error ? error.message : 'Failed to initialize the workspace agent session.',
-        )
-      })
+    void syncState()
 
     return () => {
       cancelled = true
