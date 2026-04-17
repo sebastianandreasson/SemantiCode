@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, type RefObject } from 'react'
 import type { Edge } from '@xyflow/react'
 import CodeMirror from '@uiw/react-codemirror'
-import { EditorState, RangeSetBuilder, StateField, type Extension } from '@uiw/react-codemirror'
-import { Decoration, EditorView, type DecorationSet } from '@uiw/react-codemirror'
+import { EditorState, type Extension } from '@uiw/react-codemirror'
+import { RangeSetBuilder, StateField, type RangeSet } from '@codemirror/state'
+import { EditorView, GutterMarker, gutterLineClass } from '@codemirror/view'
 import { css as cssLanguage } from '@codemirror/lang-css'
 import { html as htmlLanguage } from '@codemirror/lang-html'
 import { javascript } from '@codemirror/lang-javascript'
@@ -16,8 +17,10 @@ import { yaml } from '@codemirror/lang-yaml'
 
 import { type ResolvedCanvasOverlay } from '../../visualizer/canvasScene'
 import {
+  type WorkingSetState,
   type CodebaseFile,
   type InspectorTab,
+  type LayoutGroup,
   type LayoutDraft,
   type PreprocessedWorkspaceContext,
   type ProjectNode,
@@ -25,7 +28,9 @@ import {
   type SymbolNode,
   type WorkspaceProfile,
 } from '../../types'
-import { AgentPanel } from '../AgentPanel'
+import { AgentPanel, type AgentScopeContext } from '../AgentPanel'
+import type { ThemeMode } from '../settings/GeneralSettingsPanel'
+import type { GroupPrototypeRecord } from '../../semantic/groups/groupPrototypes'
 
 const MAX_VISIBLE_SELECTED_FILES = 8
 
@@ -48,7 +53,9 @@ interface InspectorPaneProps {
   inspectorBodyRef: RefObject<HTMLDivElement | null>
   inspectorTab: InspectorTab
   onAgentRunSettled?: () => Promise<void>
+  onAdoptInspectorContextAsWorkingSet?: () => void
   onClearCompareOverlay: () => void
+  onClearWorkingSet?: () => void
   onClose: () => void
   onOpenAgentSettings: () => void
   onSetInspectorTab: (tab: InspectorTab) => void
@@ -57,9 +64,18 @@ interface InspectorPaneProps {
   selectedEdge: Edge | null
   selectedFile: CodebaseFile | null
   selectedFiles: CodebaseFile[]
+  selectedLayoutGroup: LayoutGroup | null
+  selectedLayoutGroupNearbySymbols: {
+    score: number
+    symbol: SymbolNode
+  }[]
+  selectedLayoutGroupPrototype: GroupPrototypeRecord | null
   selectedNode: ProjectNode | null
   selectedSymbol: SymbolNode | null
   selectedSymbols: SymbolNode[]
+  themeMode: ThemeMode
+  workingSet: WorkingSetState | null
+  workingSetContext: AgentScopeContext | null
   workspaceProfile: WorkspaceProfile | null
 }
 
@@ -73,7 +89,9 @@ export function InspectorPane({
   inspectorBodyRef,
   inspectorTab,
   onAgentRunSettled,
+  onAdoptInspectorContextAsWorkingSet,
   onClearCompareOverlay,
+  onClearWorkingSet,
   onClose,
   onOpenAgentSettings,
   onSetInspectorTab,
@@ -82,11 +100,25 @@ export function InspectorPane({
   selectedEdge,
   selectedFile,
   selectedFiles,
+  selectedLayoutGroup,
+  selectedLayoutGroupNearbySymbols,
+  selectedLayoutGroupPrototype,
   selectedNode,
   selectedSymbol,
   selectedSymbols,
+  themeMode,
+  workingSet,
+  workingSetContext,
   workspaceProfile,
 }: InspectorPaneProps) {
+  const showContextSummary =
+    !selectedEdge &&
+    !selectedLayoutGroup &&
+    !selectedNode &&
+    !selectedFile &&
+    selectedFiles.length === 0 &&
+    selectedSymbols.length === 0
+
   return (
     <aside className="cbv-inspector">
       <div className="cbv-panel-header">
@@ -103,55 +135,6 @@ export function InspectorPane({
           ×
         </button>
       </div>
-
-      {activeDraft ? (
-        <div className="cbv-draft-summary">
-          <strong>Draft Layout</strong>
-          <p>{activeDraft.proposalEnvelope.rationale}</p>
-          {activeDraft.proposalEnvelope.warnings[0] ? (
-            <p className="cbv-draft-warning">{activeDraft.proposalEnvelope.warnings[0]}</p>
-          ) : null}
-          {draftActionError ? <p className="cbv-draft-error">{draftActionError}</p> : null}
-        </div>
-      ) : null}
-      {compareOverlayActive && resolvedCompareOverlay ? (
-        <div className="cbv-compare-summary">
-          <div className="cbv-compare-summary-header">
-            <div>
-              <p className="cbv-eyebrow">Semantic Compare</p>
-              <strong>{resolvedCompareOverlay.sourceTitle}</strong>
-            </div>
-            <button
-              className="cbv-toolbar-button is-secondary"
-              onClick={onClearCompareOverlay}
-              type="button"
-            >
-              Clear
-            </button>
-          </div>
-          <p>
-            {resolvedCompareOverlay.nodeIds.length} symbol
-            {resolvedCompareOverlay.nodeIds.length === 1 ? '' : 's'} highlighted
-            {resolvedCompareOverlay.missingNodeIds.length > 0
-              ? ` · ${resolvedCompareOverlay.missingNodeIds.length} missing from projection`
-              : ''}
-          </p>
-          {resolvedCompareOverlay.groupTitles[0] || resolvedCompareOverlay.laneTitles[0] ? (
-            <p className="cbv-compare-summary-meta">
-              {resolvedCompareOverlay.groupTitles[0]
-                ? `${resolvedCompareOverlay.groupTitles.length} group${resolvedCompareOverlay.groupTitles.length === 1 ? '' : 's'}`
-                : null}
-              {resolvedCompareOverlay.groupTitles[0] &&
-              resolvedCompareOverlay.laneTitles[0]
-                ? ' · '
-                : ''}
-              {resolvedCompareOverlay.laneTitles[0]
-                ? `${resolvedCompareOverlay.laneTitles.length} lane${resolvedCompareOverlay.laneTitles.length === 1 ? '' : 's'}`
-                : null}
-            </p>
-          ) : null}
-        </div>
-      ) : null}
 
       <div className="cbv-inspector-tabs">
         <button
@@ -190,7 +173,11 @@ export function InspectorPane({
             }}
             onOpenSettings={onOpenAgentSettings}
             onRunSettled={onAgentRunSettled}
+            onAdoptInspectorContextAsWorkingSet={onAdoptInspectorContextAsWorkingSet}
+            onClearWorkingSet={onClearWorkingSet}
             preprocessedWorkspaceContext={preprocessedWorkspaceContext}
+            workingSet={workingSet}
+            workingSetContext={workingSetContext}
             workspaceProfile={workspaceProfile}
           />
         ) : inspectorTab === 'graph' ? (
@@ -206,7 +193,17 @@ export function InspectorPane({
             selectedSymbols={selectedSymbols}
           />
         ) : selectedFiles.length > 1 ? (
-          <MultiFileInspector primaryFile={selectedFile} selectedFiles={selectedFiles} />
+          <MultiFileInspector
+            primaryFile={selectedFile}
+            selectedFiles={selectedFiles}
+            themeMode={themeMode}
+          />
+        ) : selectedLayoutGroup ? (
+          <LayoutGroupInspector
+            group={selectedLayoutGroup}
+            nearbySymbols={selectedLayoutGroupNearbySymbols}
+            prototype={selectedLayoutGroupPrototype}
+          />
         ) : selectedFile ? (
           <>
             {selectedSymbol ? (
@@ -225,8 +222,20 @@ export function InspectorPane({
                 </span>
               ) : null}
             </div>
-            <CodePreview file={selectedFile} highlightedRange={selectedSymbol?.range} />
+            <CodePreview
+              file={selectedFile}
+              highlightedRange={selectedSymbol?.range}
+              themeMode={themeMode}
+            />
           </>
+        ) : showContextSummary && (activeDraft || (compareOverlayActive && resolvedCompareOverlay)) ? (
+          <InspectorContextSummary
+            activeDraft={activeDraft}
+            compareOverlayActive={compareOverlayActive}
+            draftActionError={draftActionError}
+            onClearCompareOverlay={onClearCompareOverlay}
+            resolvedCompareOverlay={resolvedCompareOverlay}
+          />
         ) : (
           <div className="cbv-empty">
             <h2>No file selected</h2>
@@ -238,12 +247,82 @@ export function InspectorPane({
   )
 }
 
+function InspectorContextSummary({
+  activeDraft,
+  compareOverlayActive,
+  draftActionError,
+  onClearCompareOverlay,
+  resolvedCompareOverlay,
+}: {
+  activeDraft: LayoutDraft | null
+  compareOverlayActive: boolean
+  draftActionError: string | null
+  onClearCompareOverlay: () => void
+  resolvedCompareOverlay: ResolvedCanvasOverlay | null
+}) {
+  return (
+    <div className="cbv-inspector-context-summary">
+      {activeDraft ? (
+        <div className="cbv-draft-summary">
+          <strong>Draft Layout</strong>
+          <p>{activeDraft.proposalEnvelope.rationale}</p>
+          {activeDraft.proposalEnvelope.warnings[0] ? (
+            <p className="cbv-draft-warning">{activeDraft.proposalEnvelope.warnings[0]}</p>
+          ) : null}
+          {draftActionError ? <p className="cbv-draft-error">{draftActionError}</p> : null}
+        </div>
+      ) : null}
+
+      {compareOverlayActive && resolvedCompareOverlay ? (
+        <div className="cbv-compare-summary">
+          <div className="cbv-compare-summary-header">
+            <div>
+              <p className="cbv-eyebrow">Semantic Compare</p>
+              <strong>{resolvedCompareOverlay.sourceTitle}</strong>
+            </div>
+            <button
+              className="cbv-toolbar-button is-secondary"
+              onClick={onClearCompareOverlay}
+              type="button"
+            >
+              Clear
+            </button>
+          </div>
+          <p>
+            {resolvedCompareOverlay.nodeIds.length} symbol
+            {resolvedCompareOverlay.nodeIds.length === 1 ? '' : 's'} highlighted
+            {resolvedCompareOverlay.missingNodeIds.length > 0
+              ? ` · ${resolvedCompareOverlay.missingNodeIds.length} missing from projection`
+              : ''}
+          </p>
+          {resolvedCompareOverlay.groupTitles[0] || resolvedCompareOverlay.laneTitles[0] ? (
+            <p className="cbv-compare-summary-meta">
+              {resolvedCompareOverlay.groupTitles[0]
+                ? `${resolvedCompareOverlay.groupTitles.length} group${resolvedCompareOverlay.groupTitles.length === 1 ? '' : 's'}`
+                : null}
+              {resolvedCompareOverlay.groupTitles[0] &&
+              resolvedCompareOverlay.laneTitles[0]
+                ? ' · '
+                : ''}
+              {resolvedCompareOverlay.laneTitles[0]
+                ? `${resolvedCompareOverlay.laneTitles.length} lane${resolvedCompareOverlay.laneTitles.length === 1 ? '' : 's'}`
+                : null}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 function MultiFileInspector({
   primaryFile,
   selectedFiles,
+  themeMode,
 }: {
   primaryFile: CodebaseFile | null
   selectedFiles: CodebaseFile[]
+  themeMode: ThemeMode
 }) {
   const visibleFiles = selectedFiles.slice(0, MAX_VISIBLE_SELECTED_FILES)
   const hiddenFileCount = Math.max(0, selectedFiles.length - visibleFiles.length)
@@ -290,7 +369,7 @@ function MultiFileInspector({
                 : 'Primary preview'}
             </span>
           </div>
-          <CodePreview file={primaryFile} />
+          <CodePreview file={primaryFile} themeMode={themeMode} />
         </>
       ) : null}
     </div>
@@ -458,21 +537,83 @@ function GraphInspector({
   )
 }
 
+function LayoutGroupInspector({
+  group,
+  nearbySymbols,
+  prototype,
+}: {
+  group: LayoutGroup
+  nearbySymbols: {
+    score: number
+    symbol: SymbolNode
+  }[]
+  prototype: GroupPrototypeRecord | null
+}) {
+  return (
+    <div className="cbv-group-inspector">
+      <section className="cbv-graph-card">
+        <p className="cbv-eyebrow">Custom folder</p>
+        <strong>{group.title}</strong>
+        <p>{group.nodeIds.length} symbols in this folder.</p>
+      </section>
+
+      <section className="cbv-graph-card">
+        <p className="cbv-eyebrow">Semantic prototype</p>
+        {prototype ? (
+          <>
+            <strong>{prototype.usableMemberCount} embedded members</strong>
+            <p>
+              Cohesion:{' '}
+              {prototype.cohesionScore != null
+                ? `${(prototype.cohesionScore * 100).toFixed(0)}%`
+                : 'Unavailable'}
+            </p>
+          </>
+        ) : (
+          <>
+            <strong>Prototype unavailable</strong>
+            <p>This group needs at least two embedded symbols to derive a usable semantic prototype.</p>
+          </>
+        )}
+      </section>
+
+      <section className="cbv-graph-card">
+        <p className="cbv-eyebrow">Nearby symbols</p>
+        {nearbySymbols.length ? (
+          <ul className="cbv-neighbor-list">
+            {nearbySymbols.map(({ score, symbol }) => (
+              <li key={symbol.id}>
+                <strong>{symbol.name}</strong>
+                <span>{symbol.path}</span>
+                <small>{Math.round(score * 100)}% match</small>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p>No nearby non-member symbols surfaced for this folder yet.</p>
+        )}
+      </section>
+    </div>
+  )
+}
+
 function CodePreview({
   file,
   highlightedRange,
+  themeMode,
 }: {
   file: CodebaseFile
   highlightedRange?: SourceRange
+  themeMode: ThemeMode
 }) {
   const viewRef = useRef<EditorView | null>(null)
   const extensions = useMemo(
     () => [
       getLanguageExtension(file),
-      codePreviewTheme,
+      themeMode === 'dark' ? codePreviewThemeDark : codePreviewThemeLight,
       createHighlightedLineExtension(highlightedRange),
     ].flatMap((extension) => (extension ? [extension] : [])),
-    [file, highlightedRange],
+    [file, highlightedRange, themeMode],
   )
 
   useEffect(() => {
@@ -487,9 +628,8 @@ function CodePreview({
     const line = viewRef.current.state.doc.line(lineNumber)
 
     viewRef.current.dispatch({
-      selection: { anchor: line.from },
       effects: EditorView.scrollIntoView(line.from, {
-        y: 'center',
+        y: 'start',
       }),
     })
   }, [file.id, highlightedRange])
@@ -500,9 +640,9 @@ function CodePreview({
         basicSetup={false}
         className="cbv-code-editor"
         editable={false}
-        extensions={[codePreviewTheme]}
+        extensions={[themeMode === 'dark' ? codePreviewThemeDark : codePreviewThemeLight]}
         readOnly
-        theme="light"
+        theme={themeMode}
         value="// File content unavailable."
       />
     )
@@ -532,16 +672,16 @@ function CodePreview({
         viewRef.current = view
       }}
       readOnly
-      theme="light"
+      theme={themeMode}
       value={file.content}
     />
   )
 }
 
-const codePreviewTheme = EditorView.theme({
+const codePreviewThemeLight = EditorView.theme({
   '&': {
-    backgroundColor: '#f7f1e5',
-    border: '1px solid rgba(138, 119, 99, 0.16)',
+    backgroundColor: 'var(--app-code-bg)',
+    border: '1px solid var(--app-code-border)',
     borderRadius: '16px',
     fontSize: '12px',
   },
@@ -554,9 +694,9 @@ const codePreviewTheme = EditorView.theme({
     overflow: 'auto',
   },
   '.cm-gutters': {
-    backgroundColor: '#efe4cf',
+    backgroundColor: 'var(--app-code-gutter-bg)',
     border: 'none',
-    color: '#8a7763',
+    color: 'var(--app-code-gutter-text)',
     paddingRight: '10px',
   },
   '.cm-activeLine': {
@@ -565,11 +705,57 @@ const codePreviewTheme = EditorView.theme({
   '.cm-activeLineGutter': {
     backgroundColor: 'transparent',
   },
-  '.cm-line.cm-semanticode-highlighted-line': {
-    backgroundColor: 'rgba(184, 122, 55, 0.12)',
+  '.cm-gutterElement.cm-semanticode-highlighted-gutter': {
+    backgroundColor: 'var(--app-code-gutter-highlight-bg)',
+    color: 'var(--app-code-gutter-highlight-text)',
+    fontWeight: '700',
+  },
+  '.cm-lineNumbers .cm-gutterElement.cm-semanticode-highlighted-gutter': {
+    borderRadius: '0.45rem',
   },
   '.cm-selectionBackground': {
-    backgroundColor: 'rgba(73, 104, 139, 0.18) !important',
+    backgroundColor: 'var(--app-code-selection) !important',
+  },
+})
+
+const codePreviewThemeDark = EditorView.theme({
+  '&': {
+    backgroundColor: 'var(--app-code-bg)',
+    border: '1px solid var(--app-code-border)',
+    borderRadius: '16px',
+    fontSize: '12px',
+  },
+  '.cm-content': {
+    fontFamily:
+      'ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace',
+    padding: '14px 0',
+    color: 'var(--app-text)',
+  },
+  '.cm-scroller': {
+    overflow: 'auto',
+  },
+  '.cm-gutters': {
+    backgroundColor: 'var(--app-code-gutter-bg)',
+    border: 'none',
+    color: 'var(--app-code-gutter-text)',
+    paddingRight: '10px',
+  },
+  '.cm-activeLine': {
+    backgroundColor: 'transparent',
+  },
+  '.cm-activeLineGutter': {
+    backgroundColor: 'transparent',
+  },
+  '.cm-gutterElement.cm-semanticode-highlighted-gutter': {
+    backgroundColor: 'var(--app-code-gutter-highlight-bg)',
+    color: 'var(--app-code-gutter-highlight-text)',
+    fontWeight: '700',
+  },
+  '.cm-lineNumbers .cm-gutterElement.cm-semanticode-highlighted-gutter': {
+    borderRadius: '0.45rem',
+  },
+  '.cm-selectionBackground': {
+    backgroundColor: 'var(--app-code-selection) !important',
   },
 })
 
@@ -582,36 +768,36 @@ function createHighlightedLineExtension(highlightedRange?: SourceRange): Extensi
   const startLine = Math.max(1, Math.min(start.line, end.line))
   const endLine = Math.max(startLine, Math.max(start.line, end.line))
 
-  return StateField.define<DecorationSet>({
+  return StateField.define<RangeSet<GutterMarker>>({
     create(state) {
-      return buildHighlightedLineDecorations(state, startLine, endLine)
+      return buildHighlightedGutterMarkers(state, startLine, endLine)
     },
     update(value) {
       return value
     },
     provide(field) {
-      return EditorView.decorations.from(field)
+      return gutterLineClass.from(field)
     },
   })
 }
 
-function buildHighlightedLineDecorations(
+class HighlightedGutterMarker extends GutterMarker {
+  elementClass = 'cm-semanticode-highlighted-gutter'
+}
+
+const highlightedGutterMarker = new HighlightedGutterMarker()
+
+function buildHighlightedGutterMarkers(
   state: EditorState,
   startLine: number,
   endLine: number,
 ) {
-  const builder = new RangeSetBuilder<Decoration>()
+  const builder = new RangeSetBuilder<GutterMarker>()
   const maxLine = Math.min(endLine, state.doc.lines)
 
   for (let lineNumber = startLine; lineNumber <= maxLine; lineNumber += 1) {
     const line = state.doc.line(lineNumber)
-    builder.add(
-      line.from,
-      line.from,
-      Decoration.line({
-        class: 'cm-semanticode-highlighted-line',
-      }),
-    )
+    builder.add(line.from, line.from, highlightedGutterMarker)
   }
 
   return builder.finish()

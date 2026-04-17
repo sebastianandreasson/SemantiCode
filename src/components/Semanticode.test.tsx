@@ -168,6 +168,7 @@ const preprocessingStatus: PreprocessingStatus = {
   purposeSummaryCount: 2,
   semanticEmbeddingCount: 0,
   lastError: null,
+  currentItemPath: null,
   processedSymbols: 2,
   snapshotId: 'test-snapshot',
   totalSymbols: 2,

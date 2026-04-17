@@ -1,6 +1,13 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
-import { SEMANTICODE_PREPROCESSING_EMBEDDINGS_ROUTE, SEMANTICODE_PREPROCESSING_ROUTE, SEMANTICODE_PREPROCESSING_SUMMARY_ROUTE } from '../../shared/constants'
+import {
+  SEMANTICODE_PREPROCESSING_EMBEDDINGS_ROUTE,
+  SEMANTICODE_PREPROCESSING_ROUTE,
+  SEMANTICODE_PREPROCESSING_SUMMARY_ROUTE,
+  SEMANTICODE_SYNC_ROUTE,
+  SEMANTICODE_UI_PREFERENCES_ROUTE,
+  SEMANTICODE_WORKSPACE_HISTORY_ROUTE,
+} from '../../shared/constants'
 import type {
   PreprocessingContextResponse,
   PreprocessingContextUpdateRequest,
@@ -8,6 +15,9 @@ import type {
   PreprocessingEmbeddingResponse,
   PreprocessingSummaryRequest,
   PreprocessingSummaryResponse,
+  UiPreferencesResponse,
+  UiPreferencesUpdateRequest,
+  WorkspaceHistoryResponse,
   WorkspaceSyncStatusResponse,
 } from '../../types'
 import { readPersistedPreprocessedWorkspaceContext, writePersistedPreprocessedWorkspaceContext } from '../preprocessingPersistence'
@@ -16,7 +26,6 @@ import { analyzeWorkspaceArtifactSync } from '../../preprocessing/workspaceSync'
 import { getGitWorkspaceStatus } from '../gitWorkspaceSync'
 import { listLayoutDrafts, listSavedLayouts } from '../../planner'
 import { readProjectSnapshot } from '../readProjectSnapshot'
-import { SEMANTICODE_SYNC_ROUTE } from '../../shared/constants'
 import type { SemanticodeRequestHandlerOptions } from './types'
 import { readJsonBody, sendJson } from './utils'
 
@@ -83,6 +92,51 @@ export async function handlePreprocessingRoute(
 
     sendJson(response, 200, result)
     return true
+  }
+
+  if (pathname === SEMANTICODE_WORKSPACE_HISTORY_ROUTE && method === 'GET') {
+    const result: WorkspaceHistoryResponse = options.getWorkspaceHistory
+      ? await options.getWorkspaceHistory()
+      : {
+          activeWorkspaceRootDir: options.rootDir,
+          recentWorkspaces: [],
+        }
+
+    sendJson(response, 200, result)
+    return true
+  }
+
+  if (pathname === SEMANTICODE_UI_PREFERENCES_ROUTE) {
+    if (method === 'GET') {
+      const result: UiPreferencesResponse = options.getUiPreferences
+        ? await options.getUiPreferences()
+        : {
+            preferences: {},
+          }
+
+      sendJson(response, 200, result)
+      return true
+    }
+
+    if (method === 'POST') {
+      const payload = await readJsonBody<UiPreferencesUpdateRequest>(request)
+
+      if (!payload?.preferences) {
+        sendJson(response, 400, {
+          message: 'A UI preferences payload is required.',
+        })
+        return true
+      }
+
+      const result: UiPreferencesResponse = options.setUiPreferences
+        ? await options.setUiPreferences(payload.preferences)
+        : {
+            preferences: payload.preferences,
+          }
+
+      sendJson(response, 200, result)
+      return true
+    }
   }
 
   if (pathname === SEMANTICODE_PREPROCESSING_SUMMARY_ROUTE && method === 'POST') {

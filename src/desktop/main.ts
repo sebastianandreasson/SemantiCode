@@ -12,17 +12,24 @@ import {
   rememberWorkspace,
   type WorkspaceHistoryState,
 } from './workspaceHistory'
+import {
+  loadUiPreferences,
+  persistUiPreferences,
+} from './uiPreferences'
+import type { UiPreferences } from '../schema/store'
 
 let mainWindow: BrowserWindow | null = null
 let serverHandle: StandaloneServerHandle | null = null
 let activeWorkspaceRootDir: string | null = null
 let workspaceHistoryState: WorkspaceHistoryState = createEmptyWorkspaceHistoryState()
+let uiPreferencesState: UiPreferences = {}
 const piAgentService = new PiAgentService({
   openExternal: (url) => shell.openExternal(url),
 })
 
 void app.whenReady().then(async () => {
   workspaceHistoryState = await loadWorkspaceHistoryState(app.getPath('userData'))
+  uiPreferencesState = await loadUiPreferences(app.getPath('userData'))
 
   piAgentService.subscribe((event) => {
     if (!mainWindow || mainWindow.isDestroyed()) {
@@ -69,6 +76,21 @@ void app.whenReady().then(async () => {
     activeWorkspaceRootDir,
     recentWorkspaces: workspaceHistoryState.recentWorkspaces,
   }))
+
+  ipcMain.on('semanticode:get-initial-ui-preferences', (event) => {
+    event.returnValue = uiPreferencesState
+  })
+
+  ipcMain.handle('semanticode:get-ui-preferences', async () => uiPreferencesState)
+
+  ipcMain.handle('semanticode:set-ui-preferences', async (_event, nextPreferences: UiPreferences) => {
+    uiPreferencesState = {
+      ...uiPreferencesState,
+      ...nextPreferences,
+    }
+    await persistUiPreferences(app.getPath('userData'), uiPreferencesState)
+    return uiPreferencesState
+  })
 
   ipcMain.handle('semanticode:agent:create-session', async () => {
     if (!activeWorkspaceRootDir) {
@@ -148,6 +170,9 @@ app.on('before-quit', () => {
   ipcMain.removeHandler('semanticode:open-workspace-root-dir')
   ipcMain.removeHandler('semanticode:close-workspace')
   ipcMain.removeHandler('semanticode:get-workspace-history')
+  ipcMain.removeAllListeners('semanticode:get-initial-ui-preferences')
+  ipcMain.removeHandler('semanticode:get-ui-preferences')
+  ipcMain.removeHandler('semanticode:set-ui-preferences')
   ipcMain.removeHandler('semanticode:agent:create-session')
   ipcMain.removeHandler('semanticode:agent:send-message')
   ipcMain.removeHandler('semanticode:agent:cancel')
@@ -172,7 +197,8 @@ function createMainWindow() {
     minWidth: 1100,
     minHeight: 720,
     title: 'Semanticode',
-    backgroundColor: '#f5efe3',
+    backgroundColor:
+      uiPreferencesState.themeMode === 'dark' ? '#171a1f' : '#f5efe3',
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -181,12 +207,27 @@ function createMainWindow() {
   })
 
   window.webContents.on('will-navigate', (event, url) => {
-    if (url !== 'semanticode://open-workspace') {
+    const action = parseSemanticodeAction(url)
+
+    if (!action) {
       return
     }
 
     event.preventDefault()
-    void handleOpenWorkspaceRequest(window)
+
+    switch (action.kind) {
+      case 'open-workspace':
+        void handleOpenWorkspaceRequest(window)
+        break
+      case 'close-workspace':
+        void loadWelcomeScreen(window)
+        break
+      case 'open-workspace-root-dir':
+        if (action.rootDir) {
+          void openWorkspace(window, action.rootDir)
+        }
+        break
+    }
   })
 
   window.on('closed', () => {
@@ -274,6 +315,23 @@ async function openWorkspace(window: BrowserWindow, workspaceRootDir: string) {
   activeWorkspaceRootDir = normalizedWorkspaceRootDir
   serverHandle = await startStandaloneServer({
     agentRuntime: piAgentService,
+    getUiPreferences: async () => ({
+      preferences: uiPreferencesState,
+    }),
+    setUiPreferences: async (preferences) => {
+      uiPreferencesState = {
+        ...uiPreferencesState,
+        ...preferences,
+      }
+      await persistUiPreferences(app.getPath('userData'), uiPreferencesState)
+      return {
+        preferences: uiPreferencesState,
+      }
+    },
+    getWorkspaceHistory: async () => ({
+      activeWorkspaceRootDir,
+      recentWorkspaces: workspaceHistoryState.recentWorkspaces,
+    }),
     rootDir: normalizedWorkspaceRootDir,
     host: '127.0.0.1',
     port: 0,
@@ -417,4 +475,35 @@ function buildWelcomeScreenUrl() {
 </html>`
 
   return `data:text/html;charset=UTF-8,${encodeURIComponent(html)}`
+}
+
+function parseSemanticodeAction(rawUrl: string) {
+  try {
+    const url = new URL(rawUrl)
+
+    if (url.protocol !== 'semanticode:') {
+      return null
+    }
+
+    const host = url.hostname || url.pathname.replace(/^\//, '')
+
+    if (host === 'open-workspace') {
+      return { kind: 'open-workspace' as const }
+    }
+
+    if (host === 'close-workspace') {
+      return { kind: 'close-workspace' as const }
+    }
+
+    if (host === 'open-workspace-root-dir') {
+      return {
+        kind: 'open-workspace-root-dir' as const,
+        rootDir: url.searchParams.get('rootDir'),
+      }
+    }
+
+    return null
+  } catch {
+    return null
+  }
 }

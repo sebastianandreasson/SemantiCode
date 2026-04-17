@@ -150,7 +150,7 @@ export default function App() {
   return (
     <main className="demo-page">
       {status === 'loading' || status === 'idle' ? (
-        <section className="demo-status">Indexing files from the current workspace...</section>
+        <section className="demo-status">Loading workspace snapshot...</section>
       ) : errorMessage ? (
         <section className="demo-status is-error">{errorMessage}</section>
       ) : (

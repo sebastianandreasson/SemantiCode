@@ -132,6 +132,8 @@ function buildAgentInstructionsMarkdown(
     '',
     'Use `annotations` for visual headings such as `Frontend`, `Backend`, `Rendering`, or `Shared`.',
     'Annotations are positioned in absolute canvas space and should not overlap the main node clusters.',
+    'Use `groups` for folder-like visual containers around related nodes when the layout should show boxed sections instead of just headings.',
+    'Groups are rendered as draggable containers that surround the member nodes listed in `group.nodeIds`.',
     '',
     '## Minimal Implementation Sketch',
     '',
@@ -194,6 +196,7 @@ function buildAgentInstructionsMarkdown(
     '- Prefer deterministic layouts over clever but unstable layouts.',
     '- If the user asks for a symbol-only layout, do not place files or directories.',
     '- If the user asks for headings, add them as annotations.',
+    '- If the user asks for boxed sections, folders, or visual containers around related nodes, use `groups`.',
     '- If a request is ambiguous, record that ambiguity in `proposalEnvelope.ambiguities` instead of hiding the uncertainty.',
   ].join('\n')
 }

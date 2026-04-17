@@ -26,9 +26,9 @@ export function projectSemanticEmbeddings(
   }
 
   const points =
-    vectors.length <= 2
+    vectors.length <= 3
       ? normalizeProjection(projectSmallVectorSet(vectors))
-      : normalizeProjection(projectWithUmap(vectors, input.seed))
+      : normalizeProjection(projectWithUmapOrFallback(vectors, input.seed))
 
   return {
     id: `semantic-projection:${input.seed}:${vectors[0]?.modelId ?? 'unknown'}:${vectors.length}`,
@@ -40,9 +40,20 @@ export function projectSemanticEmbeddings(
   }
 }
 
+function projectWithUmapOrFallback(
+  input: SemanticUmapInput['vectors'],
+  seed: number,
+) {
+  try {
+    return projectWithUmap(input, seed)
+  } catch {
+    return projectSmallVectorSet(input)
+  }
+}
+
 function projectWithUmap(input: SemanticUmapInput['vectors'], seed: number) {
   const random = createSeededRandom(seed)
-  const nNeighbors = Math.max(3, Math.min(20, input.length - 1))
+  const nNeighbors = Math.min(20, Math.max(2, input.length - 1))
   const umap = new UMAP({
     nComponents: 2,
     nEpochs: 350,

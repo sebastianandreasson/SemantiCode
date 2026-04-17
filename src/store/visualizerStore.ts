@@ -8,11 +8,13 @@ import {
   type VisualizerViewMode,
 } from '../schema/layout'
 import {
+  isDirectoryNode,
   isFileNode,
   isSymbolNode,
   type ProjectSnapshot,
 } from '../schema/snapshot'
 import {
+  DEFAULT_WORKING_SET_STATE,
   DEFAULT_GRAPH_LAYER_VISIBILITY,
   type VisualizerStore,
   type VisualizerStoreState,
@@ -35,6 +37,8 @@ const INITIAL_VISUALIZER_STATE: VisualizerStoreState = {
   compareOverlay: null,
   overlayVisibility: true,
   overlayFocusMode: 'highlight_dim',
+  workingSet: DEFAULT_WORKING_SET_STATE,
+  collapsedDirectoryIds: [],
   expandedSymbolClusterIds: [],
   graphLayers: DEFAULT_GRAPH_LAYER_VISIBILITY,
 }
@@ -57,6 +61,10 @@ export function createVisualizerStore(
       ...INITIAL_VISUALIZER_STATE.graphLayers,
       ...initialState.graphLayers,
     },
+    workingSet: {
+      ...INITIAL_VISUALIZER_STATE.workingSet,
+      ...initialState.workingSet,
+    },
     setStatus: (status) => {
       set({ status })
     },
@@ -68,10 +76,25 @@ export function createVisualizerStore(
       const currentSelection = get().selection
       const nextNodeId = getNextSelectedNodeId(snapshot, currentSelection, viewMode)
       const nextNodeIds = getNextSelectedNodeIds(snapshot, currentSelection, viewMode, nextNodeId)
+      const nextWorkingSetNodeIds = getNextWorkingSetNodeIds(snapshot, get().workingSet.nodeIds)
+      const nextCollapsedDirectoryIds = getNextCollapsedDirectoryIds(
+        snapshot,
+        get().collapsedDirectoryIds,
+      )
 
       set({
         snapshot,
         expandedSymbolClusterIds: [],
+        collapsedDirectoryIds: nextCollapsedDirectoryIds,
+        workingSet: {
+          ...get().workingSet,
+          nodeIds: nextWorkingSetNodeIds,
+          updatedAt:
+            nextWorkingSetNodeIds.length === get().workingSet.nodeIds.length &&
+            nextWorkingSetNodeIds.every((nodeId, index) => nodeId === get().workingSet.nodeIds[index])
+              ? get().workingSet.updatedAt
+              : get().workingSet.updatedAt ?? new Date().toISOString(),
+        },
         selection: {
           ...currentSelection,
           nodeId: nextNodeId,
@@ -168,6 +191,72 @@ export function createVisualizerStore(
     },
     setOverlayFocusMode: (overlayFocusMode) => {
       set({ overlayFocusMode })
+    },
+    setWorkingSet: (workingSet) => {
+      set((state) => ({
+        workingSet: {
+          ...state.workingSet,
+          ...workingSet,
+          updatedAt: new Date().toISOString(),
+        },
+      }))
+    },
+    adoptSelectionAsWorkingSet: () => {
+      set((state) => ({
+        workingSet: {
+          nodeIds: state.selection.nodeIds.length > 0
+            ? [...state.selection.nodeIds]
+            : state.selection.nodeId
+              ? [state.selection.nodeId]
+              : [],
+          source: 'selection',
+          updatedAt: new Date().toISOString(),
+        },
+      }))
+    },
+    clearWorkingSet: () => {
+      set({
+        workingSet: DEFAULT_WORKING_SET_STATE,
+      })
+    },
+    toggleCollapsedDirectory: (nodeId) => {
+      set((state) => {
+        const snapshot = state.snapshot
+        const node = snapshot?.nodes[nodeId]
+
+        if (!snapshot || !node || !isDirectoryNode(node)) {
+          return state
+        }
+
+        const isCollapsed = state.collapsedDirectoryIds.includes(nodeId)
+        const collapsedDirectoryIds = isCollapsed
+          ? state.collapsedDirectoryIds.filter((id) => id !== nodeId)
+          : [...state.collapsedDirectoryIds, nodeId]
+
+        const currentPrimaryNode = state.selection.nodeId
+          ? snapshot.nodes[state.selection.nodeId]
+          : null
+        const shouldResetSelection =
+          currentPrimaryNode !== null &&
+          currentPrimaryNode.id !== nodeId &&
+          isDescendantDirectoryNode(snapshot, nodeId, currentPrimaryNode.id)
+
+        return {
+          collapsedDirectoryIds,
+          selection: shouldResetSelection
+            ? {
+                ...state.selection,
+                nodeId,
+                nodeIds: [nodeId],
+                edgeId: null,
+                inspectorTab: 'file',
+              }
+            : state.selection,
+        }
+      })
+    },
+    setCollapsedDirectoryIds: (collapsedDirectoryIds) => {
+      set({ collapsedDirectoryIds })
     },
     toggleSymbolCluster: (clusterId) => {
       set((state) => ({
@@ -335,6 +424,31 @@ function getNextSelectedNodeIds(
   return nextNodeId && isMultiSelectableNode(snapshot, nextNodeId, viewMode) ? [nextNodeId] : []
 }
 
+function getNextWorkingSetNodeIds(
+  snapshot: ProjectSnapshot | null,
+  nodeIds: string[],
+) {
+  if (!snapshot) {
+    return []
+  }
+
+  return nodeIds.filter((nodeId) => Boolean(snapshot.nodes[nodeId]))
+}
+
+function getNextCollapsedDirectoryIds(
+  snapshot: ProjectSnapshot | null,
+  nodeIds: string[],
+) {
+  if (!snapshot) {
+    return []
+  }
+
+  return nodeIds.filter((nodeId) => {
+    const node = snapshot.nodes[nodeId]
+    return Boolean(node && isDirectoryNode(node))
+  })
+}
+
 function getFirstFileNodeId(snapshot: ProjectSnapshot) {
   for (const rootId of snapshot.rootIds) {
     const fileNodeId = findFirstFileNodeId(rootId, snapshot)
@@ -395,4 +509,22 @@ function findFirstFileNodeId(
   }
 
   return null
+}
+
+function isDescendantDirectoryNode(
+  snapshot: ProjectSnapshot,
+  directoryId: string,
+  nodeId: string,
+) {
+  let currentNode = snapshot.nodes[nodeId]
+
+  while (currentNode && !isSymbolNode(currentNode) && currentNode.parentId) {
+    if (currentNode.parentId === directoryId) {
+      return true
+    }
+
+    currentNode = snapshot.nodes[currentNode.parentId]
+  }
+
+  return false
 }

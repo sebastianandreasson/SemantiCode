@@ -13,6 +13,7 @@ import type {
   AgentSettingsInput,
   AgentSettingsState,
 } from './agent'
+import type { UiPreferences } from './store'
 
 export type AnalysisState = 'idle' | 'loading' | 'ready' | 'error'
 
@@ -52,6 +53,23 @@ export interface PreprocessingContextResponse {
 
 export interface WorkspaceSyncStatusResponse {
   sync: WorkspaceArtifactSyncStatus
+}
+
+export interface WorkspaceHistoryResponse {
+  activeWorkspaceRootDir: string | null
+  recentWorkspaces: {
+    name: string
+    rootDir: string
+    lastOpenedAt: string
+  }[]
+}
+
+export interface UiPreferencesResponse {
+  preferences: UiPreferences
+}
+
+export interface UiPreferencesUpdateRequest {
+  preferences: UiPreferences
 }
 
 export interface PreprocessingContextUpdateRequest {

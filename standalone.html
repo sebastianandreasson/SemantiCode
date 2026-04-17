@@ -4,6 +4,49 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Semanticode</title>
+    <script>
+      ;(() => {
+        const LIGHT_BG = '#f6f0e5'
+        const DARK_BG = '#171a1f'
+
+        try {
+          const existingTheme = document.documentElement.dataset.theme
+          const rawPrefs = window.localStorage.getItem('semanticode:ui-preferences')
+          const storedPrefs = rawPrefs ? JSON.parse(rawPrefs) : null
+          const storedTheme = window.localStorage.getItem('semanticode:theme')
+          const theme =
+            existingTheme === 'dark' || existingTheme === 'light'
+              ? existingTheme
+              : storedPrefs?.themeMode === 'dark' || storedPrefs?.themeMode === 'light'
+              ? storedPrefs.themeMode
+              : storedTheme === 'dark' || storedTheme === 'light'
+                ? storedTheme
+                : 'light'
+
+          document.documentElement.dataset.theme = theme
+          document.documentElement.style.colorScheme = theme
+          document.documentElement.style.background = theme === 'dark' ? DARK_BG : LIGHT_BG
+
+          if (document.body) {
+            document.body.dataset.theme = theme
+            document.body.style.background = theme === 'dark' ? DARK_BG : LIGHT_BG
+          } else {
+            document.addEventListener(
+              'DOMContentLoaded',
+              () => {
+                document.body.dataset.theme = theme
+                document.body.style.background = theme === 'dark' ? DARK_BG : LIGHT_BG
+              },
+              { once: true },
+            )
+          }
+        } catch {
+          document.documentElement.dataset.theme = 'light'
+          document.documentElement.style.colorScheme = 'light'
+          document.documentElement.style.background = LIGHT_BG
+        }
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>

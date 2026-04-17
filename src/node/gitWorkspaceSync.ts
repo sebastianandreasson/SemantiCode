@@ -4,6 +4,7 @@ import { promisify } from 'node:util'
 import type { GitWorkspaceStatus } from '../preprocessing/types'
 
 const execFileAsync = promisify(execFile)
+const SEMANTICODE_ARTIFACT_DIRECTORY = '.semanticode'
 
 export async function getGitWorkspaceStatus(
   rootDir: string,
@@ -63,6 +64,10 @@ function parseGitStatus(stdout: string) {
     const paths = parseStatusPaths(pathPart)
 
     for (const path of paths) {
+      if (isSemanticodeArtifactPath(path)) {
+        continue
+      }
+
       changedFiles.add(path)
 
       if (x === '?' && y === '?') {
@@ -99,6 +104,13 @@ function parseStatusPaths(pathPart: string) {
 
 function normalizePath(path: string) {
   return path.replace(/\\/g, '/')
+}
+
+function isSemanticodeArtifactPath(path: string) {
+  return (
+    path === SEMANTICODE_ARTIFACT_DIRECTORY ||
+    path.startsWith(`${SEMANTICODE_ARTIFACT_DIRECTORY}/`)
+  )
 }
 
 function createEmptyGitWorkspaceStatus(): GitWorkspaceStatus {

@@ -5,8 +5,8 @@ interface RecentProject {
 }
 
 interface ProjectsSidebarProps {
+  canManageProjects: boolean
   currentRootDir: string
-  desktopHostAvailable: boolean
   onClose: () => void
   onCloseWorkspace: () => void
   onOpenRecentProject: (rootDir: string) => void
@@ -18,8 +18,8 @@ interface ProjectsSidebarProps {
 }
 
 export function ProjectsSidebar({
+  canManageProjects,
   currentRootDir,
-  desktopHostAvailable,
   onClose,
   onCloseWorkspace,
   onOpenRecentProject,
@@ -29,10 +29,6 @@ export function ProjectsSidebar({
   workspaceActionError = null,
   workspaceActionPending = false,
 }: ProjectsSidebarProps) {
-  if (!desktopHostAvailable) {
-    return null
-  }
-
   return (
     <aside className={`cbv-projects-sidebar${open ? '' : ' is-collapsed'}`}>
       <div className="cbv-projects-sidebar-header">
@@ -45,18 +41,27 @@ export function ProjectsSidebar({
         </button>
       </div>
       <div className="cbv-projects-sidebar-actions">
-        <button disabled={workspaceActionPending} onClick={onOpenWorkspace} type="button">
+        <button
+          disabled={workspaceActionPending || !canManageProjects}
+          onClick={onOpenWorkspace}
+          type="button"
+        >
           Open Folder
         </button>
         <button
           className="is-secondary"
-          disabled={workspaceActionPending}
+          disabled={workspaceActionPending || !canManageProjects}
           onClick={onCloseWorkspace}
           type="button"
         >
           Close Current
         </button>
       </div>
+      {!canManageProjects ? (
+        <p className="cbv-projects-empty">
+          Folder management is unavailable in this host.
+        </p>
+      ) : null}
       <div className="cbv-projects-list">
         {recentProjects.length > 0 ? (
           recentProjects.map((project) => {

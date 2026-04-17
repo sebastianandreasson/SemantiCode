@@ -6,7 +6,10 @@ import type {
   AgentSettingsResponse,
   AgentSettingsUpdateRequest,
   AgentStateResponse,
+  UiPreferencesResponse,
+  WorkspaceHistoryResponse,
 } from '../../types'
+import type { UiPreferences } from '../../schema/store'
 
 export interface AgentRuntimeRequestBridge {
   beginBrokeredLogin: () => Promise<AgentBrokerLoginStartResponse>
@@ -31,6 +34,9 @@ export interface AgentRuntimeRequestBridge {
 export interface SemanticodeRequestHandlerOptions
   extends ReadProjectSnapshotOptions {
   agentRuntime?: AgentRuntimeRequestBridge
+  getUiPreferences?: () => Promise<UiPreferencesResponse>
+  setUiPreferences?: (preferences: UiPreferences) => Promise<UiPreferencesResponse>
+  getWorkspaceHistory?: () => Promise<WorkspaceHistoryResponse>
   rootDir: string
   route?: string
 }

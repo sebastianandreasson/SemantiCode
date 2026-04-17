@@ -82,6 +82,7 @@ export interface PreprocessingStatus {
   purposeSummaryCount: number
   semanticEmbeddingCount: number
   lastError: string | null
+  currentItemPath: string | null
   processedSymbols: number
   snapshotId: string | null
   totalSymbols: number

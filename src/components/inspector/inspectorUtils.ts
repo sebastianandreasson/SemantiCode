@@ -1,6 +1,8 @@
+import type { LayoutGroup } from '../../types'
 import { type CodebaseFile, type ProjectNode, type SymbolNode } from '../../types'
 
 export function getInspectorHeaderSummary(input: {
+  selectedLayoutGroup?: LayoutGroup | null
   selectedFile: CodebaseFile | null
   selectedFiles: CodebaseFile[]
   selectedNode: ProjectNode | null
@@ -17,6 +19,13 @@ export function getInspectorHeaderSummary(input: {
     return {
       eyebrow: 'File selection',
       title: `${input.selectedFiles.length} files selected`,
+    }
+  }
+
+  if (input.selectedLayoutGroup) {
+    return {
+      eyebrow: 'Custom folder',
+      title: input.selectedLayoutGroup.title,
     }
   }
 

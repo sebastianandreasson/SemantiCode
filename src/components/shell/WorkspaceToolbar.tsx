@@ -10,7 +10,6 @@ interface WorkspaceToolbarProps {
     title: string
   } | null
   compareOverlayActive: boolean
-  isDesktopHost: boolean
   layoutActionsPending: boolean
   layoutOptions: LayoutOption[]
   onAcceptDraft?: () => void | Promise<void>
@@ -24,6 +23,7 @@ interface WorkspaceToolbarProps {
   onToggleProjectsSidebar?: () => void
   preprocessingStatus?: {
     canBuildEmbeddings: boolean
+    currentItemPath?: string | null
     embeddingActionLabel: string
     label: string
     lastError?: string | null
@@ -41,6 +41,10 @@ interface WorkspaceToolbarProps {
   projectsSidebarOpen: boolean
   selectedLayoutValue: string
   showCompareAction: boolean
+  workingSetSummary?: {
+    label: string
+    title: string
+  } | null
   workspaceName: string
   workspaceRootDir: string
 }
@@ -49,7 +53,6 @@ export function WorkspaceToolbar({
   activeDraft,
   activeLayoutSyncNote = null,
   compareOverlayActive,
-  isDesktopHost,
   layoutActionsPending,
   layoutOptions,
   onAcceptDraft,
@@ -66,6 +69,7 @@ export function WorkspaceToolbar({
   projectsSidebarOpen,
   selectedLayoutValue,
   showCompareAction,
+  workingSetSummary = null,
   workspaceName,
   workspaceRootDir,
 }: WorkspaceToolbarProps) {
@@ -76,6 +80,12 @@ export function WorkspaceToolbar({
           <strong>{workspaceName}</strong>
           <p className="cbv-toolbar-path">{workspaceRootDir}</p>
         </div>
+        {workingSetSummary ? (
+          <div className="cbv-working-set-chip" title={workingSetSummary.title}>
+            <span className="cbv-working-set-chip-dot" />
+            <span>{workingSetSummary.label}</span>
+          </div>
+        ) : null}
         {preprocessingStatus ? (
           <div className="cbv-preprocessing-status-block">
             <div className="cbv-preprocessing-inline">
@@ -130,6 +140,14 @@ export function WorkspaceToolbar({
                   }}
                 />
               </div>
+            ) : null}
+            {preprocessingStatus.currentItemPath ? (
+              <p
+                className="cbv-preprocessing-current"
+                title={preprocessingStatus.currentItemPath}
+              >
+                {preprocessingStatus.currentItemPath}
+              </p>
             ) : null}
             {preprocessingStatus.lastError ? (
               <p className="cbv-preprocessing-error">{preprocessingStatus.lastError}</p>
@@ -219,20 +237,20 @@ export function WorkspaceToolbar({
             ) : null}
           </div>
         ) : null}
-        {isDesktopHost ? (
+        {onToggleProjectsSidebar ? (
           <button
             className={`cbv-toolbar-button is-secondary${projectsSidebarOpen ? ' is-active' : ''}`}
             onClick={onToggleProjectsSidebar}
             type="button"
           >
-            {projectsSidebarOpen ? 'Hide Projects' : 'Show Projects'}
+            {projectsSidebarOpen ? 'Hide Folders' : 'Folders'}
           </button>
         ) : null}
         <button
-          aria-label="Agent Settings"
+          aria-label="Settings"
           className="cbv-toolbar-icon-button"
           onClick={onOpenAgentSettings}
-          title="Agent Settings"
+          title="Settings"
           type="button"
         >
           ⚙

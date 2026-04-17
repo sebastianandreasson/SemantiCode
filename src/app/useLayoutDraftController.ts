@@ -132,6 +132,7 @@ async function waitForSuggestedLayoutDraft(input: {
   }) => void
 }) {
   const timeoutAt = Date.now() + 180_000
+  let lastLayoutStateFingerprint: string | null = null
 
   while (Date.now() < timeoutAt) {
     const [layoutState, agentState] = await Promise.all([
@@ -139,10 +140,15 @@ async function waitForSuggestedLayoutDraft(input: {
       fetchAgentState(),
     ])
 
-    input.onLayoutStateLoaded({
-      layouts: layoutState.layouts,
-      draftLayouts: layoutState.draftLayouts,
-    })
+    const nextLayoutStateFingerprint = getLayoutStateFingerprint(layoutState)
+
+    if (lastLayoutStateFingerprint !== nextLayoutStateFingerprint) {
+      lastLayoutStateFingerprint = nextLayoutStateFingerprint
+      input.onLayoutStateLoaded({
+        layouts: layoutState.layouts,
+        draftLayouts: layoutState.draftLayouts,
+      })
+    }
 
     const nextDraft = layoutState.draftLayouts.find(
       (draft) =>
@@ -183,4 +189,18 @@ function delay(milliseconds: number) {
   return new Promise<void>((resolve) => {
     window.setTimeout(resolve, milliseconds)
   })
+}
+
+function getLayoutStateFingerprint(input: {
+  layouts: LayoutSpec[]
+  draftLayouts: LayoutDraft[]
+}) {
+  return [
+    input.layouts
+      .map((layout) => `${layout.id}:${layout.updatedAt ?? ''}`)
+      .join('|'),
+    input.draftLayouts
+      .map((draft) => `${draft.id}:${draft.status}:${draft.updatedAt}`)
+      .join('|'),
+  ].join('::')
 }

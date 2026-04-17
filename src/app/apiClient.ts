@@ -7,6 +7,9 @@ import type {
   PreprocessingEmbeddingResponse,
   PreprocessingContextResponse,
   PreprocessingSummaryResponse,
+  UiPreferences,
+  UiPreferencesResponse,
+  WorkspaceHistoryResponse,
   WorkspaceArtifactSyncStatus,
   WorkspaceSyncStatusResponse,
 } from '../types'
@@ -20,6 +23,8 @@ import {
   SEMANTICODE_PREPROCESSING_SUMMARY_ROUTE,
   SEMANTICODE_ROUTE,
   SEMANTICODE_SYNC_ROUTE,
+  SEMANTICODE_UI_PREFERENCES_ROUTE,
+  SEMANTICODE_WORKSPACE_HISTORY_ROUTE,
 } from '../shared/constants'
 
 export const SEMANTIC_EMBEDDING_MODEL_ID = 'nomic-ai/nomic-embed-text-v1.5'
@@ -142,6 +147,55 @@ export async function fetchWorkspaceSyncStatus(): Promise<WorkspaceArtifactSyncS
 
   const payload = (await response.json()) as WorkspaceSyncStatusResponse
   return payload.sync
+}
+
+export async function fetchWorkspaceHistory() {
+  const response = await fetch(SEMANTICODE_WORKSPACE_HISTORY_ROUTE)
+
+  if (!response.ok) {
+    throw new Error(await getResponseErrorMessage(
+      response,
+      `Workspace history request failed with status ${response.status}.`,
+    ))
+  }
+
+  return (await response.json()) as WorkspaceHistoryResponse
+}
+
+export async function fetchUiPreferences() {
+  const response = await fetch(SEMANTICODE_UI_PREFERENCES_ROUTE)
+
+  if (!response.ok) {
+    throw new Error(await getResponseErrorMessage(
+      response,
+      `UI preferences request failed with status ${response.status}.`,
+    ))
+  }
+
+  const payload = (await response.json()) as UiPreferencesResponse
+  return payload.preferences
+}
+
+export async function persistUiPreferences(
+  preferences: UiPreferences,
+) {
+  const response = await fetch(SEMANTICODE_UI_PREFERENCES_ROUTE, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ preferences }),
+  })
+
+  if (!response.ok) {
+    throw new Error(await getResponseErrorMessage(
+      response,
+      `UI preferences persistence failed with status ${response.status}.`,
+    ))
+  }
+
+  const payload = (await response.json()) as UiPreferencesResponse
+  return payload.preferences
 }
 
 export async function persistPreprocessedWorkspaceContext(

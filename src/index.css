@@ -1,8 +1,46 @@
 :root {
-  color: #271f17;
-  background:
+  --app-text: #271f17;
+  --app-muted: #7a6e61;
+  --app-border: #d5d0c7;
+  --app-surface: rgba(255, 252, 246, 0.9);
+  --app-surface-strong: rgba(255, 252, 246, 0.98);
+  --app-surface-soft: #fffaf3;
+  --app-surface-soft-2: #f7f1e5;
+  --app-surface-soft-3: #efe5d7;
+  --app-surface-soft-4: #ece4d6;
+  --app-inverse-surface: #2b251f;
+  --app-inverse-text: #f8f4ee;
+  --app-backdrop: rgba(30, 24, 19, 0.38);
+  --app-shadow: 0 24px 48px rgba(40, 32, 24, 0.18);
+  --app-accent: #2f6c60;
+  --app-accent-soft: rgba(232, 245, 241, 0.96);
+  --app-success: #3f7d43;
+  --app-success-soft: rgba(235, 245, 236, 0.92);
+  --app-warning: #8a5a18;
+  --app-warning-soft: rgba(255, 244, 225, 0.94);
+  --app-danger: #8a2d19;
+  --app-danger-soft: rgba(255, 240, 238, 0.92);
+  --app-canvas-bg:
+    radial-gradient(circle at top, rgba(205, 181, 129, 0.28), transparent 34%),
+    linear-gradient(180deg, rgba(255, 250, 242, 0.98), rgba(244, 236, 223, 0.98));
+  --app-overlay-surface: rgba(255, 252, 246, 0.92);
+  --app-overlay-surface-strong: rgba(255, 252, 246, 0.95);
+  --app-input-bg: #fffdf8;
+  --app-input-border: #ddd5c7;
+  --app-input-text: #271f17;
+  --app-input-placeholder: #8a7f71;
+  --app-code-bg: #f7f1e5;
+  --app-code-border: rgba(138, 119, 99, 0.16);
+  --app-code-gutter-bg: #efe4cf;
+  --app-code-gutter-text: #8a7763;
+  --app-code-selection: rgba(73, 104, 139, 0.18);
+  --app-code-gutter-highlight-bg: rgba(184, 122, 55, 0.16);
+  --app-code-gutter-highlight-text: #7f4b17;
+  --app-bg:
     radial-gradient(circle at top, rgba(207, 181, 128, 0.35), transparent 30%),
     linear-gradient(180deg, #f6f0e5 0%, #efe7d8 100%);
+  color: var(--app-text);
+  background: var(--app-bg);
   font-family:
     'IBM Plex Sans', 'Avenir Next', 'Segoe UI', sans-serif;
   font-synthesis: none;
@@ -11,6 +49,49 @@
   -moz-osx-font-smoothing: grayscale;
   line-height: 1.5;
   font-weight: 400;
+}
+
+:root[data-theme='dark'] {
+  --app-text: #ece4d7;
+  --app-muted: #b7ac9f;
+  --app-border: #4b433b;
+  --app-surface: rgba(29, 32, 37, 0.92);
+  --app-surface-strong: rgba(29, 32, 37, 0.98);
+  --app-surface-soft: #242830;
+  --app-surface-soft-2: #2e3440;
+  --app-surface-soft-3: #363d4a;
+  --app-surface-soft-4: #414a59;
+  --app-inverse-surface: #e6dece;
+  --app-inverse-text: #1e1b17;
+  --app-backdrop: rgba(7, 9, 12, 0.62);
+  --app-shadow: 0 24px 48px rgba(0, 0, 0, 0.4);
+  --app-accent: #57a395;
+  --app-accent-soft: rgba(70, 111, 104, 0.28);
+  --app-success: #8fc595;
+  --app-success-soft: rgba(49, 88, 58, 0.42);
+  --app-warning: #e0bb72;
+  --app-warning-soft: rgba(94, 74, 35, 0.45);
+  --app-danger: #eb9b8b;
+  --app-danger-soft: rgba(94, 46, 43, 0.48);
+  --app-canvas-bg:
+    radial-gradient(circle at top, rgba(63, 103, 125, 0.28), transparent 34%),
+    linear-gradient(180deg, rgba(24, 29, 36, 0.98), rgba(18, 22, 28, 0.98));
+  --app-overlay-surface: rgba(29, 32, 37, 0.92);
+  --app-overlay-surface-strong: rgba(33, 37, 43, 0.95);
+  --app-input-bg: #1e242d;
+  --app-input-border: #4b5665;
+  --app-input-text: #ece4d7;
+  --app-input-placeholder: #98a4b5;
+  --app-code-bg: #1b2028;
+  --app-code-border: rgba(110, 126, 150, 0.22);
+  --app-code-gutter-bg: #20262f;
+  --app-code-gutter-text: #93a1b5;
+  --app-code-selection: rgba(91, 147, 198, 0.22);
+  --app-code-gutter-highlight-bg: rgba(87, 163, 149, 0.2);
+  --app-code-gutter-highlight-text: #9dd8cd;
+  --app-bg:
+    radial-gradient(circle at top, rgba(67, 91, 125, 0.3), transparent 28%),
+    linear-gradient(180deg, #171a1f 0%, #111419 100%);
 }
 
 * {
@@ -23,11 +104,14 @@ body,
   margin: 0;
   height: 100%;
   min-height: 100vh;
+  background: var(--app-bg);
 }
 
 body {
   min-width: 320px;
   overflow: hidden;
+  color: var(--app-text);
+  background: var(--app-bg);
 }
 
 button,
@@ -35,6 +119,14 @@ input,
 textarea,
 select {
   font: inherit;
+  color: var(--app-input-text);
+}
+
+input,
+textarea,
+select {
+  background: var(--app-input-bg);
+  border-color: var(--app-input-border);
 }
 
 code,
@@ -48,6 +140,7 @@ pre {
   height: 100dvh;
   padding: 0.625rem;
   overflow: hidden;
+  background: var(--app-bg);
 }
 
 body.is-desktop-host .demo-page {
@@ -56,15 +149,15 @@ body.is-desktop-host .demo-page {
 
 .demo-status {
   padding: 1.25rem 1.5rem;
-  border: 1px solid #d5d0c7;
+  border: 1px solid var(--app-border);
   border-radius: 1rem;
-  background: rgba(255, 252, 246, 0.9);
+  background: var(--app-surface);
 }
 
 .demo-status.is-error {
-  color: #7d221e;
-  border-color: #d59890;
-  background: rgba(255, 240, 238, 0.92);
+  color: var(--app-danger);
+  border-color: color-mix(in srgb, var(--app-danger) 38%, var(--app-border));
+  background: var(--app-danger-soft);
 }
 
 @media (max-width: 720px) {

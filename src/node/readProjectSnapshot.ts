@@ -15,6 +15,10 @@ import {
 } from '../schema/snapshot'
 import { enrichProjectSnapshot } from './analysis'
 import { createIgnoreMatcher } from './gitignore'
+import {
+  readCachedProjectSnapshot,
+  writeCachedProjectSnapshot,
+} from './projectSnapshotCache'
 
 const DEFAULT_MAX_DEPTH = 12
 const DEFAULT_MAX_FILE_SIZE = 100_000
@@ -34,6 +38,33 @@ interface WalkState {
 }
 
 export async function readProjectSnapshot(
+  options: ReadProjectSnapshotOptions = {},
+): Promise<ProjectSnapshot> {
+  const rootDir = options.rootDir ?? process.cwd()
+  const cachedSnapshot = await readCachedProjectSnapshot({
+    rootDir,
+    options,
+  })
+
+  if (cachedSnapshot) {
+    return cachedSnapshot
+  }
+
+  const snapshot = await readProjectSnapshotFresh({
+    ...options,
+    rootDir,
+  })
+
+  await writeCachedProjectSnapshot({
+    rootDir,
+    options,
+    snapshot,
+  })
+
+  return snapshot
+}
+
+async function readProjectSnapshotFresh(
   options: ReadProjectSnapshotOptions = {},
 ): Promise<ProjectSnapshot> {
   const rootDir = options.rootDir ?? process.cwd()

@@ -15,25 +15,32 @@ import type {
   SemanticPurposeSummaryRecord,
   SourceRange,
   SymbolNode,
+  WorkingSetState,
   WorkspaceProfile,
 } from '../types'
 
 const MAX_VISIBLE_CONTEXT_FILES = 6
 const MAX_VISIBLE_PURPOSE_SUMMARIES = 8
 
+export interface AgentScopeContext {
+  file: CodebaseFile | null
+  files: CodebaseFile[]
+  node: ProjectNode | null
+  symbol: SymbolNode | null
+  symbols: SymbolNode[]
+}
+
 interface AgentPanelProps {
   desktopHostAvailable?: boolean
-  inspectorContext?: {
-    file: CodebaseFile | null
-    files: CodebaseFile[]
-    node: ProjectNode | null
-    symbol: SymbolNode | null
-    symbols: SymbolNode[]
-  }
+  inspectorContext?: AgentScopeContext
   onOpenSettings?: () => void
   onRunSettled?: () => Promise<void>
+  onAdoptInspectorContextAsWorkingSet?: () => void
+  onClearWorkingSet?: () => void
   preprocessedWorkspaceContext?: PreprocessedWorkspaceContext | null
   settingsOnly?: boolean
+  workingSet?: WorkingSetState | null
+  workingSetContext?: AgentScopeContext | null
   workspaceProfile?: WorkspaceProfile | null
 }
 
@@ -42,8 +49,12 @@ export function AgentPanel({
   inspectorContext,
   onOpenSettings,
   onRunSettled,
+  onAdoptInspectorContextAsWorkingSet,
+  onClearWorkingSet,
   preprocessedWorkspaceContext = null,
   settingsOnly = false,
+  workingSet = null,
+  workingSetContext = null,
   workspaceProfile = null,
 }: AgentPanelProps) {
   const agentClient = useMemo(() => new DesktopAgentClient(), [])
@@ -295,6 +306,7 @@ export function AgentPanel({
           nextPrompt,
           workspaceProfile,
           preprocessedWorkspaceContext,
+          workingSetContext,
           inspectorContext,
         ),
       )
@@ -654,6 +666,12 @@ export function AgentPanel({
             : null
   const sessionIsInteractive =
     session?.runState === 'ready' || session?.runState === 'running'
+  const hasInspectorContext = hasScopeContext(inspectorContext)
+  const hasWorkingSetContext = hasScopeContext(workingSetContext)
+  const workingSetMatchesInspectorContext =
+    hasWorkingSetContext && hasInspectorContext
+      ? areScopeContextsEquivalent(workingSetContext, inspectorContext)
+      : false
 
   return (
     <div className={`cbv-agent-panel${settingsOnly ? ' is-settings-only' : ''}`}>
@@ -934,14 +952,14 @@ export function AgentPanel({
           <strong>Agent settings needed</strong>
           <p>
             {session?.lastError ??
-              'Open agent settings to sign in, choose a model, or update agent configuration before chatting here.'}
+              'Open settings to sign in, choose a model, or update agent configuration before chatting here.'}
           </p>
           {onOpenSettings ? (
             <button
               onClick={onOpenSettings}
               type="button"
             >
-              Open Agent Settings
+              Open Settings
             </button>
           ) : null}
         </div>
@@ -978,59 +996,48 @@ export function AgentPanel({
       </div>
 
       <div className="cbv-agent-composer">
-        {inspectorContext?.file ||
-        inspectorContext?.files.length ||
-        inspectorContext?.symbols.length ||
-        inspectorContext?.symbol ||
-        inspectorContext?.node ? (
+        {hasWorkingSetContext ? (
+          <div className="cbv-agent-context">
+            <p className="cbv-eyebrow">Pinned working set</p>
+            <strong>
+              {describeScopeContextTitle(workingSetContext)}
+            </strong>
+            <p>
+              Agent requests will start from this working set and only leave it when blocked.
+              {workingSet?.source === 'selection' ? ' Pinned from selection.' : ''}
+            </p>
+            {renderScopeContextList(workingSetContext)}
+            {renderScopeContextOverflow(workingSetContext)}
+            <div className="cbv-agent-context-actions">
+              {hasInspectorContext && !workingSetMatchesInspectorContext && onAdoptInspectorContextAsWorkingSet ? (
+                <button onClick={onAdoptInspectorContextAsWorkingSet} type="button">
+                  Replace with current selection
+                </button>
+              ) : null}
+              {onClearWorkingSet ? (
+                <button className="is-secondary" onClick={onClearWorkingSet} type="button">
+                  Clear working set
+                </button>
+              ) : null}
+            </div>
+          </div>
+        ) : hasInspectorContext ? (
           <div className="cbv-agent-context">
             <p className="cbv-eyebrow">Current inspector target</p>
             <strong>
-              {inspectorContext.symbols.length > 1
-                ? `${inspectorContext.symbols.length} selected symbols`
-                : inspectorContext.files.length > 1
-                ? `${inspectorContext.files.length} selected files`
-                : inspectorContext.symbol?.path ??
-                inspectorContext.file?.path ??
-                  inspectorContext.node?.path ??
-                  'Current selection'}
+              {describeScopeContextTitle(inspectorContext)}
             </strong>
             <p>
               {describeInspectorContext(inspectorContext)}
             </p>
-            {inspectorContext.symbols.length > 1 ? (
-              <ul className="cbv-agent-context-list">
-                {inspectorContext.symbols
-                  .slice(0, MAX_VISIBLE_CONTEXT_FILES)
-                  .map((symbol, index) => (
-                  <li key={symbol.id}>
-                    <strong>{index === 0 ? 'Primary' : `Symbol ${index + 1}`}</strong>
-                    <span>{symbol.path}</span>
-                  </li>
-                ))}
-              </ul>
-            ) : inspectorContext.files.length > 1 ? (
-              <ul className="cbv-agent-context-list">
-                {inspectorContext.files
-                  .slice(0, MAX_VISIBLE_CONTEXT_FILES)
-                  .map((file, index) => (
-                  <li key={file.id}>
-                    <strong>{index === 0 ? 'Primary' : `File ${index + 1}`}</strong>
-                    <span>{file.path}</span>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-            {inspectorContext.symbols.length > MAX_VISIBLE_CONTEXT_FILES ? (
-              <p className="cbv-agent-context-more">
-                + {inspectorContext.symbols.length - MAX_VISIBLE_CONTEXT_FILES} more selected symbol
-                {inspectorContext.symbols.length - MAX_VISIBLE_CONTEXT_FILES === 1 ? '' : 's'}
-              </p>
-            ) : inspectorContext.files.length > MAX_VISIBLE_CONTEXT_FILES ? (
-              <p className="cbv-agent-context-more">
-                + {inspectorContext.files.length - MAX_VISIBLE_CONTEXT_FILES} more selected file
-                {inspectorContext.files.length - MAX_VISIBLE_CONTEXT_FILES === 1 ? '' : 's'}
-              </p>
+            {renderScopeContextList(inspectorContext)}
+            {renderScopeContextOverflow(inspectorContext)}
+            {onAdoptInspectorContextAsWorkingSet ? (
+              <div className="cbv-agent-context-actions">
+                <button onClick={onAdoptInspectorContextAsWorkingSet} type="button">
+                  Use as working set
+                </button>
+              </div>
             ) : null}
           </div>
         ) : null}
@@ -1139,26 +1146,9 @@ function upsertMessage(messages: AgentMessage[], nextMessage: AgentMessage) {
 
 function buildInspectorScopedPrompt(
   prompt: string,
-  inspectorContext:
-    | {
-        file: CodebaseFile | null
-        files: CodebaseFile[]
-        node: ProjectNode | null
-        symbol: SymbolNode | null
-        symbols: SymbolNode[]
-      }
-    | undefined,
+  inspectorContext: AgentScopeContext | undefined | null,
 ) {
-  if (
-    !inspectorContext ||
-    (
-      !inspectorContext.file &&
-      inspectorContext.files.length === 0 &&
-      inspectorContext.symbols.length === 0 &&
-      !inspectorContext.node &&
-      !inspectorContext.symbol
-    )
-  ) {
+  if (!hasScopeContext(inspectorContext)) {
     return prompt
   }
 
@@ -1213,9 +1203,10 @@ function buildWorkspaceScopedPrompt(
   prompt: string,
   workspaceProfile: WorkspaceProfile | null | undefined,
   preprocessedWorkspaceContext: PreprocessedWorkspaceContext | null | undefined,
+  workingSetContext: AgentScopeContext | null | undefined,
   inspectorContext: AgentPanelProps['inspectorContext'],
 ) {
-  const scopedPrompt = buildInspectorScopedPrompt(prompt, inspectorContext)
+  const scopedPrompt = buildScopeAwarePrompt(prompt, workingSetContext, inspectorContext)
   const workspaceContextLines = workspaceProfile
     ? [
         'Workspace preprocessing context:',
@@ -1237,6 +1228,7 @@ function buildWorkspaceScopedPrompt(
     : []
   const purposeSummaryLines = buildPurposeSummaryContext(
     preprocessedWorkspaceContext,
+    workingSetContext,
     inspectorContext,
   )
 
@@ -1253,8 +1245,38 @@ function buildWorkspaceScopedPrompt(
   ].join('\n')
 }
 
+function buildScopeAwarePrompt(
+  prompt: string,
+  workingSetContext: AgentScopeContext | null | undefined,
+  inspectorContext: AgentScopeContext | null | undefined,
+) {
+  if (hasScopeContext(workingSetContext)) {
+    const contextLines = [
+      'Semanticode working set:',
+      'Treat this pinned working set as the primary scope for the request.',
+      'Inspect and modify these files or symbols before searching elsewhere in the repository.',
+      'Only leave this working set when you need external dependency context or the user clearly redirects you.',
+      'If you leave scope, state briefly why.',
+      ...buildScopeContextLines(workingSetContext),
+    ]
+
+    if (hasScopeContext(inspectorContext) && !areScopeContextsEquivalent(workingSetContext, inspectorContext)) {
+      contextLines.push(
+        '',
+        'Current transient inspector selection:',
+        ...buildScopeContextLines(inspectorContext),
+      )
+    }
+
+    return `${contextLines.join('\n')}\n\nUser request:\n${prompt}`
+  }
+
+  return buildInspectorScopedPrompt(prompt, inspectorContext)
+}
+
 function buildPurposeSummaryContext(
   preprocessedWorkspaceContext: PreprocessedWorkspaceContext | null | undefined,
+  workingSetContext: AgentScopeContext | null | undefined,
   inspectorContext: AgentPanelProps['inspectorContext'],
 ) {
   if (!preprocessedWorkspaceContext?.purposeSummaries.length) {
@@ -1263,6 +1285,7 @@ function buildPurposeSummaryContext(
 
   const selectedSummaries = selectRelevantPurposeSummaries(
     preprocessedWorkspaceContext.purposeSummaries,
+    workingSetContext,
     inspectorContext,
   )
 
@@ -1284,8 +1307,17 @@ function buildPurposeSummaryContext(
 
 function selectRelevantPurposeSummaries(
   summaries: SemanticPurposeSummaryRecord[],
+  workingSetContext: AgentScopeContext | null | undefined,
   inspectorContext: AgentPanelProps['inspectorContext'],
 ) {
+  const workingSetFileIds = new Set(
+    workingSetContext?.files.map((file) => file.id) ??
+      (workingSetContext?.file ? [workingSetContext.file.id] : []),
+  )
+  const workingSetSymbolIds = new Set(
+    workingSetContext?.symbols.map((symbol) => symbol.id) ??
+      (workingSetContext?.symbol ? [workingSetContext.symbol.id] : []),
+  )
   const selectedFileIds = new Set(
     inspectorContext?.files.map((file) => file.id) ??
       (inspectorContext?.file ? [inspectorContext.file.id] : []),
@@ -1302,6 +1334,8 @@ function selectRelevantPurposeSummaries(
     .map((summary) => ({
       summary,
       score: scorePurposeSummary(summary, {
+        workingSetFileIds,
+        workingSetSymbolIds,
         selectedFileIds,
         selectedSymbolIds,
         selectedNodePath,
@@ -1324,6 +1358,8 @@ function selectRelevantPurposeSummaries(
 function scorePurposeSummary(
   summary: SemanticPurposeSummaryRecord,
   input: {
+    workingSetFileIds: Set<string>
+    workingSetSymbolIds: Set<string>
     selectedFileIds: Set<string>
     selectedSymbolIds: Set<string>
     selectedNodePath: string
@@ -1332,6 +1368,14 @@ function scorePurposeSummary(
   },
 ) {
   let score = 0
+
+  if (input.workingSetFileIds.has(summary.fileId)) {
+    score += 12
+  }
+
+  if (input.workingSetSymbolIds.has(summary.symbolId)) {
+    score += 14
+  }
 
   if (input.selectedFileIds.has(summary.fileId)) {
     score += 8
@@ -1397,6 +1441,157 @@ function describeInspectorContext(inspectorContext: {
   }
 
   return ''
+}
+
+function hasScopeContext(
+  context: AgentScopeContext | null | undefined,
+): context is AgentScopeContext {
+  return Boolean(
+    context &&
+      (
+        context.file ||
+        context.files.length > 0 ||
+        context.symbols.length > 0 ||
+        context.symbol ||
+        context.node
+      ),
+  )
+}
+
+function buildScopeContextLines(context: AgentScopeContext) {
+  const contextLines: string[] = []
+
+  if (context.symbols.length > 1) {
+    contextLines.push('Selected symbols (primary first):')
+
+    for (const symbol of context.symbols) {
+      contextLines.push(`- ${symbol.path}`)
+    }
+  } else if (context.files.length > 1) {
+    contextLines.push('Selected files (primary first):')
+
+    for (const file of context.files) {
+      contextLines.push(`- ${file.path}`)
+    }
+  } else if (context.file) {
+    contextLines.push(`Selected file: ${context.file.path}`)
+  }
+
+  if (context.symbol) {
+    contextLines.push(`Selected symbol: ${context.symbol.path}`)
+    contextLines.push(`Selected symbol kind: ${context.symbol.symbolKind}`)
+
+    if (context.symbol.range) {
+      contextLines.push(`Selected symbol range: lines ${formatRange(context.symbol.range)}`)
+    }
+  } else if (context.node) {
+    contextLines.push(`Selected node: ${context.node.path}`)
+    contextLines.push(`Selected node kind: ${context.node.kind}`)
+  }
+
+  return contextLines
+}
+
+function describeScopeContextTitle(context: AgentScopeContext) {
+  if (context.symbols.length > 1) {
+    return `${context.symbols.length} selected symbols`
+  }
+
+  if (context.files.length > 1) {
+    return `${context.files.length} selected files`
+  }
+
+  return context.symbol?.path ?? context.file?.path ?? context.node?.path ?? 'Current selection'
+}
+
+function renderScopeContextList(context: AgentScopeContext) {
+  if (context.symbols.length > 1) {
+    return (
+      <ul className="cbv-agent-context-list">
+        {context.symbols.slice(0, MAX_VISIBLE_CONTEXT_FILES).map((symbol, index) => (
+          <li key={symbol.id}>
+            <strong>{index === 0 ? 'Primary' : `Symbol ${index + 1}`}</strong>
+            <span>{symbol.path}</span>
+          </li>
+        ))}
+      </ul>
+    )
+  }
+
+  if (context.files.length > 1) {
+    return (
+      <ul className="cbv-agent-context-list">
+        {context.files.slice(0, MAX_VISIBLE_CONTEXT_FILES).map((file, index) => (
+          <li key={file.id}>
+            <strong>{index === 0 ? 'Primary' : `File ${index + 1}`}</strong>
+            <span>{file.path}</span>
+          </li>
+        ))}
+      </ul>
+    )
+  }
+
+  return null
+}
+
+function renderScopeContextOverflow(context: AgentScopeContext) {
+  if (context.symbols.length > MAX_VISIBLE_CONTEXT_FILES) {
+    return (
+      <p className="cbv-agent-context-more">
+        + {context.symbols.length - MAX_VISIBLE_CONTEXT_FILES} more selected symbol
+        {context.symbols.length - MAX_VISIBLE_CONTEXT_FILES === 1 ? '' : 's'}
+      </p>
+    )
+  }
+
+  if (context.files.length > MAX_VISIBLE_CONTEXT_FILES) {
+    return (
+      <p className="cbv-agent-context-more">
+        + {context.files.length - MAX_VISIBLE_CONTEXT_FILES} more selected file
+        {context.files.length - MAX_VISIBLE_CONTEXT_FILES === 1 ? '' : 's'}
+      </p>
+    )
+  }
+
+  return null
+}
+
+function areScopeContextsEquivalent(
+  left: AgentScopeContext | null | undefined,
+  right: AgentScopeContext | null | undefined,
+) {
+  if (!hasScopeContext(left) || !hasScopeContext(right)) {
+    return false
+  }
+
+  const leftIds = getScopeContextNodeIds(left)
+  const rightIds = getScopeContextNodeIds(right)
+
+  if (leftIds.length !== rightIds.length) {
+    return false
+  }
+
+  return leftIds.every((nodeId, index) => nodeId === rightIds[index])
+}
+
+function getScopeContextNodeIds(context: AgentScopeContext) {
+  if (context.symbols.length > 0) {
+    return context.symbols.map((symbol) => symbol.id)
+  }
+
+  if (context.files.length > 0) {
+    return context.files.map((file) => file.id)
+  }
+
+  if (context.symbol) {
+    return [context.symbol.id]
+  }
+
+  if (context.file) {
+    return [context.file.id]
+  }
+
+  return context.node ? [context.node.id] : []
 }
 
 function formatRange(range: SourceRange) {

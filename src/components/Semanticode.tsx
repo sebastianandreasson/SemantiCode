@@ -16,7 +16,9 @@ import {
 } from '@xyflow/react'
 import {
   Suspense,
+  memo,
   useEffect,
+  useCallback,
   lazy,
   useMemo,
   useRef,
@@ -40,7 +42,9 @@ import {
   type PreprocessedWorkspaceContext,
   type PreprocessingStatus,
   type SymbolNode,
+  type UiPreferences,
   type VisualizerViewMode,
+  type WorkspaceUiState,
   type WorkspaceProfile,
   type WorkspaceArtifactSyncStatus,
 } from '../types'
@@ -48,27 +52,56 @@ import { useVisualizerStore } from '../store/visualizerStore'
 import { buildStructuralLayout } from '../layouts/structuralLayout'
 import { buildSymbolLayout } from '../layouts/symbolLayout'
 import { buildSemanticLayout } from '../semantic/semanticLayout'
+import { WorkspaceAgentActivity } from './agent/WorkspaceAgentActivity'
 import { CodebaseAnnotationNode } from './CodebaseAnnotationNode'
 import { CodebaseCanvasNode } from './CodebaseCanvasNode'
 import { CodebaseSymbolNode } from './CodebaseSymbolNode'
 import { getInspectorHeaderSummary } from './inspector/inspectorUtils'
+import type { ThemeMode } from './settings/GeneralSettingsPanel'
 import { ProjectsSidebar } from './shell/ProjectsSidebar'
 import { WorkspaceSyncModal } from './shell/WorkspaceSyncModal'
 import { WorkspaceToolbar } from './shell/WorkspaceToolbar'
+import {
+  fetchUiPreferences,
+  fetchWorkspaceHistory,
+  persistUiPreferences as persistUiPreferencesRequest,
+  requestSemanticEmbeddings,
+} from '../app/apiClient'
+import {
+  applyThemeMode,
+  readStoredUiPreferences,
+  readThemeMode,
+  THEME_STORAGE_KEY,
+  UI_PREFERENCES_STORAGE_KEY,
+} from '../app/themeBootstrap'
+import {
+  filterSemanticSearchMatches,
+  filterSearchableSemanticEmbeddings,
+  rankSemanticSearchMatches,
+  type SemanticSearchResult,
+  type SemanticSearchMatch,
+} from '../semantic/semanticSearch'
+import {
+  buildGroupPrototypeRecords,
+  rankNearbySymbolsForGroupPrototype,
+  rankGroupPrototypeMatches,
+  type GroupPrototypeSearchMatch,
+} from '../semantic/groups/groupPrototypes'
 import {
   canCompareLayoutAgainstSemantic,
   resolveCanvasScene,
   resolveLayoutCompareOverlay,
 } from '../visualizer/canvasScene'
+import { hashSemanticText } from '../types'
 
 const LazyInspectorPane = lazy(async () => {
   const module = await import('./inspector/InspectorPane')
   return { default: module.InspectorPane }
 })
 
-const LazyAgentPanel = lazy(async () => {
-  const module = await import('./AgentPanel')
-  return { default: module.AgentPanel }
+const LazyGeneralSettingsPanel = lazy(async () => {
+  const module = await import('./settings/GeneralSettingsPanel')
+  return { default: module.GeneralSettingsPanel }
 })
 
 interface SemanticodeProps {
@@ -130,6 +163,22 @@ interface ExpandedClusterLayout {
   >
 }
 
+interface FilesystemContainerLayout {
+  width: number
+  height: number
+  childNodeIds: string[]
+}
+
+interface LayoutGroupContainer {
+  id: string
+  title: string
+  x: number
+  y: number
+  width: number
+  height: number
+  nodeIds: string[]
+}
+
 interface NodeDimensions {
   width: number
   height: number
@@ -162,6 +211,17 @@ const COMPACT_SYMBOL_NODE_HEIGHT = 74
 const DEFAULT_CANVAS_WIDTH_RATIO = 0.6
 const MIN_CANVAS_WIDTH_RATIO = 0.32
 const MAX_CANVAS_WIDTH_RATIO = 0.78
+const FILESYSTEM_CONTAINER_PADDING_RIGHT = 18
+const FILESYSTEM_CONTAINER_PADDING_BOTTOM = 18
+const LAYOUT_GROUP_PADDING_X = 22
+const LAYOUT_GROUP_PADDING_TOP = 112
+const LAYOUT_GROUP_PADDING_BOTTOM = 44
+const SEMANTIC_SEARCH_RESULT_LIMIT = 24
+const SEMANTIC_SEARCH_MIN_QUERY_LENGTH = 2
+const SEMANTIC_SEARCH_MIN_LIMIT = 5
+const SEMANTIC_SEARCH_MAX_LIMIT = 60
+const SEMANTIC_SEARCH_DEFAULT_STRICTNESS = 35
+type SemanticSearchMode = 'symbols' | 'groups'
 const nodeTypes = {
   annotationNode: CodebaseAnnotationNode,
   codebaseNode: CodebaseCanvasNode,
@@ -176,8 +236,11 @@ const SYMBOL_LEGEND_ITEMS = [
   { label: 'Variable', kindClass: 'variable' },
 ] as const
 
+const VIRTUAL_LAYOUT_GROUP_NODE_PREFIX = '__layout_group__:'
+
 interface DesktopBridge {
   closeWorkspace?: () => Promise<boolean>
+  getUiPreferences?: () => Promise<UiPreferences>
   getWorkspaceHistory?: () => Promise<{
     activeWorkspaceRootDir: string | null
     recentWorkspaces: {
@@ -189,6 +252,52 @@ interface DesktopBridge {
   isDesktop?: boolean
   openWorkspaceDialog?: () => Promise<boolean>
   openWorkspaceRootDir?: (rootDir: string) => Promise<boolean>
+  setUiPreferences?: (preferences: UiPreferences) => Promise<UiPreferences>
+}
+
+interface RecentProject {
+  name: string
+  rootDir: string
+  lastOpenedAt: string
+}
+
+function getDesktopBridge() {
+  return (
+    globalThis as typeof globalThis & {
+      semanticodeDesktop?: DesktopBridge
+      semanticodeDesktopAgent?: DesktopBridge
+    }
+  ).semanticodeDesktop ?? (
+    globalThis as typeof globalThis & {
+      semanticodeDesktopAgent?: DesktopBridge
+    }
+  ).semanticodeDesktopAgent
+}
+
+function isElectronHost() {
+  return /Electron/i.test(globalThis.navigator?.userAgent ?? '')
+}
+
+function navigateSemanticodeAction(path: string, params?: Record<string, string>) {
+  const url = new URL(`semanticode://${path}`)
+
+  if (params) {
+    for (const [key, value] of Object.entries(params)) {
+      url.searchParams.set(key, value)
+    }
+  }
+
+  globalThis.location.assign(url.toString())
+}
+
+function rememberRecentProject(projects: RecentProject[], rootDir: string) {
+  const nextProject: RecentProject = {
+    name: getWorkspaceName(rootDir),
+    rootDir,
+    lastOpenedAt: new Date().toISOString(),
+  }
+
+  return [nextProject, ...projects.filter((project) => project.rootDir !== rootDir)].slice(0, 12)
 }
 
 export function Semanticode({
@@ -207,25 +316,55 @@ export function Semanticode({
   workspaceSyncStatus = null,
   workspaceProfile = null,
 }: SemanticodeProps) {
-  const [agentSettingsOpen, setAgentSettingsOpen] = useState(false)
+  const storedUiPreferences = useMemo(() => readStoredUiPreferences(), [])
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const [workspaceSyncOpen, setWorkspaceSyncOpen] = useState(false)
-  const [projectsSidebarOpen, setProjectsSidebarOpen] = useState(true)
+  const [themeMode, setThemeMode] = useState<ThemeMode>(
+    () => storedUiPreferences.themeMode ?? readThemeMode(),
+  )
+  const [projectsSidebarOpen, setProjectsSidebarOpen] = useState(
+    storedUiPreferences.projectsSidebarOpen ?? true,
+  )
   const [draftActionError, setDraftActionError] = useState<string | null>(null)
   const [layoutSuggestionText, setLayoutSuggestionText] = useState('')
-  const [canvasWidthRatio, setCanvasWidthRatio] = useState(DEFAULT_CANVAS_WIDTH_RATIO)
+  const [canvasWidthRatio, setCanvasWidthRatio] = useState(
+    clampNumber(
+      storedUiPreferences.canvasWidthRatio ?? DEFAULT_CANVAS_WIDTH_RATIO,
+      MIN_CANVAS_WIDTH_RATIO,
+      MAX_CANVAS_WIDTH_RATIO,
+    ),
+  )
   const [activeResizePointerId, setActiveResizePointerId] = useState<number | null>(null)
   const [flowInstance, setFlowInstance] = useState<ReactFlowInstance<Node, Edge> | null>(null)
-  const [inspectorOpen, setInspectorOpen] = useState(false)
+  const [inspectorOpen, setInspectorOpen] = useState(
+    storedUiPreferences.inspectorOpen ?? false,
+  )
   const [recentProjects, setRecentProjects] = useState<
-    {
-      name: string
-      rootDir: string
-      lastOpenedAt: string
-    }[]
+    RecentProject[]
   >([])
   const [workspaceActionPending, setWorkspaceActionPending] = useState(false)
   const [workspaceActionError, setWorkspaceActionError] = useState<string | null>(null)
   const [desktopHostAvailable, setDesktopHostAvailable] = useState(false)
+  const [uiPreferencesHydrated, setUiPreferencesHydrated] = useState(false)
+  const [workspaceViewResolvedRootDir, setWorkspaceViewResolvedRootDir] = useState<
+    string | null
+  >(null)
+  const [workspaceStateByRootDir, setWorkspaceStateByRootDir] = useState<
+    Record<string, WorkspaceUiState>
+  >(storedUiPreferences.workspaceStateByRootDir ?? {})
+  const [semanticSearchQuery, setSemanticSearchQuery] = useState('')
+  const [semanticSearchMode, setSemanticSearchMode] = useState<SemanticSearchMode>('symbols')
+  const [semanticSearchPending, setSemanticSearchPending] = useState(false)
+  const [semanticSearchError, setSemanticSearchError] = useState<string | null>(null)
+  const [semanticSearchRankedMatches, setSemanticSearchRankedMatches] = useState<SemanticSearchResult[]>(
+    [],
+  )
+  const [semanticSearchMatchLimit, setSemanticSearchMatchLimit] = useState(
+    SEMANTIC_SEARCH_RESULT_LIMIT,
+  )
+  const [semanticSearchStrictness, setSemanticSearchStrictness] = useState(
+    SEMANTIC_SEARCH_DEFAULT_STRICTNESS,
+  )
   const currentSnapshot = useVisualizerStore((state) => state.snapshot)
   const draftLayouts = useVisualizerStore((state) => state.draftLayouts)
   const activeDraftId = useVisualizerStore((state) => state.activeDraftId)
@@ -242,6 +381,10 @@ export function Semanticode({
   const compareOverlay = useVisualizerStore((state) => state.compareOverlay)
   const overlayVisibility = useVisualizerStore((state) => state.overlayVisibility)
   const overlayFocusMode = useVisualizerStore((state) => state.overlayFocusMode)
+  const workingSet = useVisualizerStore((state) => state.workingSet)
+  const collapsedDirectoryIds = useVisualizerStore(
+    (state) => state.collapsedDirectoryIds,
+  )
   const expandedSymbolClusterIds = useVisualizerStore(
     (state) => state.expandedSymbolClusterIds,
   )
@@ -252,10 +395,20 @@ export function Semanticode({
   const setActiveLayoutId = useVisualizerStore((state) => state.setActiveLayoutId)
   const setViewport = useVisualizerStore((state) => state.setViewport)
   const setViewMode = useVisualizerStore((state) => state.setViewMode)
+  const setGraphLayerVisibility = useVisualizerStore(
+    (state) => state.setGraphLayerVisibility,
+  )
   const setBaseScene = useVisualizerStore((state) => state.setBaseScene)
   const setCompareOverlay = useVisualizerStore((state) => state.setCompareOverlay)
   const clearCompareOverlay = useVisualizerStore((state) => state.clearCompareOverlay)
   const setOverlayVisibility = useVisualizerStore((state) => state.setOverlayVisibility)
+  const adoptSelectionAsWorkingSet = useVisualizerStore(
+    (state) => state.adoptSelectionAsWorkingSet,
+  )
+  const clearWorkingSet = useVisualizerStore((state) => state.clearWorkingSet)
+  const toggleCollapsedDirectory = useVisualizerStore(
+    (state) => state.toggleCollapsedDirectory,
+  )
   const setExpandedSymbolClusterIds = useVisualizerStore(
     (state) => state.setExpandedSymbolClusterIds,
   )
@@ -271,60 +424,193 @@ export function Semanticode({
   const workspaceRef = useRef<HTMLDivElement | null>(null)
   const inspectorBodyRef = useRef<HTMLDivElement | null>(null)
   const lastFittedCompareKeyRef = useRef<string | null>(null)
+  const selectionAutoOpenInitializedRef = useRef(false)
+  const semanticSearchCacheRef = useRef(new Map<string, SemanticSearchResult[]>())
+  const containerDragPreviewPositionsRef = useRef(new Map<string, XYPosition>())
   const selectedNodeIdSet = useMemo(() => new Set(selectedNodeIds), [selectedNodeIds])
-  const desktopBridge = (
-    globalThis as typeof globalThis & {
-      semanticodeDesktop?: DesktopBridge
-    }
-  ).semanticodeDesktop
-  const isDesktopHost = desktopHostAvailable
+  const desktopBridge = getDesktopBridge()
+  const isDesktopHost = desktopHostAvailable || isElectronHost()
+  const canManageProjects = Boolean(
+    desktopBridge?.openWorkspaceDialog ||
+    desktopBridge?.openWorkspaceRootDir ||
+    desktopBridge?.closeWorkspace ||
+    desktopBridge?.getWorkspaceHistory ||
+    isDesktopHost,
+  )
 
   useEffect(() => {
     const updateDesktopHostAvailability = () => {
-      const bridge = (
-        globalThis as typeof globalThis & {
-          semanticodeDesktop?: DesktopBridge
-        }
-      ).semanticodeDesktop
+      const bridge = getDesktopBridge()
 
       setDesktopHostAvailable(Boolean(bridge?.isDesktop))
     }
 
     updateDesktopHostAvailability()
     const timeoutId = window.setTimeout(updateDesktopHostAvailability, 0)
-    const intervalId = window.setInterval(updateDesktopHostAvailability, 750)
 
     return () => {
       window.clearTimeout(timeoutId)
-      window.clearInterval(intervalId)
     }
   }, [])
 
   useEffect(() => {
-    if (!desktopHostAvailable || !desktopBridge?.getWorkspaceHistory) {
-      return
-    }
+    applyThemeMode(themeMode)
 
+    try {
+      window.localStorage.setItem(THEME_STORAGE_KEY, themeMode)
+    } catch {
+      // Ignore storage failures; theme still applies for this session.
+    }
+  }, [themeMode])
+
+  useEffect(() => {
     let cancelled = false
 
-    void desktopBridge.getWorkspaceHistory().then((history) => {
-      if (cancelled) {
-        return
-      }
+    void fetchUiPreferences()
+      .then((preferences) => {
+        if (cancelled || !preferences) {
+          return
+        }
 
-      setRecentProjects(history.recentWorkspaces)
-    }).catch(() => {
-      if (cancelled) {
-        return
-      }
+        if (preferences.themeMode) {
+          setThemeMode(preferences.themeMode)
+        }
 
-      setRecentProjects([])
-    })
+        if (typeof preferences.projectsSidebarOpen === 'boolean') {
+          setProjectsSidebarOpen(preferences.projectsSidebarOpen)
+        }
+
+        if (typeof preferences.inspectorOpen === 'boolean') {
+          setInspectorOpen(preferences.inspectorOpen)
+        }
+
+        if (typeof preferences.canvasWidthRatio === 'number') {
+          setCanvasWidthRatio(
+            clampNumber(
+              preferences.canvasWidthRatio,
+              MIN_CANVAS_WIDTH_RATIO,
+              MAX_CANVAS_WIDTH_RATIO,
+            ),
+          )
+        }
+
+        if (preferences.viewMode) {
+          setViewMode(preferences.viewMode)
+        }
+
+        if (preferences.graphLayers) {
+          setGraphLayerVisibility(preferences.graphLayers)
+        }
+
+        if (preferences.workspaceStateByRootDir) {
+          setWorkspaceStateByRootDir(preferences.workspaceStateByRootDir)
+        }
+      })
+      .catch(() => {
+        // Ignore desktop preference load failures and fall back to local storage.
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setUiPreferencesHydrated(true)
+        }
+      })
 
     return () => {
       cancelled = true
     }
-  }, [desktopBridge, desktopHostAvailable])
+  }, [setGraphLayerVisibility, setViewMode])
+
+  useEffect(() => {
+    if (storedUiPreferences.viewMode) {
+      setViewMode(storedUiPreferences.viewMode)
+    }
+
+    if (storedUiPreferences.graphLayers) {
+      setGraphLayerVisibility(storedUiPreferences.graphLayers)
+    }
+  }, [setGraphLayerVisibility, setViewMode, storedUiPreferences])
+
+  useEffect(() => {
+    if (!uiPreferencesHydrated) {
+      return
+    }
+
+    const preferences: UiPreferences = {
+      canvasWidthRatio,
+      graphLayers,
+      inspectorOpen,
+      projectsSidebarOpen,
+      themeMode,
+      viewMode,
+      workspaceStateByRootDir,
+    }
+
+    try {
+      window.localStorage.setItem(
+        UI_PREFERENCES_STORAGE_KEY,
+        JSON.stringify(preferences),
+      )
+    } catch {
+      // Ignore storage failures; preferences still apply for this session.
+    }
+
+    void persistUiPreferencesRequest(preferences).catch(() => {
+      const bridge = getDesktopBridge()
+
+      if (bridge?.setUiPreferences) {
+        void bridge.setUiPreferences(preferences).catch(() => {
+          // Ignore desktop persistence failures; local storage remains as fallback.
+        })
+      }
+    })
+  }, [
+    canvasWidthRatio,
+    graphLayers,
+    inspectorOpen,
+    projectsSidebarOpen,
+    themeMode,
+    uiPreferencesHydrated,
+    viewMode,
+    workspaceStateByRootDir,
+  ])
+
+  useEffect(() => {
+    let cancelled = false
+    const loadHistory = async () => {
+      try {
+        if (desktopBridge?.getWorkspaceHistory) {
+          const history = await desktopBridge.getWorkspaceHistory()
+
+          if (cancelled) {
+            return
+          }
+
+          setRecentProjects(history.recentWorkspaces)
+          return
+        }
+
+        if (canManageProjects) {
+          const history = await fetchWorkspaceHistory()
+
+          if (cancelled) {
+            return
+          }
+
+          setRecentProjects(history.recentWorkspaces)
+        }
+      } catch {
+        if (cancelled) {
+          return
+        }
+      }
+    }
+
+    void loadHistory()
+
+    return () => {
+      cancelled = true
+    }
+  }, [canManageProjects, desktopBridge])
 
   useEffect(() => {
     if (snapshot === undefined) {
@@ -337,11 +623,68 @@ export function Semanticode({
   const effectiveSnapshot = snapshot ?? currentSnapshot
 
   useEffect(() => {
+    if (!effectiveSnapshot?.rootDir) {
+      return
+    }
+
+    setRecentProjects((currentProjects) => {
+      return rememberRecentProject(currentProjects, effectiveSnapshot.rootDir)
+    })
+  }, [effectiveSnapshot?.rootDir])
+
+  useEffect(() => {
+    if (!effectiveSnapshot?.rootDir) {
+      return
+    }
+
+    if (!uiPreferencesHydrated || workspaceViewResolvedRootDir !== effectiveSnapshot.rootDir) {
+      return
+    }
+
+    setWorkspaceStateByRootDir((currentState) => {
+      const currentEntry = currentState[effectiveSnapshot.rootDir]
+      const nextEntry: WorkspaceUiState = {
+        activeDraftId: activeDraftId ?? undefined,
+        activeLayoutId: activeDraftId ? undefined : activeLayoutId ?? undefined,
+      }
+
+      if (
+        currentEntry?.activeDraftId === nextEntry.activeDraftId &&
+        currentEntry?.activeLayoutId === nextEntry.activeLayoutId
+      ) {
+        return currentState
+      }
+
+      return {
+        ...currentState,
+        [effectiveSnapshot.rootDir]: nextEntry,
+      }
+    })
+  }, [
+    activeDraftId,
+    activeLayoutId,
+    effectiveSnapshot?.rootDir,
+    uiPreferencesHydrated,
+    workspaceViewResolvedRootDir,
+  ])
+
+  useEffect(() => {
+    if (!effectiveSnapshot?.rootDir) {
+      setWorkspaceViewResolvedRootDir(null)
+      return
+    }
+
+    if (!uiPreferencesHydrated) {
+      setWorkspaceViewResolvedRootDir(null)
+      return
+    }
+
     if (!effectiveSnapshot) {
       setDraftLayouts([])
       setLayouts([])
       setActiveDraftId(null)
       setActiveLayoutId(null)
+      setWorkspaceViewResolvedRootDir(null)
       return
     }
 
@@ -361,21 +704,88 @@ export function Semanticode({
       setLayouts(nextLayouts)
     }
 
-    if (!activeLayoutId && !activeDraftId) {
-      setActiveLayoutId(
-        viewMode === 'symbols' ? symbolLayout.id : structuralLayout.id,
+    const isResolvingWorkspaceView =
+      workspaceViewResolvedRootDir !== effectiveSnapshot.rootDir
+    const rememberedWorkspaceState = workspaceStateByRootDir[effectiveSnapshot.rootDir]
+    const rememberedDraftId = rememberedWorkspaceState?.activeDraftId
+    const rememberedLayoutId = rememberedWorkspaceState?.activeLayoutId
+
+    if (isResolvingWorkspaceView) {
+      if (
+        rememberedDraftId &&
+        draftLayouts.some(
+          (draft) =>
+            draft.id === rememberedDraftId && draft.layout && draft.status === 'draft',
+        )
+      ) {
+        if (activeDraftId !== rememberedDraftId) {
+          setActiveLayoutId(null)
+          setActiveDraftId(rememberedDraftId)
+          return
+        }
+
+        setWorkspaceViewResolvedRootDir(effectiveSnapshot.rootDir)
+        return
+      }
+
+      if (
+        rememberedLayoutId &&
+        nextLayouts.some((layout) => layout.id === rememberedLayoutId)
+      ) {
+        if (activeLayoutId !== rememberedLayoutId || activeDraftId) {
+          setActiveDraftId(null)
+          setActiveLayoutId(rememberedLayoutId)
+          return
+        }
+
+        setWorkspaceViewResolvedRootDir(effectiveSnapshot.rootDir)
+        return
+      }
+
+      const defaultLayoutId =
+        viewMode === 'symbols' ? symbolLayout.id : structuralLayout.id
+
+      if (activeLayoutId !== defaultLayoutId || activeDraftId) {
+        setActiveDraftId(null)
+        setActiveLayoutId(defaultLayoutId)
+        return
+      }
+
+      setWorkspaceViewResolvedRootDir(effectiveSnapshot.rootDir)
+      return
+    }
+
+    if (
+      activeDraftId &&
+      !draftLayouts.some(
+        (draft) => draft.id === activeDraftId && draft.layout && draft.status === 'draft',
       )
+    ) {
+      setActiveDraftId(null)
+      return
+    }
+
+    if (
+      !activeDraftId &&
+      activeLayoutId &&
+      !nextLayouts.some((layout) => layout.id === activeLayoutId)
+    ) {
+      setActiveLayoutId(viewMode === 'symbols' ? symbolLayout.id : structuralLayout.id)
     }
   }, [
     activeDraftId,
     activeLayoutId,
+    draftLayouts,
     effectiveSnapshot,
     layouts,
     setActiveDraftId,
     setActiveLayoutId,
     setDraftLayouts,
     setLayouts,
+    uiPreferencesHydrated,
     viewMode,
+    workspaceViewResolvedRootDir,
+    workspaceStateByRootDir,
     preprocessedWorkspaceContext,
   ])
 
@@ -460,6 +870,77 @@ export function Semanticode({
     Boolean(resolvedCompareOverlay) &&
     overlayVisibility &&
     overlayFocusMode === 'highlight_dim'
+  const semanticSearchEmbeddings = useMemo(() => {
+    const visibleSymbolIds = new Set(
+      Object.keys(resolvedScene?.layoutSpec.placements ?? {}).filter((nodeId) => {
+        return !resolvedScene?.layoutSpec.hiddenNodeIds.includes(nodeId)
+      }),
+    )
+
+    return filterSearchableSemanticEmbeddings(
+      preprocessedWorkspaceContext?.semanticEmbeddings ?? [],
+      visibleSymbolIds,
+    )
+  }, [preprocessedWorkspaceContext?.semanticEmbeddings, resolvedScene])
+  const semanticSearchAvailable =
+    viewMode === 'symbols' && semanticSearchEmbeddings.length > 0
+  const semanticSearchModelId = semanticSearchEmbeddings[0]?.modelId ?? null
+  const semanticSearchGroupSourceLayout = useMemo(() => {
+    const layoutSpec = resolvedScene?.layoutSpec ?? null
+
+    if (!layoutSpec || layoutSpec.strategy !== 'agent' || layoutSpec.groups.length === 0) {
+      return null
+    }
+
+    return layoutSpec
+  }, [resolvedScene])
+  const semanticSearchGroupPrototypes = useMemo(
+    () =>
+      buildGroupPrototypeRecords(
+        semanticSearchGroupSourceLayout,
+        semanticSearchEmbeddings,
+      ),
+    [semanticSearchEmbeddings, semanticSearchGroupSourceLayout],
+  )
+  const semanticGroupSearchAvailable =
+    semanticSearchAvailable && semanticSearchGroupPrototypes.length > 0
+  const semanticSearchMatches = useMemo(
+    () =>
+      filterSemanticSearchMatches(semanticSearchRankedMatches, {
+        limit: semanticSearchMatchLimit,
+        strictness: semanticSearchStrictness,
+      }),
+    [semanticSearchMatchLimit, semanticSearchRankedMatches, semanticSearchStrictness],
+  )
+  const semanticSearchMatchNodeIds = useMemo(
+    () => {
+      const nodeIds = new Set<string>()
+
+      for (const match of semanticSearchMatches) {
+        if (semanticSearchMode === 'groups') {
+          const groupMatch = match as GroupPrototypeSearchMatch
+
+          nodeIds.add(getLayoutGroupNodeId(groupMatch.groupId))
+          for (const nodeId of groupMatch.memberNodeIds) {
+            nodeIds.add(nodeId)
+          }
+          continue
+        }
+
+        nodeIds.add((match as SemanticSearchMatch).symbolId)
+      }
+
+      return nodeIds
+    },
+    [semanticSearchMatches, semanticSearchMode],
+  )
+  const semanticSearchHighlightActive =
+    semanticSearchAvailable &&
+    semanticSearchQuery.trim().length >= SEMANTIC_SEARCH_MIN_QUERY_LENGTH &&
+    semanticSearchMatchNodeIds.size > 0
+  const highlightedNodeIdSet = useMemo(() => {
+    return new Set([...overlayNodeIdSet, ...semanticSearchMatchNodeIds])
+  }, [overlayNodeIdSet, semanticSearchMatchNodeIds])
   const currentCompareSource = useMemo(() => {
     if (activeDraft?.layout && canCompareLayoutAgainstSemantic(activeDraft.layout)) {
       return {
@@ -499,6 +980,118 @@ export function Semanticode({
   }, [resolvedScene?.layoutSpec.id, setExpandedSymbolClusterIds])
 
   useEffect(() => {
+    semanticSearchCacheRef.current.clear()
+  }, [
+    effectiveSnapshot?.rootDir,
+    semanticSearchEmbeddings.length,
+    semanticSearchGroupPrototypes.length,
+    semanticSearchModelId,
+  ])
+
+  useEffect(() => {
+    if (semanticSearchMode === 'groups' && !semanticGroupSearchAvailable) {
+      setSemanticSearchMode('symbols')
+    }
+  }, [semanticGroupSearchAvailable, semanticSearchMode])
+
+  useEffect(() => {
+    if (!semanticSearchAvailable) {
+      setSemanticSearchPending(false)
+      setSemanticSearchError(null)
+      setSemanticSearchRankedMatches([])
+      return
+    }
+
+    const trimmedQuery = semanticSearchQuery.trim()
+
+    if (trimmedQuery.length < SEMANTIC_SEARCH_MIN_QUERY_LENGTH) {
+      setSemanticSearchPending(false)
+      setSemanticSearchError(null)
+      setSemanticSearchRankedMatches([])
+      return
+    }
+
+    const cacheKey = `${semanticSearchMode}::${semanticSearchGroupSourceLayout?.id ?? 'none'}::${trimmedQuery.toLocaleLowerCase()}::${semanticSearchModelId ?? 'unknown'}`
+    const cachedMatches = semanticSearchCacheRef.current.get(cacheKey)
+
+    if (cachedMatches) {
+      setSemanticSearchPending(false)
+      setSemanticSearchError(null)
+      setSemanticSearchRankedMatches(cachedMatches)
+      return
+    }
+
+    let cancelled = false
+    const timeoutId = window.setTimeout(() => {
+      void (async () => {
+        try {
+          setSemanticSearchPending(true)
+          setSemanticSearchError(null)
+          const [queryEmbedding] = await requestSemanticEmbeddings([
+            {
+              id: '__semantic_search_query__',
+              text: trimmedQuery,
+              textHash: hashSemanticText(trimmedQuery),
+            },
+          ])
+
+          if (cancelled) {
+            return
+          }
+
+          const nextMatches =
+            semanticSearchMode === 'groups'
+              ? rankGroupPrototypeMatches({
+                  prototypes: semanticSearchGroupPrototypes,
+                  queryValues: queryEmbedding?.values ?? [],
+                  limit: Math.max(
+                    SEMANTIC_SEARCH_MAX_LIMIT,
+                    SEMANTIC_SEARCH_RESULT_LIMIT,
+                  ),
+                })
+              : rankSemanticSearchMatches({
+                  embeddings: semanticSearchEmbeddings,
+                  queryValues: queryEmbedding?.values ?? [],
+                  limit: Math.max(
+                    SEMANTIC_SEARCH_MAX_LIMIT,
+                    SEMANTIC_SEARCH_RESULT_LIMIT,
+                  ),
+                })
+
+          semanticSearchCacheRef.current.set(cacheKey, nextMatches)
+          setSemanticSearchRankedMatches(nextMatches)
+        } catch (error) {
+          if (cancelled) {
+            return
+          }
+
+          setSemanticSearchRankedMatches([])
+          setSemanticSearchError(
+            error instanceof Error ? error.message : 'Semantic search failed.',
+          )
+        } finally {
+          if (!cancelled) {
+            setSemanticSearchPending(false)
+          }
+        }
+      })()
+    }, 260)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timeoutId)
+    }
+  }, [
+    semanticSearchAvailable,
+    semanticSearchEmbeddings,
+    semanticSearchGroupPrototypes,
+    semanticSearchGroupSourceLayout?.id,
+    semanticSearchModelId,
+    semanticSearchMode,
+    semanticSearchQuery,
+  ])
+
+  useEffect(() => {
     if (
       compareOverlay &&
       (baseScene.kind !== 'semantic_projection' || !resolvedCompareOverlay)
@@ -520,6 +1113,10 @@ export function Semanticode({
     () => new Set(expandedSymbolClusterIds),
     [expandedSymbolClusterIds],
   )
+  const collapsedDirectoryIdSet = useMemo(
+    () => new Set(collapsedDirectoryIds),
+    [collapsedDirectoryIds],
+  )
   const expandedClusterLayouts = useMemo(
     () =>
       buildExpandedClusterLayouts(
@@ -529,6 +1126,25 @@ export function Semanticode({
         expandedClusterIds,
       ),
     [effectiveSnapshot, expandedClusterIds, resolvedScene, symbolClusterState],
+  )
+  const filesystemContainerLayouts = useMemo(
+    () =>
+      buildFilesystemContainerLayouts(
+        effectiveSnapshot,
+        resolvedScene?.layoutSpec ?? null,
+        viewMode,
+        collapsedDirectoryIdSet,
+      ),
+    [collapsedDirectoryIdSet, effectiveSnapshot, resolvedScene, viewMode],
+  )
+  const layoutGroupContainers = useMemo(
+    () =>
+      buildLayoutGroupContainers(
+        effectiveSnapshot,
+        resolvedScene?.layoutSpec ?? null,
+        viewMode,
+      ),
+    [effectiveSnapshot, resolvedScene, viewMode],
   )
 
   const baseFlowModel = useMemo<FlowModel | null>(() => {
@@ -544,66 +1160,61 @@ export function Semanticode({
       symbolClusterState,
       expandedClusterIds,
       expandedClusterLayouts,
+      filesystemContainerLayouts,
+      layoutGroupContainers,
+      collapsedDirectoryIdSet,
+      toggleCollapsedDirectory,
     )
   }, [
+    collapsedDirectoryIdSet,
     expandedClusterLayouts,
     effectiveSnapshot,
     expandedClusterIds,
+    filesystemContainerLayouts,
     graphLayers,
+    layoutGroupContainers,
     resolvedScene,
     symbolClusterState,
+    toggleCollapsedDirectory,
     viewMode,
   ])
 
-  useEffect(() => {
+  const presentedFlowModel = useMemo<FlowModel | null>(() => {
     if (!baseFlowModel) {
+      return null
+    }
+
+    const presentationOverlayState = {
+      active: compareOverlayActive || semanticSearchHighlightActive,
+      nodeIds: highlightedNodeIdSet,
+    }
+
+    return {
+      nodes: applyFlowNodePresentation(
+        baseFlowModel.nodes,
+        selectedNodeIdSet,
+        presentationOverlayState,
+      ),
+      edges: applyFlowEdgePresentation(baseFlowModel.edges, presentationOverlayState),
+    }
+  }, [
+    baseFlowModel,
+    compareOverlayActive,
+    highlightedNodeIdSet,
+    semanticSearchHighlightActive,
+    selectedNodeIdSet,
+  ])
+
+  useEffect(() => {
+    if (!presentedFlowModel) {
       setNodes([])
       setEdges([])
       return
     }
 
-    const compareOverlayState = {
-      active: compareOverlayActive,
-      nodeIds: overlayNodeIdSet,
-    }
-
-    setNodes(
-      applyFlowNodePresentation(baseFlowModel.nodes, selectedNodeIdSet, compareOverlayState),
-    )
-    setEdges(applyFlowEdgePresentation(baseFlowModel.edges, compareOverlayState))
-  }, [
-    baseFlowModel,
-    compareOverlayActive,
-    overlayNodeIdSet,
-    selectedNodeIdSet,
-    setEdges,
-    setNodes,
-  ])
-
-  useEffect(() => {
-    if (!baseFlowModel) {
-      return
-    }
-
-    const compareOverlayState = {
-      active: compareOverlayActive,
-      nodeIds: overlayNodeIdSet,
-    }
-
-    setNodes((currentNodes) =>
-      applyFlowNodePresentation(currentNodes, selectedNodeIdSet, compareOverlayState),
-    )
-    setEdges((currentEdges) =>
-      applyFlowEdgePresentation(currentEdges, compareOverlayState),
-    )
-  }, [
-    baseFlowModel,
-    compareOverlayActive,
-    overlayNodeIdSet,
-    selectedNodeIdSet,
-    setEdges,
-    setNodes,
-  ])
+    setNodes(presentedFlowModel.nodes)
+    setEdges(presentedFlowModel.edges)
+  }, [presentedFlowModel, setEdges, setNodes])
 
   const visibleNodeCount = useMemo(
     () =>
@@ -624,11 +1235,69 @@ export function Semanticode({
     [effectiveSnapshot],
   )
   const selectedNode =
-    selectedNodeId && effectiveSnapshot ? effectiveSnapshot.nodes[selectedNodeId] : null
+    selectedNodeId && effectiveSnapshot
+      ? effectiveSnapshot.nodes[selectedNodeId] ?? null
+      : null
+  const selectedLayoutGroup = useMemo(() => {
+    if (!selectedNodeId || !isLayoutGroupNodeId(selectedNodeId) || !resolvedScene?.layoutSpec) {
+      return null
+    }
+
+    const groupId = getLayoutGroupIdFromNodeId(selectedNodeId)
+    return resolvedScene.layoutSpec.groups.find((group) => group.id === groupId) ?? null
+  }, [resolvedScene, selectedNodeId])
   const selectedSymbol = selectedNode && isSymbolNode(selectedNode) ? selectedNode : null
   const selectedSymbols = getSelectedSymbols(effectiveSnapshot, selectedNodeIds)
   const selectedFile = getSelectedFile(effectiveSnapshot, selectedNode, files)
   const selectedFiles = getSelectedFiles(effectiveSnapshot, selectedNodeIds)
+  const selectedGroupPrototype = useMemo(() => {
+    if (!selectedLayoutGroup) {
+      return null
+    }
+
+    return (
+      semanticSearchGroupPrototypes.find(
+        (prototype) => prototype.groupId === selectedLayoutGroup.id,
+      ) ?? null
+    )
+  }, [semanticSearchGroupPrototypes, selectedLayoutGroup])
+  const selectedGroupNearbySymbols = useMemo(() => {
+    if (!effectiveSnapshot || !selectedGroupPrototype) {
+      return []
+    }
+
+    return rankNearbySymbolsForGroupPrototype({
+      prototype: selectedGroupPrototype,
+      embeddings: semanticSearchEmbeddings,
+      limit: 8,
+    })
+      .map((match) => {
+        const node = effectiveSnapshot.nodes[match.symbolId]
+
+        if (!node || !isSymbolNode(node)) {
+          return null
+        }
+
+        return {
+          score: match.score,
+          symbol: node,
+        }
+      })
+      .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
+  }, [effectiveSnapshot, selectedGroupPrototype, semanticSearchEmbeddings])
+  const workingSetNode = getPrimaryNode(effectiveSnapshot, workingSet.nodeIds)
+  const workingSetSymbols = getSelectedSymbols(effectiveSnapshot, workingSet.nodeIds)
+  const workingSetFiles = getSelectedFiles(effectiveSnapshot, workingSet.nodeIds)
+  const workingSetSymbol = workingSetSymbols[0] ?? null
+  const workingSetFile =
+    getPrimaryFileFromNode(effectiveSnapshot, workingSetNode) ?? workingSetFiles[0] ?? null
+  const workingSetContext = {
+    file: workingSetFile,
+    files: workingSetFiles,
+    node: workingSetNode,
+    symbol: workingSetSymbol,
+    symbols: workingSetSymbols,
+  }
   const selectedEdge =
     selectedEdgeId ? edges.find((edge) => edge.id === selectedEdgeId) ?? null : null
   const graphSummary = buildGraphSummary(
@@ -639,15 +1308,25 @@ export function Semanticode({
   const inspectorHeader = getInspectorHeaderSummary({
     selectedFile,
     selectedFiles,
+    selectedLayoutGroup,
     selectedNode,
     selectedSymbols,
   })
   const workspaceName = effectiveSnapshot
     ? getWorkspaceName(effectiveSnapshot.rootDir)
     : 'Workspace'
+  const workingSetSummary =
+    workingSet.nodeIds.length > 0
+      ? {
+          label: formatWorkingSetLabel(workingSetContext),
+          title: buildWorkingSetTitle(workingSetContext, workingSet),
+          paths: getWorkingSetPaths(workingSetContext),
+        }
+      : null
   const formattedPreprocessingStatus = preprocessingStatus
       ? {
         canBuildEmbeddings: preprocessingStatus.purposeSummaryCount > 0,
+        currentItemPath: preprocessingStatus.currentItemPath,
         embeddingActionLabel: formatEmbeddingActionLabel(preprocessingStatus),
         label: formatPreprocessingStatusLabel(preprocessingStatus),
         lastError: preprocessingStatus.lastError,
@@ -671,14 +1350,93 @@ export function Semanticode({
           title: formatLayoutSyncTitle(activeLayoutSync),
         }
       : null
-  const visibleLayerToggles = getLayerTogglesForViewMode(viewMode)
+  const visibleLayerToggles = useMemo(
+    () => getLayerTogglesForViewMode(viewMode),
+    [viewMode],
+  )
+  const semanticSearchStatus = useMemo(() => {
+    if (!semanticSearchAvailable) {
+      return {
+        helper: 'Build embeddings to search the semantic projection.',
+        resultCount: 0,
+      }
+    }
+
+    if (semanticSearchMode === 'groups' && !semanticGroupSearchAvailable) {
+      return {
+        helper: 'This layout does not expose enough grouped symbols for group search yet.',
+        resultCount: 0,
+      }
+    }
+
+    if (semanticSearchError) {
+      return {
+        helper: semanticSearchError,
+        resultCount: 0,
+      }
+    }
+
+    if (semanticSearchPending) {
+      return {
+        helper:
+          semanticSearchMode === 'groups'
+            ? 'Searching semantic folder matches…'
+            : 'Searching semantic matches…',
+        resultCount: semanticSearchMatches.length,
+      }
+    }
+
+    if (semanticSearchQuery.trim().length >= SEMANTIC_SEARCH_MIN_QUERY_LENGTH) {
+      return {
+        helper:
+          semanticSearchMatches.length > 0
+            ? semanticSearchMode === 'groups'
+              ? `${semanticSearchMatches.length} semantic folder matches highlighted`
+              : `${semanticSearchMatches.length} semantic matches highlighted`
+            : semanticSearchMode === 'groups'
+              ? 'No semantic folder matches found.'
+              : 'No semantic matches found.',
+        resultCount: semanticSearchMatches.length,
+      }
+    }
+
+    return {
+      helper:
+        semanticSearchMode === 'groups'
+          ? 'Search by feature intent against grouped symbols.'
+          : 'Search by concept, behavior, or feature intent.',
+      resultCount: 0,
+    }
+  }, [
+    semanticGroupSearchAvailable,
+    semanticSearchAvailable,
+    semanticSearchError,
+    semanticSearchMatches.length,
+    semanticSearchMode,
+    semanticSearchPending,
+    semanticSearchQuery,
+  ])
   const inspectorWidthRatio = 1 - canvasWidthRatio
+  const workspaceViewReady =
+    !effectiveSnapshot ||
+    (uiPreferencesHydrated &&
+      workspaceViewResolvedRootDir === effectiveSnapshot.rootDir)
 
   useEffect(() => {
+    if (!workspaceViewReady) {
+      selectionAutoOpenInitializedRef.current = false
+      return
+    }
+
+    if (!selectionAutoOpenInitializedRef.current) {
+      selectionAutoOpenInitializedRef.current = true
+      return
+    }
+
     if (selectedNodeIds.length > 0 || selectedEdgeId) {
       setInspectorOpen(true)
     }
-  }, [selectedEdgeId, selectedNodeIds])
+  }, [selectedEdgeId, selectedNodeIds, workspaceViewReady])
 
   useEffect(() => {
     if (!compareOverlayActive || !resolvedCompareOverlay || !flowInstance) {
@@ -705,7 +1463,7 @@ export function Semanticode({
     window.setTimeout(() => {
       void flowInstance.fitView({
         duration: 280,
-        maxZoom: 1.4,
+        maxZoom: 2.8,
         nodes: nodesToFit,
         padding: 0.22,
       })
@@ -800,6 +1558,9 @@ export function Semanticode({
 
   async function handleOpenAnotherWorkspace() {
     if (!desktopBridge?.openWorkspaceDialog) {
+      if (isDesktopHost) {
+        navigateSemanticodeAction('open-workspace')
+      }
       return
     }
 
@@ -823,6 +1584,9 @@ export function Semanticode({
 
   async function handleCloseWorkspace() {
     if (!desktopBridge?.closeWorkspace) {
+      if (isDesktopHost) {
+        navigateSemanticodeAction('close-workspace')
+      }
       return
     }
 
@@ -841,6 +1605,9 @@ export function Semanticode({
 
   async function handleOpenRecentProject(rootDir: string) {
     if (!desktopBridge?.openWorkspaceRootDir) {
+      if (isDesktopHost) {
+        navigateSemanticodeAction('open-workspace-root-dir', { rootDir })
+      }
       return
     }
 
@@ -887,6 +1654,23 @@ export function Semanticode({
       return
     }
 
+    if (effectiveSnapshot?.rootDir) {
+      const workspaceRootDir = effectiveSnapshot.rootDir
+      setWorkspaceStateByRootDir((currentState) => ({
+        ...currentState,
+        [workspaceRootDir]: value.startsWith('draft:')
+          ? {
+              activeDraftId: value.slice('draft:'.length),
+              activeLayoutId: undefined,
+            }
+          : {
+              activeDraftId: undefined,
+              activeLayoutId: value.slice('layout:'.length),
+            },
+      }))
+      setWorkspaceViewResolvedRootDir(workspaceRootDir)
+    }
+
     if (value.startsWith('draft:')) {
       const nextDraftId = value.slice('draft:'.length)
       const nextDraft =
@@ -922,6 +1706,139 @@ export function Semanticode({
     }
   }
 
+  const handleCanvasMoveEnd = useCallback(
+    (_event: MouseEvent | TouchEvent | null, flowViewport: { x: number; y: number; zoom: number }) => {
+      setViewport(flowViewport)
+    },
+    [setViewport],
+  )
+
+  const handleCanvasEdgeClick = useCallback(
+    (_event: unknown, edge: Edge) => {
+      selectEdge(edge.id)
+      setInspectorOpen(true)
+    },
+    [selectEdge],
+  )
+
+  const handleCanvasNodeClick = useCallback(
+    (event: { metaKey?: boolean; ctrlKey?: boolean; shiftKey?: boolean }, node: Node) => {
+      if (isAnnotationNodeId(node.id)) {
+        return
+      }
+
+      selectNode(node.id, {
+        additive: Boolean(event.metaKey || event.ctrlKey || event.shiftKey),
+      })
+      setInspectorOpen(true)
+    },
+    [selectNode],
+  )
+
+  const handleCanvasNodeDoubleClick = useCallback(
+    (_event: unknown, node: Node) => {
+      if (viewMode === 'filesystem') {
+        const snapshotNode = effectiveSnapshot?.nodes[node.id]
+
+        if (snapshotNode && isDirectoryNode(snapshotNode)) {
+          toggleCollapsedDirectory(snapshotNode.id)
+          return
+        }
+      }
+
+      const cluster = symbolClusterState.clusterByNodeId[node.id]
+
+      if (cluster && cluster.rootNodeId === node.id) {
+        toggleSymbolCluster(cluster.id)
+      }
+    },
+    [effectiveSnapshot, symbolClusterState, toggleCollapsedDirectory, toggleSymbolCluster, viewMode],
+  )
+
+  const handleCanvasNodeDrag = useCallback(
+    (_event: unknown, node: Node) => {
+      setNodes((currentNodes) => {
+        const currentNode = currentNodes.find((candidate) => candidate.id === node.id)
+
+        if (!currentNode) {
+          return currentNodes
+        }
+
+        const hasDirectChildren = currentNodes.some(
+          (candidate) => candidate.parentId === node.id,
+        )
+
+        if (!hasDirectChildren) {
+          containerDragPreviewPositionsRef.current.delete(node.id)
+          return currentNodes
+        }
+
+        const previousPosition =
+          containerDragPreviewPositionsRef.current.get(node.id) ?? currentNode.position
+        const deltaX = node.position.x - previousPosition.x
+        const deltaY = node.position.y - previousPosition.y
+
+        containerDragPreviewPositionsRef.current.set(node.id, {
+          x: node.position.x,
+          y: node.position.y,
+        })
+
+        if (deltaX === 0 && deltaY === 0) {
+          return currentNodes
+        }
+
+        return applyDirectChildDragPreviewOffset(currentNodes, node.id, {
+          x: deltaX,
+          y: deltaY,
+        })
+      })
+    },
+    [setNodes],
+  )
+
+  const handleCanvasNodeDragStop = useCallback(
+    (_event: unknown, node: Node) => {
+      containerDragPreviewPositionsRef.current.delete(node.id)
+      updateLayoutPlacement(
+        node.id,
+        node.position,
+        editableLayout,
+        editableDraftLayout,
+        layouts,
+        draftLayouts,
+        setLayouts,
+        setDraftLayouts,
+        effectiveSnapshot,
+        viewMode,
+      )
+    },
+    [
+      draftLayouts,
+      editableDraftLayout,
+      editableLayout,
+      effectiveSnapshot,
+      layouts,
+      setDraftLayouts,
+      setLayouts,
+      viewMode,
+    ],
+  )
+
+  const handleLayoutSuggestionChange = useCallback(
+    (value: string) => {
+      setLayoutSuggestionText(value)
+    },
+    [],
+  )
+
+  const handleLayoutSuggestionSubmit = useCallback(() => {
+    if (!onSuggestLayout || layoutSuggestionPending) {
+      return
+    }
+
+    void onSuggestLayout(layoutSuggestionText)
+  }, [layoutSuggestionPending, layoutSuggestionText, onSuggestLayout])
+
   if (!effectiveSnapshot) {
     return (
       <section className="cbv-shell">
@@ -933,14 +1850,18 @@ export function Semanticode({
     )
   }
 
+  if (!workspaceViewReady) {
+    return <section className="demo-status">Loading workspace view...</section>
+  }
+
   return (
     <ReactFlowProvider>
       <div
-        className={`cbv-app-shell${desktopHostAvailable ? ' is-desktop-host' : ''}${projectsSidebarOpen ? ' is-projects-open' : ''}`}
+        className={`cbv-app-shell${canManageProjects ? ' is-desktop-host' : ''}${projectsSidebarOpen ? ' is-projects-open' : ''}`}
       >
         <ProjectsSidebar
+          canManageProjects={canManageProjects}
           currentRootDir={effectiveSnapshot.rootDir}
-          desktopHostAvailable={desktopHostAvailable}
           onClose={() => setProjectsSidebarOpen(false)}
           onCloseWorkspace={() => {
             void handleCloseWorkspace()
@@ -961,7 +1882,6 @@ export function Semanticode({
             activeDraft={Boolean(activeDraft)}
             activeLayoutSyncNote={activeLayoutSyncNote}
             compareOverlayActive={compareOverlayActive}
-            isDesktopHost={isDesktopHost}
             layoutActionsPending={layoutActionsPending}
             layoutOptions={layoutOptions}
             onAcceptDraft={
@@ -985,7 +1905,7 @@ export function Semanticode({
             }
             onBuildSemanticEmbeddings={onBuildSemanticEmbeddings}
             onClearCompareOverlay={compareOverlayActive ? handleClearCompareOverlay : undefined}
-            onOpenAgentSettings={() => setAgentSettingsOpen(true)}
+            onOpenAgentSettings={() => setSettingsOpen(true)}
             onOpenWorkspaceSync={
               workspaceSyncStatus ? () => setWorkspaceSyncOpen(true) : undefined
             }
@@ -1008,14 +1928,13 @@ export function Semanticode({
             onSelectLayoutValue={handleLayoutSelectionChange}
             onStartPreprocessing={onStartPreprocessing}
             onToggleProjectsSidebar={
-              isDesktopHost
-                ? () => setProjectsSidebarOpen((current) => !current)
-                : undefined
+              () => setProjectsSidebarOpen((current) => !current)
             }
             preprocessingStatus={formattedPreprocessingStatus}
             projectsSidebarOpen={projectsSidebarOpen}
             selectedLayoutValue={selectedLayoutValue}
             showCompareAction={Boolean(currentCompareSource)}
+            workingSetSummary={workingSetSummary}
             workspaceName={workspaceName}
             workspaceRootDir={effectiveSnapshot.rootDir}
           />
@@ -1028,131 +1947,52 @@ export function Semanticode({
               '--cbv-inspector-width': `${(inspectorWidthRatio * 100).toFixed(2)}%`,
             } as CSSProperties}
           >
-	          <section className="cbv-canvas">
-	            <div className="cbv-canvas-overlays">
-                <div className="cbv-canvas-layer-toggles">
-	              {visibleLayerToggles.map((layer) => (
-	                <LayerToggle
-	                  active={graphLayers[layer]}
-	                  key={layer}
-	                  label={getLayerLabel(layer, viewMode)}
-	                  onClick={() => toggleGraphLayer(layer)}
-	                />
-	              ))}
-                </div>
-	              {viewMode === 'symbols' ? (
-	                <div className="cbv-canvas-legend">
-	                  <SymbolKindLegend />
-	                </div>
-	              ) : null}
-              </div>
-            <ReactFlow
-              defaultViewport={viewport}
+	          <MemoizedCanvasViewport
+              denseCanvasMode={denseCanvasMode}
               edges={edges}
-              fitView
-              minZoom={0.2}
-              nodeTypes={nodeTypes}
+              graphLayers={graphLayers}
+              layoutSuggestionError={layoutSuggestionError}
+              layoutSuggestionPending={layoutSuggestionPending}
+              layoutSuggestionText={layoutSuggestionText}
               nodes={nodes}
-              onlyRenderVisibleElements
-              onInit={setFlowInstance}
-              onEdgeClick={(_, edge) => {
-                selectEdge(edge.id)
-                setInspectorOpen(true)
-              }}
+              onEdgeClick={handleCanvasEdgeClick}
               onEdgesChange={onEdgesChange}
-              onMoveEnd={(_, flowViewport) => {
-                setViewport(flowViewport)
-              }}
-              onNodeClick={(event, node) => {
-                if (isAnnotationNodeId(node.id)) {
-                  return
-                }
-
-                selectNode(node.id, {
-                  additive: event.metaKey || event.ctrlKey || event.shiftKey,
-                })
-                setInspectorOpen(true)
-              }}
-              onNodeDoubleClick={(_, node) => {
-                const cluster = symbolClusterState.clusterByNodeId[node.id]
-
-                if (cluster && cluster.rootNodeId === node.id) {
-                  toggleSymbolCluster(cluster.id)
-                }
-              }}
-              onNodeDragStop={(_, node) => {
-                updateLayoutPlacement(
-                  node.id,
-                  node.position,
-                  editableLayout,
-                  editableDraftLayout,
-                  layouts,
-                  draftLayouts,
-                  setLayouts,
-                  setDraftLayouts,
-                )
-              }}
+              onInit={setFlowInstance}
+              onLayoutSuggestionChange={handleLayoutSuggestionChange}
+              onLayoutSuggestionSubmit={handleLayoutSuggestionSubmit}
+              onMoveEnd={handleCanvasMoveEnd}
+              onNodeClick={handleCanvasNodeClick}
+              onNodeDoubleClick={handleCanvasNodeDoubleClick}
+              onNodeDrag={handleCanvasNodeDrag}
+              onNodeDragStop={handleCanvasNodeDragStop}
               onNodesChange={onNodesChange}
-            >
-              <Background
-                color="#d8d1c3"
-                gap={24}
-                size={1}
-                variant={BackgroundVariant.Dots}
-              />
-              <Controls showInteractive={false} />
-              {denseCanvasMode ? null : (
-                <MiniMap
-                  className="cbv-minimap"
-                  maskColor="rgba(44, 35, 27, 0.16)"
-                  pannable
-                  zoomable
-                />
-              )}
-            </ReactFlow>
-
-            {onSuggestLayout ? (
-              <form
-                className={`cbv-layout-suggestion${layoutSuggestionPending ? ' is-pending' : ''}`}
-                onSubmit={(event) => {
-                  event.preventDefault()
-
-                  if (!onSuggestLayout || layoutSuggestionPending) {
-                    return
-                  }
-
-                  void onSuggestLayout(layoutSuggestionText)
-                }}
-              >
-                <div className="cbv-layout-suggestion-shell">
-                  <input
-                    aria-label="Suggest layout"
-                    className="cbv-layout-suggestion-input"
-                    disabled={layoutSuggestionPending}
-                    onChange={(event) => {
-                      setLayoutSuggestionText(event.target.value)
-                    }}
-                    placeholder="Suggest layout"
-                    value={layoutSuggestionText}
-                  />
-                  <button
-                    className="cbv-layout-suggestion-submit"
-                    disabled={layoutSuggestionPending || !layoutSuggestionText.trim()}
-                    type="submit"
-                  >
-                    {layoutSuggestionPending ? 'Working…' : 'Go'}
-                  </button>
-                </div>
-                {layoutSuggestionPending ? (
-                  <p className="cbv-layout-suggestion-status">
-                    Generating a new layout draft…
-                  </p>
-                ) : layoutSuggestionError ? (
-                  <p className="cbv-layout-suggestion-error">{layoutSuggestionError}</p>
-                ) : null}
-              </form>
-            ) : null}
-          </section>
+              onSemanticSearchChange={setSemanticSearchQuery}
+              onSemanticSearchClear={() => {
+                setSemanticSearchQuery('')
+                setSemanticSearchRankedMatches([])
+                setSemanticSearchError(null)
+                setSemanticSearchPending(false)
+              }}
+              onSemanticSearchLimitChange={setSemanticSearchMatchLimit}
+              onSemanticSearchModeChange={setSemanticSearchMode}
+              onSemanticSearchStrictnessChange={setSemanticSearchStrictness}
+              onToggleLayer={toggleGraphLayer}
+              semanticSearchAvailable={semanticSearchAvailable}
+              semanticSearchGroupSearchAvailable={semanticGroupSearchAvailable}
+              semanticSearchHelperText={semanticSearchStatus.helper}
+              semanticSearchLimit={semanticSearchMatchLimit}
+              semanticSearchMode={semanticSearchMode}
+              semanticSearchPending={semanticSearchPending}
+              semanticSearchQuery={semanticSearchQuery}
+              semanticSearchStrictness={semanticSearchStrictness}
+              semanticSearchResultCount={semanticSearchStatus.resultCount}
+              showLayoutSuggestion={Boolean(onSuggestLayout)}
+              showSemanticSearch={viewMode === 'symbols' && semanticSearchAvailable}
+              themeMode={themeMode}
+              viewMode={viewMode}
+              viewport={viewport}
+              visibleLayerToggles={visibleLayerToggles}
+            />
 
           {inspectorOpen ? (
             <button
@@ -1177,53 +2017,64 @@ export function Semanticode({
                 inspectorBodyRef={inspectorBodyRef}
                 inspectorTab={inspectorTab}
                 onAgentRunSettled={onAgentRunSettled}
+                onAdoptInspectorContextAsWorkingSet={adoptSelectionAsWorkingSet}
                 onClearCompareOverlay={handleClearCompareOverlay}
+                onClearWorkingSet={clearWorkingSet}
                 onClose={() => setInspectorOpen(false)}
-                onOpenAgentSettings={() => setAgentSettingsOpen(true)}
+                onOpenAgentSettings={() => setSettingsOpen(true)}
                 onSetInspectorTab={setInspectorTab}
                 preprocessedWorkspaceContext={preprocessedWorkspaceContext}
                 resolvedCompareOverlay={resolvedCompareOverlay}
                 selectedEdge={selectedEdge}
                 selectedFile={selectedFile}
                 selectedFiles={selectedFiles}
+                selectedLayoutGroup={selectedLayoutGroup}
+                selectedLayoutGroupNearbySymbols={selectedGroupNearbySymbols}
+                selectedLayoutGroupPrototype={selectedGroupPrototype}
                 selectedNode={selectedNode}
                 selectedSymbol={selectedSymbol}
                 selectedSymbols={selectedSymbols}
+                themeMode={themeMode}
+                workingSet={workingSet.nodeIds.length > 0 ? workingSet : null}
+                workingSetContext={workingSetContext}
                 workspaceProfile={workspaceProfile}
               />
             </Suspense>
           ) : null}
         </div>
-        {agentSettingsOpen ? (
+        {settingsOpen ? (
           <div
             className="cbv-modal-backdrop"
-            onClick={() => setAgentSettingsOpen(false)}
+            onClick={() => setSettingsOpen(false)}
             role="presentation"
           >
             <section
-              aria-label="Agent settings"
+              aria-label="General settings"
               className="cbv-modal"
               onClick={(event) => event.stopPropagation()}
             >
               <div className="cbv-modal-header">
                 <div>
                   <p className="cbv-eyebrow">Settings</p>
-                  <strong>Agent Settings</strong>
+                  <strong>General Settings</strong>
                 </div>
                 <button
-                  aria-label="Close agent settings"
+                  aria-label="Close settings"
                   className="cbv-inspector-close"
-                  onClick={() => setAgentSettingsOpen(false)}
+                  onClick={() => setSettingsOpen(false)}
                   type="button"
                 >
                   ×
                 </button>
               </div>
-              <Suspense fallback={<AgentSettingsFallback />}>
-                <LazyAgentPanel
+              <Suspense fallback={<GeneralSettingsFallback />}>
+                <LazyGeneralSettingsPanel
                   desktopHostAvailable={isDesktopHost}
+                  onToggleDarkMode={() => {
+                    setThemeMode((current) => (current === 'dark' ? 'light' : 'dark'))
+                  }}
                   preprocessedWorkspaceContext={preprocessedWorkspaceContext}
-                  settingsOnly
+                  themeMode={themeMode}
                   workspaceProfile={workspaceProfile}
                 />
               </Suspense>
@@ -1238,11 +2089,313 @@ export function Semanticode({
             status={workspaceSyncStatus}
           />
         ) : null}
+        <WorkspaceAgentActivity
+          desktopHostAvailable={isDesktopHost}
+          preprocessingStatus={preprocessingStatus}
+          workingSetSummary={workingSetSummary}
+        />
       </section>
       </div>
     </ReactFlowProvider>
   )
 }
+
+interface CanvasViewportProps {
+  denseCanvasMode: boolean
+  edges: Edge[]
+  graphLayers: Record<GraphLayerKey, boolean>
+  layoutSuggestionError: string | null
+  layoutSuggestionPending: boolean
+  layoutSuggestionText: string
+  nodes: Node[]
+  onEdgeClick: (_event: unknown, edge: Edge) => void
+  onEdgesChange: ReturnType<typeof useEdgesState<Edge>>[2]
+  onInit: (instance: ReactFlowInstance<Node, Edge>) => void
+  onLayoutSuggestionChange: (value: string) => void
+  onLayoutSuggestionSubmit: () => void
+  onMoveEnd: (_event: MouseEvent | TouchEvent | null, flowViewport: { x: number; y: number; zoom: number }) => void
+  onNodeClick: (
+    event: { metaKey?: boolean; ctrlKey?: boolean; shiftKey?: boolean },
+    node: Node,
+  ) => void
+  onNodeDoubleClick: (_event: unknown, node: Node) => void
+  onNodeDrag: (_event: unknown, node: Node) => void
+  onNodeDragStop: (_event: unknown, node: Node) => void
+  onNodesChange: ReturnType<typeof useNodesState<Node>>[2]
+  onSemanticSearchChange: (value: string) => void
+  onSemanticSearchClear: () => void
+  onSemanticSearchLimitChange: (value: number) => void
+  onSemanticSearchModeChange: (mode: SemanticSearchMode) => void
+  onSemanticSearchStrictnessChange: (value: number) => void
+  onToggleLayer: (layer: GraphLayerKey) => void
+  semanticSearchAvailable: boolean
+  semanticSearchGroupSearchAvailable: boolean
+  semanticSearchHelperText: string
+  semanticSearchLimit: number
+  semanticSearchMode: SemanticSearchMode
+  semanticSearchPending: boolean
+  semanticSearchQuery: string
+  semanticSearchResultCount: number
+  semanticSearchStrictness: number
+  showLayoutSuggestion: boolean
+  showSemanticSearch: boolean
+  themeMode: ThemeMode
+  viewMode: VisualizerViewMode
+  viewport: { x: number; y: number; zoom: number }
+  visibleLayerToggles: GraphLayerKey[]
+}
+
+const MemoizedCanvasViewport = memo(function CanvasViewport({
+  denseCanvasMode,
+  edges,
+  graphLayers,
+  layoutSuggestionError,
+  layoutSuggestionPending,
+  layoutSuggestionText,
+  nodes,
+  onEdgeClick,
+  onEdgesChange,
+  onInit,
+  onLayoutSuggestionChange,
+  onLayoutSuggestionSubmit,
+  onMoveEnd,
+  onNodeClick,
+  onNodeDoubleClick,
+  onNodeDrag,
+  onNodeDragStop,
+  onNodesChange,
+  onSemanticSearchChange,
+  onSemanticSearchClear,
+  onSemanticSearchLimitChange,
+  onSemanticSearchModeChange,
+  onSemanticSearchStrictnessChange,
+  onToggleLayer,
+  semanticSearchAvailable,
+  semanticSearchGroupSearchAvailable,
+  semanticSearchHelperText,
+  semanticSearchLimit,
+  semanticSearchMode,
+  semanticSearchPending,
+  semanticSearchQuery,
+  semanticSearchResultCount,
+  semanticSearchStrictness,
+  showLayoutSuggestion,
+  showSemanticSearch,
+  themeMode,
+  viewMode,
+  viewport,
+  visibleLayerToggles,
+}: CanvasViewportProps) {
+  const canvasDotColor = themeMode === 'dark' ? '#4f5f74' : '#d8d1c3'
+  const minimapMaskColor =
+    themeMode === 'dark' ? 'rgba(7, 9, 12, 0.42)' : 'rgba(44, 35, 27, 0.16)'
+  const minimapBgColor = themeMode === 'dark' ? '#1b2028' : '#f7f1e5'
+  const minimapNodeColor = (node: Node) => {
+    const data =
+      node.data && typeof node.data === 'object'
+        ? (node.data as Record<string, unknown>)
+        : null
+
+    if (node.type === 'annotationNode') {
+      return themeMode === 'dark' ? '#5c6573' : '#c7bda9'
+    }
+
+    if (data?.groupContainer) {
+      return themeMode === 'dark' ? '#5a5249' : '#cab790'
+    }
+
+    if (data?.container) {
+      return themeMode === 'dark' ? '#4a5667' : '#d2c5b2'
+    }
+
+    if (node.type === 'symbolNode') {
+      return themeMode === 'dark' ? '#57a395' : '#8fb7ac'
+    }
+
+    return themeMode === 'dark' ? '#667487' : '#b7ac9e'
+  }
+
+  return (
+    <section className="cbv-canvas">
+      <div className="cbv-canvas-overlays">
+        <div className="cbv-canvas-left-tools">
+          {showSemanticSearch ? (
+            <form
+              className={`cbv-semantic-search${semanticSearchPending ? ' is-pending' : ''}${semanticSearchAvailable ? '' : ' is-disabled'}`}
+              onSubmit={(event) => event.preventDefault()}
+            >
+              <div className="cbv-semantic-search-mode-toggle" role="tablist" aria-label="Semantic search mode">
+                <button
+                  aria-pressed={semanticSearchMode === 'symbols'}
+                  className={`cbv-semantic-search-mode${semanticSearchMode === 'symbols' ? ' is-active' : ''}`}
+                  onClick={() => onSemanticSearchModeChange('symbols')}
+                  type="button"
+                >
+                  Symbols
+                </button>
+                <button
+                  aria-pressed={semanticSearchMode === 'groups'}
+                  className={`cbv-semantic-search-mode${semanticSearchMode === 'groups' ? ' is-active' : ''}`}
+                  disabled={!semanticSearchGroupSearchAvailable}
+                  onClick={() => onSemanticSearchModeChange('groups')}
+                  type="button"
+                >
+                  Folders
+                </button>
+              </div>
+              <div className="cbv-semantic-search-shell">
+                <input
+                  aria-label="Search semantic projection"
+                  className="cbv-semantic-search-input"
+                  disabled={!semanticSearchAvailable}
+                  onChange={(event) => {
+                    onSemanticSearchChange(event.target.value)
+                  }}
+                  placeholder={
+                    semanticSearchAvailable
+                      ? semanticSearchMode === 'groups'
+                        ? 'Search semantic folders'
+                        : 'Search semantic symbols'
+                      : 'Build embeddings to search'
+                  }
+                  value={semanticSearchQuery}
+                />
+                {semanticSearchQuery ? (
+                  <button
+                    aria-label="Clear semantic search"
+                    className="cbv-semantic-search-clear"
+                    onClick={onSemanticSearchClear}
+                    type="button"
+                  >
+                    ×
+                  </button>
+                ) : null}
+              </div>
+              <div className="cbv-semantic-search-controls">
+                <label className="cbv-semantic-search-slider">
+                  <span>Matches</span>
+                  <strong>{semanticSearchLimit}</strong>
+                  <input
+                    disabled={!semanticSearchAvailable}
+                    max={SEMANTIC_SEARCH_MAX_LIMIT}
+                    min={SEMANTIC_SEARCH_MIN_LIMIT}
+                    onChange={(event) => {
+                      onSemanticSearchLimitChange(Number(event.target.value))
+                    }}
+                    type="range"
+                    value={semanticSearchLimit}
+                  />
+                </label>
+                <label className="cbv-semantic-search-slider">
+                  <span>Proximity</span>
+                  <strong>{semanticSearchStrictness}</strong>
+                  <input
+                    disabled={!semanticSearchAvailable}
+                    max={100}
+                    min={0}
+                    onChange={(event) => {
+                      onSemanticSearchStrictnessChange(Number(event.target.value))
+                    }}
+                    type="range"
+                    value={semanticSearchStrictness}
+                  />
+                </label>
+              </div>
+              <p
+                className={`cbv-semantic-search-meta${semanticSearchResultCount > 0 ? ' has-results' : ''}${!semanticSearchAvailable ? ' is-disabled' : ''}`}
+              >
+                {semanticSearchHelperText}
+              </p>
+            </form>
+          ) : null}
+          <div className="cbv-canvas-layer-toggles">
+            {visibleLayerToggles.map((layer) => (
+              <LayerToggle
+                active={graphLayers[layer]}
+                key={layer}
+                label={getLayerLabel(layer, viewMode)}
+                onClick={() => onToggleLayer(layer)}
+              />
+            ))}
+          </div>
+        </div>
+        {viewMode === 'symbols' ? (
+          <div className="cbv-canvas-legend">
+            <SymbolKindLegend />
+          </div>
+        ) : null}
+      </div>
+      <ReactFlow
+        defaultViewport={viewport}
+        edges={edges}
+        fitView
+        maxZoom={4}
+        minZoom={0.1}
+        nodeTypes={nodeTypes}
+        nodes={nodes}
+        onlyRenderVisibleElements
+        onEdgeClick={onEdgeClick}
+        onEdgesChange={onEdgesChange}
+        onInit={onInit}
+        onMoveEnd={onMoveEnd}
+        onNodeClick={onNodeClick}
+        onNodeDoubleClick={onNodeDoubleClick}
+        onNodeDrag={onNodeDrag}
+        onNodeDragStop={onNodeDragStop}
+        onNodesChange={onNodesChange}
+        proOptions={{ hideAttribution: true }}
+      >
+        <Background color={canvasDotColor} gap={24} size={1} variant={BackgroundVariant.Dots} />
+        <Controls showInteractive={false} />
+        {denseCanvasMode ? null : (
+          <MiniMap
+            bgColor={minimapBgColor}
+            className="cbv-minimap"
+            maskColor={minimapMaskColor}
+            nodeColor={minimapNodeColor}
+            pannable
+            zoomable
+          />
+        )}
+      </ReactFlow>
+
+      {showLayoutSuggestion ? (
+        <form
+          className={`cbv-layout-suggestion${layoutSuggestionPending ? ' is-pending' : ''}`}
+          onSubmit={(event) => {
+            event.preventDefault()
+            onLayoutSuggestionSubmit()
+          }}
+        >
+          <div className="cbv-layout-suggestion-shell">
+            <input
+              aria-label="Suggest layout"
+              className="cbv-layout-suggestion-input"
+              disabled={layoutSuggestionPending}
+              onChange={(event) => {
+                onLayoutSuggestionChange(event.target.value)
+              }}
+              placeholder="Suggest layout"
+              value={layoutSuggestionText}
+            />
+            <button
+              className="cbv-layout-suggestion-submit"
+              disabled={layoutSuggestionPending || !layoutSuggestionText.trim()}
+              type="submit"
+            >
+              {layoutSuggestionPending ? 'Working…' : 'Go'}
+            </button>
+          </div>
+          {layoutSuggestionPending ? (
+            <p className="cbv-layout-suggestion-status">Generating a new layout draft…</p>
+          ) : layoutSuggestionError ? (
+            <p className="cbv-layout-suggestion-error">{layoutSuggestionError}</p>
+          ) : null}
+        </form>
+      ) : null}
+    </section>
+  )
+})
 
 function InspectorFallback({
   header,
@@ -1278,11 +2431,11 @@ function InspectorFallback({
   )
 }
 
-function AgentSettingsFallback() {
+function GeneralSettingsFallback() {
   return (
     <div className="cbv-empty">
-      <h2>Loading agent settings…</h2>
-      <p>Preparing the agent configuration panel.</p>
+      <h2>Loading settings…</h2>
+      <p>Preparing the appearance and agent configuration panel.</p>
     </div>
   )
 }
@@ -1349,6 +2502,10 @@ function formatEmbeddingActionLabel(status: PreprocessingStatus) {
 
 function formatPreprocessingStatusTitle(status: PreprocessingStatus) {
   const parts = [formatPreprocessingStatusLabel(status)]
+
+  if (status.currentItemPath) {
+    parts.push(`Current: ${status.currentItemPath}`)
+  }
 
   if (status.updatedAt) {
     parts.push(`Updated ${new Date(status.updatedAt).toLocaleTimeString()}`)
@@ -1571,6 +2728,49 @@ function collectFileChildren(
   }
 }
 
+function getCollapsedFilesystemDescendantIds(
+  snapshot: CodebaseSnapshot,
+  collapsedDirectoryIds: Set<string>,
+) {
+  const hiddenNodeIds = new Set<string>()
+
+  for (const directoryId of collapsedDirectoryIds) {
+    const node = snapshot.nodes[directoryId]
+
+    if (!node || !isDirectoryNode(node)) {
+      continue
+    }
+
+    for (const childId of node.childIds) {
+      collectDirectoryDescendantIds(childId, snapshot, hiddenNodeIds)
+    }
+  }
+
+  return hiddenNodeIds
+}
+
+function collectDirectoryDescendantIds(
+  nodeId: string,
+  snapshot: CodebaseSnapshot,
+  hiddenNodeIds: Set<string>,
+) {
+  const node = snapshot.nodes[nodeId]
+
+  if (!node || isSymbolNode(node) || hiddenNodeIds.has(nodeId)) {
+    return
+  }
+
+  hiddenNodeIds.add(nodeId)
+
+  if (!isDirectoryNode(node)) {
+    return
+  }
+
+  for (const childId of node.childIds) {
+    collectDirectoryDescendantIds(childId, snapshot, hiddenNodeIds)
+  }
+}
+
 function buildFlowModel(
   snapshot: CodebaseSnapshot,
   layout: LayoutSpec,
@@ -1579,8 +2779,16 @@ function buildFlowModel(
   symbolClusterState: SymbolClusterState,
   expandedClusterIds: Set<string>,
   expandedClusterLayouts: Map<string, ExpandedClusterLayout>,
+  filesystemContainerLayouts: Map<string, FilesystemContainerLayout>,
+  layoutGroupContainers: Map<string, LayoutGroupContainer>,
+  collapsedDirectoryIds: Set<string>,
+  toggleCollapsedDirectory: (nodeId: string) => void,
 ) {
   const hiddenNodeIds = new Set(layout.hiddenNodeIds)
+  const hiddenFilesystemDescendantIds =
+    viewMode === 'filesystem'
+      ? getCollapsedFilesystemDescendantIds(snapshot, collapsedDirectoryIds)
+      : new Set<string>()
   const annotationNodes = layout.annotations.map((annotation) => ({
     id: getAnnotationNodeId(annotation.id),
     type: 'annotationNode',
@@ -1595,6 +2803,31 @@ function buildFlowModel(
     data: {
       label: annotation.label,
       dimmed: false,
+    },
+  } satisfies Node))
+  const groupNodes = Array.from(layoutGroupContainers.values()).map((group) => ({
+    id: getLayoutGroupNodeId(group.id),
+    type: 'codebaseNode',
+    position: {
+      x: group.x,
+      y: group.y,
+    },
+    width: group.width,
+    height: group.height,
+    draggable: true,
+    selectable: true,
+    data: {
+      title: group.title,
+      subtitle:
+        group.nodeIds.length === 1
+          ? '1 node'
+          : `${group.nodeIds.length} nodes`,
+      kind: 'directory',
+      tags: [],
+      container: true,
+      groupContainer: true,
+      dimmed: false,
+      highlighted: false,
     },
   } satisfies Node))
 
@@ -1614,20 +2847,26 @@ function buildFlowModel(
         return !cluster || cluster.rootNodeId === node.id || expandedClusterIds.has(cluster.id)
       }
 
-      return node.kind !== 'symbol'
+      return node.kind !== 'symbol' && !hiddenFilesystemDescendantIds.has(node.id)
     })
+    .sort((left, right) => compareFlowNodeOrder(left, right, viewMode))
     .map((node) =>
       buildFlowNode(
         node,
         layout.placements[node.id],
         snapshot,
+        layout,
         viewMode,
         symbolClusterState,
         expandedClusterIds,
         expandedClusterLayouts,
+        filesystemContainerLayouts,
+        layoutGroupContainers,
+        collapsedDirectoryIds,
+        toggleCollapsedDirectory,
       ),
     )
-  const nodes = [...annotationNodes, ...codeNodes]
+  const nodes = [...annotationNodes, ...groupNodes, ...codeNodes]
   const visibleNodeIds = new Set(codeNodes.map((node) => node.id))
   const edges: Edge[] = []
 
@@ -1790,14 +3029,47 @@ function applyFlowEdgePresentation(
   return changed ? nextEdges : edges
 }
 
+function applyDirectChildDragPreviewOffset(
+  nodes: Node[],
+  containerNodeId: string,
+  delta: XYPosition,
+) {
+  if (delta.x === 0 && delta.y === 0) {
+    return nodes
+  }
+
+  let changed = false
+  const nextNodes = nodes.map((node) => {
+    if (node.parentId !== containerNodeId) {
+      return node
+    }
+
+    changed = true
+    return {
+      ...node,
+      position: {
+        x: node.position.x + delta.x,
+        y: node.position.y + delta.y,
+      },
+    }
+  })
+
+  return changed ? nextNodes : nodes
+}
+
 function buildFlowNode(
   node: ProjectNode,
   placement: LayoutSpec['placements'][string],
   snapshot: CodebaseSnapshot,
+  layout: LayoutSpec,
   viewMode: VisualizerViewMode,
   symbolClusterState: SymbolClusterState,
   expandedClusterIds: Set<string>,
   expandedClusterLayouts: Map<string, ExpandedClusterLayout>,
+  filesystemContainerLayouts: Map<string, FilesystemContainerLayout>,
+  layoutGroupContainers: Map<string, LayoutGroupContainer>,
+  collapsedDirectoryIds: Set<string>,
+  toggleCollapsedDirectory: (nodeId: string) => void,
 ): Node {
   if (viewMode === 'symbols' && isSymbolNode(node)) {
     const cluster = symbolClusterState.clusterByNodeId[node.id]
@@ -1855,23 +3127,100 @@ function buildFlowNode(
     }
   }
 
+  const layoutGroupContainer = layoutGroupContainers.get(node.id)
+  const groupParentContainer = getLayoutGroupParentContainer(node.id, layoutGroupContainers)
+  const filesystemContainerLayout =
+    viewMode === 'filesystem' && layout.strategy === 'structural' && isDirectoryNode(node)
+      ? filesystemContainerLayouts.get(node.id)
+      : undefined
+  const isCollapsedDirectory =
+    viewMode === 'filesystem' &&
+    layout.strategy === 'structural' &&
+    isDirectoryNode(node) &&
+    collapsedDirectoryIds.has(node.id)
+  const filesystemParent =
+    viewMode === 'filesystem' &&
+    layout.strategy === 'structural' &&
+    !groupParentContainer &&
+    !isSymbolNode(node) &&
+    node.parentId
+      ? snapshot.nodes[node.parentId]
+      : null
+  const filesystemParentPlacement =
+    viewMode === 'filesystem' && filesystemParent && !isSymbolNode(filesystemParent)
+      ? layout.placements[filesystemParent.id]
+      : null
+  const isContainedFilesystemNode = Boolean(
+    viewMode === 'filesystem' &&
+      layout.strategy === 'structural' &&
+      filesystemParent &&
+      isDirectoryNode(filesystemParent) &&
+      filesystemParentPlacement,
+  )
+  const groupParentPosition = groupParentContainer
+    ? { x: groupParentContainer.x, y: groupParentContainer.y }
+    : null
+
   return {
     id: node.id,
     type: 'codebaseNode',
     position: {
-      x: placement.x,
-      y: placement.y,
+      x:
+        groupParentPosition
+          ? placement.x - groupParentPosition.x
+          : isContainedFilesystemNode && filesystemParentPlacement
+          ? placement.x - filesystemParentPlacement.x
+          : placement.x,
+      y:
+        groupParentPosition
+          ? placement.y - groupParentPosition.y
+          : isContainedFilesystemNode && filesystemParentPlacement
+          ? placement.y - filesystemParentPlacement.y
+          : placement.y,
     },
     sourcePosition: Position.Right,
     targetPosition: Position.Left,
-    width: placement.width,
-    height: placement.height,
+    width:
+      (isCollapsedDirectory ? placement.width ?? 240 : filesystemContainerLayout?.width) ??
+      placement.width ??
+      (node.kind === 'directory' ? 240 : 224),
+    height:
+      (isCollapsedDirectory ? placement.height ?? 72 : filesystemContainerLayout?.height) ??
+      placement.height ??
+      (node.kind === 'directory' ? 68 : 54),
     draggable: true,
+    parentId:
+      groupParentContainer
+        ? getLayoutGroupNodeId(groupParentContainer.id)
+        : isContainedFilesystemNode && filesystemParent
+          ? filesystemParent.id
+          : undefined,
+    extent: groupParentContainer || isContainedFilesystemNode ? 'parent' : undefined,
     data: {
       title: node.name,
       subtitle: getNodeSubtitle(node),
       kind: node.kind,
       tags: node.tags.slice(0, 3),
+      container: Boolean(
+        (filesystemContainerLayout || layoutGroupContainer) && node.kind === 'directory',
+      ),
+      collapsible:
+        viewMode === 'filesystem' &&
+        layout.strategy === 'structural' &&
+        isDirectoryNode(node) &&
+        node.childIds.some((childId) => {
+          const childNode = snapshot.nodes[childId]
+          return Boolean(childNode && !isSymbolNode(childNode))
+        }),
+      collapsed: isCollapsedDirectory,
+      onToggleCollapse:
+        viewMode === 'filesystem' &&
+        layout.strategy === 'structural' &&
+        isDirectoryNode(node)
+          ? () => {
+              toggleCollapsedDirectory(node.id)
+            }
+          : undefined,
       dimmed: false,
       highlighted: false,
     },
@@ -1896,6 +3245,177 @@ function getContainsEdges(
       snapshot.nodes[edge.target]?.kind === 'symbol'
     )
   })
+}
+
+function buildFilesystemContainerLayouts(
+  snapshot: CodebaseSnapshot | null,
+  layout: LayoutSpec | null,
+  viewMode: VisualizerViewMode,
+  collapsedDirectoryIds: Set<string>,
+) {
+  const layouts = new Map<string, FilesystemContainerLayout>()
+
+  if (!snapshot || !layout || viewMode !== 'filesystem') {
+    return layouts
+  }
+
+  const hiddenNodeIds = new Set(layout.hiddenNodeIds)
+
+  const computeLayout = (nodeId: string): FilesystemContainerLayout | null => {
+    const existing = layouts.get(nodeId)
+
+    if (existing) {
+      return existing
+    }
+
+    const node = snapshot.nodes[nodeId]
+    const placement = layout.placements[nodeId]
+
+    if (!node || !placement || !isDirectoryNode(node) || hiddenNodeIds.has(node.id)) {
+      return null
+    }
+
+    let width = placement.width ?? 240
+    let height = placement.height ?? 68
+    const childNodeIds: string[] = []
+
+    for (const childId of node.childIds) {
+      const childNode = snapshot.nodes[childId]
+      const childPlacement = layout.placements[childId]
+
+      if (!childNode || !childPlacement || hiddenNodeIds.has(childId) || isSymbolNode(childNode)) {
+        continue
+      }
+
+      childNodeIds.push(childId)
+      const childContainerLayout =
+        isDirectoryNode(childNode) && !collapsedDirectoryIds.has(childId)
+          ? computeLayout(childId)
+          : null
+      const childWidth =
+        childContainerLayout?.width ??
+        childPlacement.width ??
+        (childNode.kind === 'directory' ? 240 : 224)
+      const childHeight =
+        childContainerLayout?.height ??
+        childPlacement.height ??
+        (childNode.kind === 'directory' ? 68 : 54)
+      const relativeRight = childPlacement.x - placement.x + childWidth
+      const relativeBottom = childPlacement.y - placement.y + childHeight
+
+      width = Math.max(width, relativeRight + FILESYSTEM_CONTAINER_PADDING_RIGHT)
+      height = Math.max(height, relativeBottom + FILESYSTEM_CONTAINER_PADDING_BOTTOM)
+    }
+
+    const nextLayout: FilesystemContainerLayout = {
+      width,
+      height,
+      childNodeIds,
+    }
+
+    layouts.set(nodeId, nextLayout)
+    return nextLayout
+  }
+
+  for (const rootId of snapshot.rootIds) {
+    computeLayout(rootId)
+  }
+
+  return layouts
+}
+
+function buildLayoutGroupContainers(
+  snapshot: CodebaseSnapshot | null,
+  layout: LayoutSpec | null,
+  viewMode: VisualizerViewMode,
+) {
+  const containers = new Map<string, LayoutGroupContainer>()
+
+  if (!snapshot || !layout || layout.strategy !== 'agent') {
+    return containers
+  }
+
+  const hiddenNodeIds = new Set(layout.hiddenNodeIds)
+
+  for (const group of layout.groups) {
+    const memberPlacements = group.nodeIds
+      .map((nodeId) => {
+        const node = snapshot.nodes[nodeId]
+        const placement = layout.placements[nodeId]
+
+        if (
+          !node ||
+          !placement ||
+          hiddenNodeIds.has(nodeId) ||
+          (viewMode === 'symbols' ? !isSymbolNode(node) : node.kind === 'symbol')
+        ) {
+          return null
+        }
+
+        const width = placement.width ?? getDefaultNodeWidth(node)
+        const height = placement.height ?? getDefaultNodeHeight(node)
+
+        return {
+          nodeId,
+          x: placement.x,
+          y: placement.y,
+          width,
+          height,
+        }
+      })
+      .filter((placement): placement is NonNullable<typeof placement> => Boolean(placement))
+
+    if (memberPlacements.length === 0) {
+      continue
+    }
+
+    const minX = Math.min(...memberPlacements.map((placement) => placement.x))
+    const minY = Math.min(...memberPlacements.map((placement) => placement.y))
+    const maxRight = Math.max(
+      ...memberPlacements.map((placement) => placement.x + placement.width),
+    )
+    const maxBottom = Math.max(
+      ...memberPlacements.map((placement) => placement.y + placement.height),
+    )
+
+    containers.set(group.id, {
+      id: group.id,
+      title: group.title,
+      x: minX - LAYOUT_GROUP_PADDING_X,
+      y: minY - LAYOUT_GROUP_PADDING_TOP,
+      width: maxRight - minX + LAYOUT_GROUP_PADDING_X * 2,
+      height:
+        maxBottom - minY + LAYOUT_GROUP_PADDING_TOP + LAYOUT_GROUP_PADDING_BOTTOM,
+      nodeIds: memberPlacements.map((placement) => placement.nodeId),
+    })
+  }
+
+  return containers
+}
+
+function getLayoutGroupParentContainer(
+  nodeId: string,
+  containers: Map<string, LayoutGroupContainer>,
+) {
+  for (const container of containers.values()) {
+    if (container.nodeIds.includes(nodeId)) {
+      return container
+    }
+  }
+
+  return null
+}
+
+function getLayoutGroupNodeId(groupId: string) {
+  return `${VIRTUAL_LAYOUT_GROUP_NODE_PREFIX}${groupId}`
+}
+
+function isLayoutGroupNodeId(nodeId: string) {
+  return nodeId.startsWith(VIRTUAL_LAYOUT_GROUP_NODE_PREFIX)
+}
+
+function getLayoutGroupIdFromNodeId(nodeId: string) {
+  return nodeId.slice(VIRTUAL_LAYOUT_GROUP_NODE_PREFIX.length)
 }
 
 function buildFlowEdge(
@@ -2452,6 +3972,35 @@ function getFileNodeId(
   return null
 }
 
+function compareFlowNodeOrder(
+  left: ProjectNode,
+  right: ProjectNode,
+  viewMode: VisualizerViewMode,
+) {
+  if (viewMode === 'filesystem') {
+    const leftDepth = getFilesystemNodeDepth(left)
+    const rightDepth = getFilesystemNodeDepth(right)
+
+    if (leftDepth !== rightDepth) {
+      return leftDepth - rightDepth
+    }
+
+    if (left.kind !== right.kind) {
+      return left.kind === 'directory' ? -1 : 1
+    }
+  }
+
+  return left.id.localeCompare(right.id)
+}
+
+function getFilesystemNodeDepth(node: ProjectNode) {
+  if (node.kind === 'directory') {
+    return node.depth
+  }
+
+  return isFileNode(node) && node.parentId ? node.parentId.split('/').length : 0
+}
+
 function getSelectedFile(
   snapshot: CodebaseSnapshot | null,
   selectedNode: ProjectNode | null,
@@ -2474,6 +4023,113 @@ function getSelectedFile(
   }
 
   return files[0] ?? null
+}
+
+function getPrimaryNode(
+  snapshot: CodebaseSnapshot | null,
+  nodeIds: string[],
+) {
+  if (!snapshot || nodeIds.length === 0) {
+    return null
+  }
+
+  const primaryNodeId = nodeIds[0]
+
+  return primaryNodeId ? snapshot.nodes[primaryNodeId] ?? null : null
+}
+
+function getPrimaryFileFromNode(
+  snapshot: CodebaseSnapshot | null,
+  node: ProjectNode | null,
+) {
+  if (!snapshot || !node) {
+    return null
+  }
+
+  if (isFileNode(node)) {
+    return node
+  }
+
+  if (isSymbolNode(node)) {
+    const fileNode = snapshot.nodes[node.fileId]
+    return fileNode && isFileNode(fileNode) ? fileNode : null
+  }
+
+  return null
+}
+
+function formatWorkingSetLabel(context: {
+  file: CodebaseFile | null
+  files: CodebaseFile[]
+  node: ProjectNode | null
+  symbol: SymbolNode | null
+  symbols: SymbolNode[]
+}) {
+  if (context.symbols.length > 1) {
+    return `Working set · ${context.symbols.length} symbols`
+  }
+
+  if (context.files.length > 1) {
+    return `Working set · ${context.files.length} files`
+  }
+
+  return `Working set · ${context.symbol?.name ?? context.file?.name ?? context.node?.name ?? '1 item'}`
+}
+
+function buildWorkingSetTitle(
+  context: {
+    file: CodebaseFile | null
+    files: CodebaseFile[]
+    node: ProjectNode | null
+    symbol: SymbolNode | null
+    symbols: SymbolNode[]
+  },
+  workingSet: { source: 'selection' | 'manual'; updatedAt: string | null },
+) {
+  const paths = getWorkingSetPaths(context)
+  const lines = ['Pinned agent working set']
+
+  lines.push(
+    workingSet.source === 'selection'
+      ? 'Source: pinned from selection'
+      : 'Source: pinned manually',
+  )
+
+  if (workingSet.updatedAt) {
+    lines.push(`Updated: ${workingSet.updatedAt}`)
+  }
+
+  if (paths.length > 0) {
+    lines.push('', ...paths)
+  }
+
+  return lines.join('\n')
+}
+
+function getWorkingSetPaths(context: {
+  file: CodebaseFile | null
+  files: CodebaseFile[]
+  node: ProjectNode | null
+  symbol: SymbolNode | null
+  symbols: SymbolNode[]
+}) {
+  if (context.symbols.length > 0) {
+    return context.symbols.map((symbol) => symbol.path)
+  }
+
+  if (context.files.length > 0) {
+    return context.files.map((file) => file.path)
+  }
+
+  if (context.symbol) {
+    return [context.symbol.path]
+  }
+
+  if (context.file) {
+    return [context.file.path]
+  }
+
+  return context.node ? [context.node.path] : []
 }
 
 function getSelectedFiles(
@@ -2524,6 +4180,7 @@ function getSelectedSymbols(
 
   return selectedNodeIds
     .map((nodeId) => snapshot.nodes[nodeId])
+    .filter((node): node is ProjectNode => Boolean(node))
     .filter(isSymbolNode)
 }
 
@@ -2537,6 +4194,30 @@ function getNodeSubtitle(node: ProjectNode) {
   }
 
   return node.symbolKind
+}
+
+function getDefaultNodeWidth(node: ProjectNode) {
+  if (node.kind === 'directory') {
+    return 240
+  }
+
+  if (node.kind === 'file') {
+    return 224
+  }
+
+  return DEFAULT_NODE_WIDTH
+}
+
+function getDefaultNodeHeight(node: ProjectNode) {
+  if (node.kind === 'directory') {
+    return 68
+  }
+
+  if (node.kind === 'file') {
+    return 54
+  }
+
+  return DEFAULT_NODE_HEIGHT
 }
 
 function getSymbolSubtitle(
@@ -2784,6 +4465,8 @@ function updateLayoutPlacement(
   draftLayouts: LayoutDraft[],
   setLayouts: (layouts: LayoutSpec[]) => void,
   setDraftLayouts: (draftLayouts: LayoutDraft[]) => void,
+  snapshot: CodebaseSnapshot | null,
+  viewMode: VisualizerViewMode,
 ) {
   if (isAnnotationNodeId(nodeId)) {
     const annotationId = getAnnotationIdFromNodeId(nodeId)
@@ -2845,6 +4528,62 @@ function updateLayoutPlacement(
     return
   }
 
+  if (isLayoutGroupNodeId(nodeId)) {
+    const groupId = getLayoutGroupIdFromNodeId(nodeId)
+
+    if (activeDraft?.layout) {
+      const nextDraftLayouts = draftLayouts.map((draft) => {
+        if (draft.id !== activeDraft.id || !draft.layout) {
+          return draft
+        }
+
+        return {
+          ...draft,
+          layout: {
+            ...draft.layout,
+            placements: buildUpdatedPlacementsForMovedGroup(
+              draft.layout,
+              snapshot,
+              viewMode,
+              groupId,
+              position,
+            ),
+            updatedAt: new Date().toISOString(),
+          },
+          updatedAt: new Date().toISOString(),
+        }
+      })
+
+      setDraftLayouts(nextDraftLayouts)
+      return
+    }
+
+    if (!activeLayout) {
+      return
+    }
+
+    const nextLayouts = layouts.map((layout) => {
+      if (layout.id !== activeLayout.id) {
+        return layout
+      }
+
+      return {
+        ...layout,
+        placements: buildUpdatedPlacementsForMovedGroup(
+          layout,
+          snapshot,
+          viewMode,
+          groupId,
+          position,
+        ),
+        updatedAt: new Date().toISOString(),
+      }
+    })
+
+    setLayouts(nextLayouts)
+    return
+  }
+
   if (activeDraft?.layout) {
     const nextDraftLayouts = draftLayouts.map((draft) => {
       if (draft.id !== activeDraft.id || !draft.layout) {
@@ -2857,18 +4596,19 @@ function updateLayoutPlacement(
         return draft
       }
 
+      const nextPlacements = buildUpdatedPlacementsForMovedNode(
+        draft.layout,
+        snapshot,
+        viewMode,
+        nodeId,
+        position,
+      )
+
       return {
         ...draft,
         layout: {
           ...draft.layout,
-          placements: {
-            ...draft.layout.placements,
-            [nodeId]: {
-              ...currentPlacement,
-              x: position.x,
-              y: position.y,
-            },
-          },
+          placements: nextPlacements,
           updatedAt: new Date().toISOString(),
         },
         updatedAt: new Date().toISOString(),
@@ -2894,21 +4634,209 @@ function updateLayoutPlacement(
       return layout
     }
 
+    const nextPlacements = buildUpdatedPlacementsForMovedNode(
+      layout,
+      snapshot,
+      viewMode,
+      nodeId,
+      position,
+    )
+
     return {
       ...layout,
-      placements: {
-        ...layout.placements,
-        [nodeId]: {
-          ...currentPlacement,
-          x: position.x,
-          y: position.y,
-        },
-      },
+      placements: nextPlacements,
       updatedAt: new Date().toISOString(),
     }
   })
 
   setLayouts(nextLayouts)
+}
+
+function buildUpdatedPlacementsForMovedNode(
+  layout: LayoutSpec,
+  snapshot: CodebaseSnapshot | null,
+  viewMode: VisualizerViewMode,
+  nodeId: string,
+  position: XYPosition,
+) {
+  const currentPlacement = layout.placements[nodeId]
+
+  if (!currentPlacement) {
+    return layout.placements
+  }
+
+  const nextPlacements: LayoutSpec['placements'] = {
+    ...layout.placements,
+    [nodeId]: {
+      ...currentPlacement,
+      x: position.x,
+      y: position.y,
+    },
+  }
+
+  if (!snapshot || layout.nodeScope !== 'filesystem') {
+    return nextPlacements
+  }
+
+  const draggedNode = snapshot.nodes[nodeId]
+
+  if (!draggedNode || isSymbolNode(draggedNode)) {
+    return nextPlacements
+  }
+
+  const absolutePosition = getAbsoluteCanvasPositionForDraggedNode(
+    layout,
+    snapshot,
+    viewMode,
+    nodeId,
+    position,
+  )
+
+  nextPlacements[nodeId] = {
+    ...currentPlacement,
+    x: absolutePosition.x,
+    y: absolutePosition.y,
+  }
+
+  if (!isDirectoryNode(draggedNode)) {
+    return nextPlacements
+  }
+
+  const deltaX = absolutePosition.x - currentPlacement.x
+  const deltaY = absolutePosition.y - currentPlacement.y
+
+  if (deltaX === 0 && deltaY === 0) {
+    return nextPlacements
+  }
+
+  for (const descendantId of collectFilesystemDescendantNodeIds(snapshot, nodeId)) {
+    const descendantPlacement = layout.placements[descendantId]
+
+    if (!descendantPlacement) {
+      continue
+    }
+
+    nextPlacements[descendantId] = {
+      ...descendantPlacement,
+      x: descendantPlacement.x + deltaX,
+      y: descendantPlacement.y + deltaY,
+    }
+  }
+
+  return nextPlacements
+}
+
+function buildUpdatedPlacementsForMovedGroup(
+  layout: LayoutSpec,
+  snapshot: CodebaseSnapshot | null,
+  viewMode: VisualizerViewMode,
+  groupId: string,
+  position: XYPosition,
+) {
+  if (!snapshot) {
+    return layout.placements
+  }
+
+  const containers = buildLayoutGroupContainers(snapshot, layout, viewMode)
+  const container = containers.get(groupId)
+
+  if (!container) {
+    return layout.placements
+  }
+
+  const deltaX = position.x - container.x
+  const deltaY = position.y - container.y
+
+  if (deltaX === 0 && deltaY === 0) {
+    return layout.placements
+  }
+
+  const nextPlacements: LayoutSpec['placements'] = {
+    ...layout.placements,
+  }
+
+  for (const nodeId of container.nodeIds) {
+    const placement = layout.placements[nodeId]
+
+    if (!placement) {
+      continue
+    }
+
+    nextPlacements[nodeId] = {
+      ...placement,
+      x: placement.x + deltaX,
+      y: placement.y + deltaY,
+    }
+  }
+
+  return nextPlacements
+}
+
+function getAbsoluteCanvasPositionForDraggedNode(
+  layout: LayoutSpec,
+  snapshot: CodebaseSnapshot,
+  viewMode: VisualizerViewMode,
+  nodeId: string,
+  position: XYPosition,
+) {
+  const groupContainer =
+    layout.strategy === 'agent'
+      ? getLayoutGroupParentContainer(
+          nodeId,
+          buildLayoutGroupContainers(snapshot, layout, viewMode),
+        )
+      : null
+
+  if (groupContainer) {
+    return {
+      x: groupContainer.x + position.x,
+      y: groupContainer.y + position.y,
+    }
+  }
+
+  const draggedNode = snapshot.nodes[nodeId]
+
+  if (!draggedNode || isSymbolNode(draggedNode)) {
+    return position
+  }
+
+  if (draggedNode.parentId && layout.placements[draggedNode.parentId]) {
+    return {
+      x: layout.placements[draggedNode.parentId].x + position.x,
+      y: layout.placements[draggedNode.parentId].y + position.y,
+    }
+  }
+
+  return position
+}
+
+function collectFilesystemDescendantNodeIds(
+  snapshot: CodebaseSnapshot,
+  nodeId: string,
+) {
+  const node = snapshot.nodes[nodeId]
+
+  if (!node || !isDirectoryNode(node)) {
+    return []
+  }
+
+  const descendantIds: string[] = []
+
+  for (const childId of node.childIds) {
+    const childNode = snapshot.nodes[childId]
+
+    if (!childNode || isSymbolNode(childNode)) {
+      continue
+    }
+
+    descendantIds.push(childId)
+
+    if (isDirectoryNode(childNode)) {
+      descendantIds.push(...collectFilesystemDescendantNodeIds(snapshot, childId))
+    }
+  }
+
+  return descendantIds
 }
 
 function mergeLayoutsWithDefaults(

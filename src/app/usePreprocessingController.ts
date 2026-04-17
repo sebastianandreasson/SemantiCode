@@ -46,6 +46,7 @@ export function usePreprocessingController(
     purposeSummaryCount: 0,
     semanticEmbeddingCount: 0,
     lastError: null,
+    currentItemPath: null,
     processedSymbols: 0,
     snapshotId: null,
     totalSymbols: 0,
@@ -82,6 +83,7 @@ export function usePreprocessingController(
               purposeSummaryCount: persistedContext.purposeSummaries.length,
               semanticEmbeddingCount: persistedContext.semanticEmbeddings.length,
               lastError: null,
+              currentItemPath: null,
               processedSymbols: persistedContext.purposeSummaries.length,
               snapshotId: persistedContext.snapshotId,
               totalSymbols,
@@ -93,6 +95,7 @@ export function usePreprocessingController(
               purposeSummaryCount: 0,
               semanticEmbeddingCount: 0,
               lastError: null,
+              currentItemPath: null,
               processedSymbols: 0,
               snapshotId: null,
               totalSymbols,
@@ -110,6 +113,7 @@ export function usePreprocessingController(
         purposeSummaryCount: 0,
         semanticEmbeddingCount: 0,
         lastError: null,
+        currentItemPath: null,
         processedSymbols: 0,
         snapshotId: null,
         totalSymbols: countPreprocessableSymbols(snapshot),
@@ -130,6 +134,7 @@ export function usePreprocessingController(
         purposeSummaryCount: 0,
         semanticEmbeddingCount: 0,
         lastError: null,
+        currentItemPath: null,
         processedSymbols: 0,
         snapshotId: null,
         totalSymbols: countPreprocessableSymbols(nextSnapshot),
@@ -147,6 +152,7 @@ export function usePreprocessingController(
         purposeSummaryCount: current.purposeSummaryCount,
         semanticEmbeddingCount: current.semanticEmbeddingCount,
         lastError: null,
+        currentItemPath: null,
         processedSymbols: 0,
         snapshotId: current.snapshotId,
         totalSymbols: countPreprocessableSymbols(nextSnapshot),
@@ -165,6 +171,7 @@ export function usePreprocessingController(
               setPreprocessingStatus((current) => ({
                 ...current,
                 activity: 'summaries',
+                currentItemPath: null,
                 processedSymbols: progress.processedSymbols,
                 purposeSummaryCount: progress.processedSymbols,
                 totalSymbols: progress.totalSymbols,
@@ -187,6 +194,7 @@ export function usePreprocessingController(
               purposeSummaryCount: context.purposeSummaries.length,
               semanticEmbeddingCount: context.semanticEmbeddings.length,
               lastError: null,
+              currentItemPath: null,
               processedSymbols: context.purposeSummaries.length,
               snapshotId: context.snapshotId,
               totalSymbols: countPreprocessableSymbols(nextSnapshot),
@@ -223,6 +231,7 @@ export function usePreprocessingController(
                 error instanceof Error
                   ? error.message
                   : 'Failed to preprocess workspace context.',
+              currentItemPath: current.currentItemPath,
               processedSymbols: current.processedSymbols,
               snapshotId: current.snapshotId,
               totalSymbols: current.totalSymbols,
@@ -242,6 +251,7 @@ export function usePreprocessingController(
           runState: 'error',
           activity: current.activity,
           lastError: 'The workspace snapshot is not ready yet.',
+          currentItemPath: null,
         }))
       })
       return
@@ -255,6 +265,7 @@ export function usePreprocessingController(
       semanticEmbeddingCount:
         preprocessedWorkspaceContextRef.current?.semanticEmbeddings.length ?? 0,
       lastError: null,
+      currentItemPath: null,
       processedSymbols: 0,
       snapshotId: preprocessedWorkspaceContextRef.current?.snapshotId ?? null,
       totalSymbols: countPreprocessableSymbols(nextSnapshot),
@@ -286,6 +297,7 @@ export function usePreprocessingController(
         purposeSummaryCount: 0,
         semanticEmbeddingCount: existingContext?.semanticEmbeddings.length ?? 0,
         lastError: null,
+        currentItemPath: null,
         processedSymbols: 0,
         snapshotId: existingContext?.snapshotId ?? null,
         totalSymbols: countPreprocessableSymbols(nextSnapshot),
@@ -299,6 +311,11 @@ export function usePreprocessingController(
         }
 
         activeSymbolPath = symbol.path
+        setPreprocessingStatus((current) => ({
+          ...current,
+          activity: 'summaries',
+          currentItemPath: symbol.path,
+        }))
         const previousSummary = previousSummaryBySymbolId.get(symbol.id)
         const sourceTextRecord = buildSemanticSymbolTextRecord(
           nextSnapshot,
@@ -334,14 +351,13 @@ export function usePreprocessingController(
         setPreprocessedWorkspaceContext(partialContext)
         await persistPreprocessedWorkspaceContext(partialContext)
 
-        startTransition(() => {
-          setPreprocessingStatus((current) => ({
-            ...current,
-            activity: 'summaries',
-            processedSymbols: index + 1,
-            purposeSummaryCount: index + 1,
-          }))
-        })
+        setPreprocessingStatus((current) => ({
+          ...current,
+          activity: 'summaries',
+          currentItemPath: symbol.path,
+          processedSymbols: index + 1,
+          purposeSummaryCount: index + 1,
+        }))
       }
 
       const context: PreprocessedWorkspaceContext = {
@@ -363,6 +379,7 @@ export function usePreprocessingController(
           purposeSummaryCount: context.purposeSummaries.length,
           semanticEmbeddingCount: context.semanticEmbeddings.length,
           lastError: null,
+          currentItemPath: null,
           processedSymbols: context.purposeSummaries.length,
           snapshotId: context.snapshotId,
           totalSymbols: context.purposeSummaries.length,
@@ -381,6 +398,7 @@ export function usePreprocessingController(
           ...current,
           runState: 'error',
           activity: 'summaries',
+          currentItemPath: activeSymbolPath,
           lastError:
             activeSymbolPath
               ? `Failed on ${activeSymbolPath}: ${error instanceof Error ? error.message : 'Unknown preprocessing error.'}`
@@ -402,6 +420,7 @@ export function usePreprocessingController(
         runState: 'error',
         activity: 'embeddings',
         lastError: 'Build summaries with the agent before generating embeddings.',
+        currentItemPath: null,
       }))
       return
     }
@@ -415,6 +434,7 @@ export function usePreprocessingController(
       purposeSummaryCount: existingContext.purposeSummaries.length,
       semanticEmbeddingCount: existingContext.semanticEmbeddings.length,
       lastError: null,
+      currentItemPath: null,
       processedSymbols: 0,
       snapshotId: existingContext.snapshotId,
       totalSymbols,
@@ -429,6 +449,11 @@ export function usePreprocessingController(
     try {
       for (const [index, summary] of existingContext.purposeSummaries.entries()) {
         activeSymbolPath = summary.path
+        setPreprocessingStatus((current) => ({
+          ...current,
+          activity: 'embeddings',
+          currentItemPath: summary.path,
+        }))
         const embeddingTextHash = hashSemanticText(summary.embeddingText)
         const previousEmbedding = previousEmbeddingBySymbolId.get(summary.symbolId)
         const embedding =
@@ -461,6 +486,7 @@ export function usePreprocessingController(
         setPreprocessingStatus((current) => ({
           ...current,
           activity: 'embeddings',
+          currentItemPath: summary.path,
           processedSymbols: index + 1,
           semanticEmbeddingCount: index + 1,
         }))
@@ -479,6 +505,7 @@ export function usePreprocessingController(
         runState: 'ready',
         activity: null,
         updatedAt: new Date().toISOString(),
+        currentItemPath: null,
         semanticEmbeddingCount: nextEmbeddings.length,
         processedSymbols: nextEmbeddings.length,
       }))
@@ -489,6 +516,7 @@ export function usePreprocessingController(
         ...current,
         runState: 'error',
         activity: 'embeddings',
+        currentItemPath: activeSymbolPath,
         lastError:
           activeSymbolPath
             ? `Embedding failed on ${activeSymbolPath}: ${error instanceof Error ? error.message : 'Unknown embedding error.'}`

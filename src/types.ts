@@ -45,9 +45,12 @@ export type {
 export type {
   GraphLayerKey,
   GraphLayerVisibility,
+  UiPreferences,
   VisualizerStore,
   VisualizerStoreActions,
   VisualizerStoreState,
+  WorkingSetState,
+  WorkspaceUiState,
 } from './schema/store'
 export type {
   CanvasBaseScene,
@@ -84,6 +87,8 @@ export type {
   AgentSettingsResponse,
   AgentSettingsUpdateRequest,
   AgentStateResponse,
+  UiPreferencesResponse,
+  UiPreferencesUpdateRequest,
   AnalysisState,
   AnalysisStatus,
   DraftMutationResponse,
@@ -92,6 +97,7 @@ export type {
   LayoutStateResponse,
   LayoutSummary,
   SnapshotResponse,
+  WorkspaceHistoryResponse,
   WorkspaceSyncStatusResponse,
 } from './schema/api'
 export type {

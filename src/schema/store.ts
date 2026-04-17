@@ -17,6 +17,27 @@ export type GraphLayerKey = 'contains' | 'imports' | 'calls'
 
 export type GraphLayerVisibility = Record<GraphLayerKey, boolean>
 
+export interface WorkspaceUiState {
+  activeDraftId?: string
+  activeLayoutId?: string
+}
+
+export interface WorkingSetState {
+  nodeIds: string[]
+  source: 'selection' | 'manual'
+  updatedAt: string | null
+}
+
+export interface UiPreferences {
+  canvasWidthRatio?: number
+  graphLayers?: Partial<GraphLayerVisibility>
+  inspectorOpen?: boolean
+  projectsSidebarOpen?: boolean
+  themeMode?: 'light' | 'dark'
+  viewMode?: VisualizerViewMode
+  workspaceStateByRootDir?: Record<string, WorkspaceUiState>
+}
+
 export interface VisualizerStoreState {
   status: AnalysisState
   errorMessage: string | null
@@ -32,6 +53,8 @@ export interface VisualizerStoreState {
   compareOverlay: LayoutCompareOverlayReference | null
   overlayVisibility: boolean
   overlayFocusMode: OverlayFocusMode
+  workingSet: WorkingSetState
+  collapsedDirectoryIds: string[]
   expandedSymbolClusterIds: string[]
   graphLayers: GraphLayerVisibility
 }
@@ -52,6 +75,13 @@ export interface VisualizerStoreActions {
   clearCompareOverlay: () => void
   setOverlayVisibility: (visible: boolean) => void
   setOverlayFocusMode: (mode: OverlayFocusMode) => void
+  setWorkingSet: (
+    workingSet: Partial<WorkingSetState> & Pick<WorkingSetState, 'nodeIds'>,
+  ) => void
+  adoptSelectionAsWorkingSet: () => void
+  clearWorkingSet: () => void
+  toggleCollapsedDirectory: (nodeId: string) => void
+  setCollapsedDirectoryIds: (nodeIds: string[]) => void
   toggleSymbolCluster: (clusterId: string) => void
   setExpandedSymbolClusterIds: (clusterIds: string[]) => void
   selectNode: (nodeId: string | null, options?: { additive?: boolean }) => void
@@ -70,4 +100,10 @@ export const DEFAULT_GRAPH_LAYER_VISIBILITY: GraphLayerVisibility = {
   contains: true,
   imports: false,
   calls: false,
+}
+
+export const DEFAULT_WORKING_SET_STATE: WorkingSetState = {
+  nodeIds: [],
+  source: 'selection',
+  updatedAt: null,
 }
