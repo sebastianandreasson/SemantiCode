@@ -63,7 +63,7 @@ export function WorkspaceSyncModal({
             <ArtifactSyncCard
               actionLabel={
                 status.summaries.state !== 'in_sync' && onRebuildSummaries
-                  ? 'Rebuild summaries'
+                  ? 'rebuild summaries'
                   : undefined
               }
               affectedPaths={status.summaries.affectedPaths}
@@ -77,7 +77,7 @@ export function WorkspaceSyncModal({
             <ArtifactSyncCard
               actionLabel={
                 status.embeddings.state !== 'in_sync' && onBuildEmbeddings
-                  ? 'Build embeddings'
+                  ? 'build embeddings'
                   : undefined
               }
               affectedPaths={status.embeddings.affectedPaths}
@@ -153,7 +153,7 @@ function ArtifactSyncCard({
       <p>{formatArtifactDescription(state, staleCount, obsoleteCount, totalTracked)}</p>
       {affectedPaths.length > 0 ? <CodeList items={affectedPaths} /> : null}
       {actionLabel && onAction ? (
-        <button className="cbv-toolbar-button" onClick={onAction} type="button">
+        <button className="cbv-toolbar-button cbv-sync-card-action" onClick={onAction} type="button">
           {actionLabel}
         </button>
       ) : null}

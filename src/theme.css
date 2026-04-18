@@ -1,0 +1,132 @@
+:root {
+  --cbv-font-sans:
+    'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI',
+    sans-serif;
+  --cbv-font-mono:
+    'JetBrains Mono', 'Geist Mono', 'SF Mono', 'SFMono-Regular', ui-monospace, Menlo,
+    monospace;
+
+  --cbv-space-1: 0.25rem;
+  --cbv-space-2: 0.5rem;
+  --cbv-space-3: 0.75rem;
+  --cbv-space-4: 1rem;
+  --cbv-space-5: 1.25rem;
+  --cbv-space-6: 1.5rem;
+  --cbv-space-8: 2rem;
+
+  --cbv-radius-sm: 0.125rem;
+  --cbv-radius-md: 0.1875rem;
+  --cbv-radius-lg: 0.25rem;
+  --cbv-radius-xl: 0.375rem;
+  --cbv-radius-pill: 999px;
+
+  --cbv-shell-gap: 0;
+  --cbv-left-rail-width: 15.5rem;
+  --cbv-inspector-width-canonical: 22.5rem;
+  --cbv-drawer-height: 18rem;
+  --cbv-drawer-collapsed-height: 2.5rem;
+
+  --cbv-kind-function: oklch(0.74 0.14 240);
+  --cbv-kind-component: oklch(0.74 0.14 300);
+  --cbv-kind-hook: oklch(0.74 0.13 180);
+  --cbv-kind-class: oklch(0.72 0.15 15);
+  --cbv-kind-constant: oklch(0.74 0.13 145);
+  --cbv-kind-type: oklch(0.76 0.14 75);
+  --cbv-kind-variable: oklch(0.75 0.08 210);
+  --cbv-kind-module: oklch(0.72 0.05 260);
+
+  --app-text: oklch(0.945 0.005 260);
+  --app-muted: oklch(0.745 0.01 260);
+  --app-text-dim: oklch(0.555 0.012 260);
+  --app-text-faint: oklch(0.405 0.012 260);
+  --app-border: oklch(0.305 0.01 260);
+  --app-border-soft: oklch(0.255 0.01 260);
+  --app-surface: oklch(0.215 0.008 260);
+  --app-surface-strong: oklch(0.215 0.008 260);
+  --app-surface-soft: oklch(0.245 0.008 260);
+  --app-surface-soft-2: oklch(0.245 0.008 260);
+  --app-surface-soft-3: oklch(0.255 0.01 260);
+  --app-surface-soft-4: oklch(0.305 0.01 260);
+  --app-inverse-surface: oklch(0.965 0.006 260);
+  --app-inverse-text: oklch(0.18 0.008 260);
+  --app-backdrop: rgb(0 0 0 / 0.58);
+  --app-shadow: 0 16px 40px -12px rgb(0 0 0 / 0.55);
+  --app-accent: oklch(0.72 0.14 64);
+  --app-accent-soft: color-mix(in oklch, var(--app-accent) 18%, transparent);
+  --app-success: oklch(0.76 0.11 150);
+  --app-success-soft: color-mix(in oklch, var(--app-success) 18%, transparent);
+  --app-warning: oklch(0.78 0.12 80);
+  --app-warning-soft: color-mix(in oklch, var(--app-warning) 18%, transparent);
+  --app-danger: oklch(0.7 0.15 20);
+  --app-danger-soft: color-mix(in oklch, var(--app-danger) 18%, transparent);
+  --app-canvas-bg: oklch(0.142 0.008 260);
+  --app-overlay-surface: oklch(0.215 0.008 260);
+  --app-overlay-surface-strong: oklch(0.215 0.008 260);
+  --app-input-bg: oklch(0.142 0.008 260);
+  --app-input-border: oklch(0.305 0.01 260);
+  --app-input-text: var(--app-text);
+  --app-input-placeholder: oklch(0.405 0.012 260);
+  --app-code-bg: oklch(0.142 0.008 260);
+  --app-code-border: oklch(0.305 0.01 260);
+  --app-code-gutter-bg: oklch(0.142 0.008 260);
+  --app-code-gutter-text: oklch(0.405 0.012 260);
+  --app-code-selection: color-mix(in oklch, var(--app-accent) 12%, transparent);
+  --app-code-gutter-highlight-bg: color-mix(in oklch, var(--app-accent) 4%, transparent);
+  --app-code-gutter-highlight-text: oklch(0.84 0.08 180);
+  --app-bg: oklch(0.178 0.008 260);
+  --app-scrollbar-track: oklch(0.178 0.008 260);
+  --app-scrollbar-thumb: oklch(0.305 0.01 260);
+  --app-scrollbar-thumb-hover: oklch(0.405 0.012 260);
+
+  color: var(--app-text);
+  background: var(--app-bg);
+  color-scheme: dark;
+  font-family: var(--cbv-font-mono);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  line-height: 1.5;
+  font-weight: 400;
+}
+
+:root[data-theme='light'] {
+  --app-text: oklch(0.25 0.008 260);
+  --app-muted: oklch(0.55 0.012 260);
+  --app-border: oklch(0.82 0.008 260);
+  --app-surface: oklch(0.985 0.004 260 / 0.96);
+  --app-surface-strong: oklch(0.99 0.004 260);
+  --app-surface-soft: oklch(0.955 0.005 260);
+  --app-surface-soft-2: oklch(0.935 0.007 260);
+  --app-surface-soft-3: oklch(0.895 0.008 260);
+  --app-surface-soft-4: oklch(0.845 0.01 260);
+  --app-inverse-surface: oklch(0.19 0.008 260);
+  --app-inverse-text: oklch(0.96 0.004 260);
+  --app-backdrop: rgb(34 38 48 / 0.26);
+  --app-shadow: 0 24px 48px rgb(24 27 33 / 0.14);
+  --app-accent-soft: color-mix(in oklch, var(--app-accent) 14%, white);
+  --app-success-soft: color-mix(in oklch, var(--app-success) 14%, white);
+  --app-warning-soft: color-mix(in oklch, var(--app-warning) 16%, white);
+  --app-danger-soft: color-mix(in oklch, var(--app-danger) 14%, white);
+  --app-canvas-bg:
+    radial-gradient(circle at top, color-mix(in oklch, var(--app-accent) 18%, transparent), transparent 32%),
+    linear-gradient(180deg, oklch(0.965 0.004 260), oklch(0.93 0.008 260));
+  --app-overlay-surface: oklch(0.985 0.004 260 / 0.94);
+  --app-overlay-surface-strong: oklch(0.99 0.004 260 / 0.98);
+  --app-input-bg: oklch(0.995 0.004 260);
+  --app-input-border: oklch(0.82 0.008 260);
+  --app-input-text: var(--app-text);
+  --app-input-placeholder: oklch(0.64 0.012 260);
+  --app-code-bg: oklch(0.955 0.004 260);
+  --app-code-border: rgb(60 74 104 / 0.12);
+  --app-code-gutter-bg: oklch(0.93 0.006 260);
+  --app-code-gutter-text: oklch(0.6 0.01 260);
+  --app-code-selection: color-mix(in oklch, var(--app-accent) 16%, transparent);
+  --app-code-gutter-highlight-bg: rgb(78 142 131 / 0.12);
+  --app-code-gutter-highlight-text: oklch(0.42 0.09 190);
+  --app-bg: oklch(0.97 0.004 260);
+  --app-scrollbar-track: oklch(0.955 0.005 260);
+  --app-scrollbar-thumb: oklch(0.845 0.01 260);
+  --app-scrollbar-thumb-hover: oklch(0.72 0.012 260);
+  color-scheme: light;
+}

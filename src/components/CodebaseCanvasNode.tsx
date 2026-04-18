@@ -58,7 +58,7 @@ export const CodebaseCanvasNode = memo(function CodebaseCanvasNode({
           title={nodeData.collapsed ? 'Expand folder' : 'Collapse folder'}
           type="button"
         >
-          {nodeData.collapsed ? '+' : '−'}
+          {nodeData.collapsed ? '▸' : '▾'}
         </button>
       ) : null}
       {nodeData.groupContainer ? null : (

@@ -32,7 +32,8 @@ import {
   type WorkspaceProfile,
 } from '../../types'
 import { fetchGitFileDiff } from '../../app/apiClient'
-import { AgentPanel, type AgentScopeContext } from '../AgentPanel'
+import { type AgentScopeContext } from '../AgentPanel'
+import { AgentContextPane } from '../agent/AgentContextPane'
 import type { ThemeMode } from '../settings/GeneralSettingsPanel'
 import type { GroupPrototypeRecord } from '../../semantic/groups/groupPrototypes'
 
@@ -58,11 +59,11 @@ interface InspectorPaneProps {
   }
   inspectorBodyRef: RefObject<HTMLDivElement | null>
   inspectorTab: InspectorTab
-  onAgentRunSettled?: () => Promise<void>
   onAdoptInspectorContextAsWorkingSet?: () => void
   onClearCompareOverlay: () => void
   onClearWorkingSet?: () => void
   onClose: () => void
+  onOpenAgentDrawer?: () => void
   onOpenAgentSettings: () => void
   onSetInspectorTab: (tab: InspectorTab) => void
   preprocessedWorkspaceContext: PreprocessedWorkspaceContext | null
@@ -105,11 +106,11 @@ export function InspectorPane({
   header,
   inspectorBodyRef,
   inspectorTab,
-  onAgentRunSettled,
   onAdoptInspectorContextAsWorkingSet,
   onClearCompareOverlay,
   onClearWorkingSet,
   onClose,
+  onOpenAgentDrawer,
   onOpenAgentSettings,
   onSetInspectorTab,
   preprocessedWorkspaceContext,
@@ -161,27 +162,27 @@ export function InspectorPane({
           onClick={() => onSetInspectorTab('file')}
           type="button"
         >
-          File
+          file
         </button>
         <button
           className={inspectorTab === 'agent' ? 'is-active' : ''}
           onClick={() => onSetInspectorTab('agent')}
           type="button"
         >
-          Agent
+          agent
         </button>
         <button
           className={inspectorTab === 'graph' ? 'is-active' : ''}
           onClick={() => onSetInspectorTab('graph')}
           type="button"
         >
-          Graph
+          graph
         </button>
       </div>
 
       <div className="cbv-inspector-body" ref={inspectorBodyRef}>
         {inspectorTab === 'agent' ? (
-          <AgentPanel
+          <AgentContextPane
             desktopHostAvailable={desktopHostAvailable}
             inspectorContext={{
               file: selectedFile,
@@ -190,11 +191,10 @@ export function InspectorPane({
               symbol: selectedSymbol,
               symbols: selectedSymbols,
             }}
+            onOpenDrawer={onOpenAgentDrawer}
             onOpenSettings={onOpenAgentSettings}
-            onRunSettled={onAgentRunSettled}
             onAdoptInspectorContextAsWorkingSet={onAdoptInspectorContextAsWorkingSet}
             onClearWorkingSet={onClearWorkingSet}
-            preprocessedWorkspaceContext={preprocessedWorkspaceContext}
             workingSet={workingSet}
             workingSetContext={workingSetContext}
             workspaceProfile={workspaceProfile}
@@ -225,30 +225,39 @@ export function InspectorPane({
             prototype={selectedLayoutGroupPrototype}
           />
         ) : selectedFile ? (
-          <>
-            {selectedSymbol ? (
-              <SemanticPurposeSummaryCard
-                summary={findPurposeSummary(preprocessedWorkspaceContext, selectedSymbol.id)}
-              />
-            ) : null}
-            <div className="cbv-preview-meta">
-              <span>{formatFileSize(selectedFile.size)}</span>
-              <span>{selectedFile.extension || 'no extension'}</span>
-              <span>{describeContentState(selectedFile)}</span>
-              {selectedSymbol ? (
-                <span>
-                  {selectedSymbol.symbolKind}
-                  {selectedSymbol.range ? ` · line ${selectedSymbol.range.start.line}` : ''}
-                </span>
-              ) : null}
-            </div>
+          <div className="cbv-file-inspector">
+            <FileIdentityHeader file={selectedFile} symbol={selectedSymbol} />
             <CodePreview
               file={selectedFile}
               highlightedRange={selectedSymbol?.range}
               scrollToDiffRequestKey={scrollToDiffRequestKey}
               themeMode={themeMode}
             />
-          </>
+            <InspectorRelatedSection
+              label={selectedSymbol ? 'Callers' : 'Related'}
+              neighbors={graphSummary.neighbors}
+            />
+            <InspectorFileActions
+              onOpenAgentDrawer={onOpenAgentDrawer}
+              selectedFile={selectedFile}
+              selectedSymbol={selectedSymbol}
+            />
+            {selectedNodeTelemetry ? (
+              <TelemetrySummaryCard telemetry={selectedNodeTelemetry} />
+            ) : null}
+            {selectedSymbol ? (
+              <SemanticPurposeSummaryCard
+                summary={findPurposeSummary(preprocessedWorkspaceContext, selectedSymbol.id)}
+              />
+            ) : null}
+            <PluginSemanticsCard
+              detectedPlugins={detectedPlugins}
+              facetDefinitions={facetDefinitions}
+              selectedFile={selectedFile}
+              selectedNode={selectedNode}
+              selectedSymbol={selectedSymbol}
+            />
+          </div>
         ) : showContextSummary && (activeDraft || (compareOverlayActive && resolvedCompareOverlay)) ? (
           <InspectorContextSummary
             activeDraft={activeDraft}
@@ -263,16 +272,18 @@ export function InspectorPane({
             <p>Select a node on the canvas to inspect its contents.</p>
           </div>
         )}
-        {selectedNodeTelemetry ? (
+        {!selectedFile && selectedNodeTelemetry ? (
           <TelemetrySummaryCard telemetry={selectedNodeTelemetry} />
         ) : null}
-        <PluginSemanticsCard
+        {!selectedFile ? (
+          <PluginSemanticsCard
           detectedPlugins={detectedPlugins}
           facetDefinitions={facetDefinitions}
           selectedFile={selectedFile}
           selectedNode={selectedNode}
           selectedSymbol={selectedSymbol}
         />
+        ) : null}
       </div>
     </aside>
   )
@@ -386,6 +397,92 @@ function TelemetrySummaryCard({
           ))}
         </div>
       ) : null}
+    </section>
+  )
+}
+
+function FileIdentityHeader({
+  file,
+  symbol,
+}: {
+  file: CodebaseFile
+  symbol: SymbolNode | null
+}) {
+  const title = symbol?.name ?? file.path.split('/').at(-1) ?? file.path
+  const signature = symbol?.signature ?? `${file.extension || 'file'} · ${describeContentState(file)}`
+  const codeMeta = [
+    symbol?.range ? `L${formatRange(symbol.range)}` : null,
+    symbol?.range
+      ? `${Math.max(1, symbol.range.end.line - symbol.range.start.line + 1)} LOC`
+      : `${Math.max(1, file.content?.split('\n').length ?? 0)} lines`,
+    formatFileSize(file.size),
+  ]
+    .filter(Boolean)
+    .join(' · ')
+
+  return (
+    <section className="cbv-file-identity">
+      <div className="cbv-file-identity-topline">
+        <span className="cbv-node-kind">{formatKindTag(symbol)}</span>
+        <span className="cbv-file-identity-path" title={file.path}>
+          {file.path}
+        </span>
+      </div>
+      <strong>{title}</strong>
+      <p className="cbv-file-identity-signature">{signature}</p>
+      <p className="cbv-file-identity-meta">Code · {codeMeta}</p>
+    </section>
+  )
+}
+
+function InspectorRelatedSection({
+  label = 'Related',
+  neighbors,
+}: {
+  label?: string
+  neighbors: ProjectNode[]
+}) {
+  if (neighbors.length === 0) {
+    return null
+  }
+
+  return (
+    <section className="cbv-inspector-support-section">
+      <div className="cbv-inspector-support-header">
+        <p className="cbv-eyebrow">{label} · {neighbors.length}</p>
+      </div>
+      <div className="cbv-purpose-summary-tags">
+        {neighbors.slice(0, 10).map((neighbor) => (
+          <span className="cbv-purpose-summary-tag" key={neighbor.id}>
+            {neighbor.name}
+          </span>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function InspectorFileActions({
+  onOpenAgentDrawer,
+  selectedFile,
+  selectedSymbol,
+}: {
+  onOpenAgentDrawer?: () => void
+  selectedFile: CodebaseFile
+  selectedSymbol: SymbolNode | null
+}) {
+  if (!onOpenAgentDrawer) {
+    return null
+  }
+
+  return (
+    <section className="cbv-inspector-actions">
+      <button onClick={onOpenAgentDrawer} type="button">
+        ask agent ↵
+      </button>
+      <span title={selectedFile.path}>
+        {selectedSymbol ? `${selectedSymbol.name} · ${selectedFile.path}` : selectedFile.path}
+      </span>
     </section>
   )
 }
@@ -960,13 +1057,13 @@ const codePreviewThemeLight = EditorView.theme({
   '&': {
     backgroundColor: 'var(--app-code-bg)',
     border: '1px solid var(--app-code-border)',
-    borderRadius: '16px',
-    fontSize: '12px',
+    borderRadius: '0',
+    fontSize: '10.5px',
   },
   '.cm-content': {
     fontFamily:
       'ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace',
-    padding: '14px 0',
+    padding: '10px 0',
   },
   '.cm-scroller': {
     overflow: 'auto',
@@ -1012,6 +1109,12 @@ const codePreviewThemeLight = EditorView.theme({
     backgroundColor: 'color-mix(in srgb, var(--app-warning-soft) 84%, var(--app-code-bg))',
     boxShadow: 'inset 4px 0 0 0 var(--app-warning)',
   },
+  '.cm-line.cm-semanticode-highlight-line': {
+    backgroundColor: 'color-mix(in srgb, var(--app-accent-soft) 30%, transparent)',
+  },
+  '.cm-line.cm-semanticode-dim-line': {
+    opacity: '0.44',
+  },
   '.cm-selectionBackground': {
     backgroundColor: 'var(--app-code-selection) !important',
   },
@@ -1021,13 +1124,13 @@ const codePreviewThemeDark = EditorView.theme({
   '&': {
     backgroundColor: 'var(--app-code-bg)',
     border: '1px solid var(--app-code-border)',
-    borderRadius: '16px',
-    fontSize: '12px',
+    borderRadius: '0',
+    fontSize: '10.5px',
   },
   '.cm-content': {
     fontFamily:
       'ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace',
-    padding: '14px 0',
+    padding: '10px 0',
     color: 'var(--app-text)',
   },
   '.cm-scroller': {
@@ -1074,6 +1177,12 @@ const codePreviewThemeDark = EditorView.theme({
     backgroundColor: 'color-mix(in srgb, var(--app-warning-soft) 88%, var(--app-code-bg))',
     boxShadow: 'inset 4px 0 0 0 var(--app-warning)',
   },
+  '.cm-line.cm-semanticode-highlight-line': {
+    backgroundColor: 'color-mix(in srgb, var(--app-accent-soft) 20%, transparent)',
+  },
+  '.cm-line.cm-semanticode-dim-line': {
+    opacity: '0.44',
+  },
   '.cm-selectionBackground': {
     backgroundColor: 'var(--app-code-selection) !important',
   },
@@ -1088,17 +1197,30 @@ function createHighlightedLineExtension(highlightedRange?: SourceRange): Extensi
   const startLine = Math.max(1, Math.min(start.line, end.line))
   const endLine = Math.max(startLine, Math.max(start.line, end.line))
 
-  return StateField.define<RangeSet<GutterMarker>>({
-    create(state) {
-      return buildHighlightedGutterMarkers(state, startLine, endLine)
-    },
-    update(_value, transaction) {
-      return buildHighlightedGutterMarkers(transaction.state, startLine, endLine)
-    },
-    provide(field) {
-      return gutterLineClass.from(field)
-    },
-  })
+  return [
+    StateField.define<RangeSet<GutterMarker>>({
+      create(state) {
+        return buildHighlightedGutterMarkers(state, startLine, endLine)
+      },
+      update(_value, transaction) {
+        return buildHighlightedGutterMarkers(transaction.state, startLine, endLine)
+      },
+      provide(field) {
+        return gutterLineClass.from(field)
+      },
+    }),
+    StateField.define<RangeSet<Decoration>>({
+      create(state) {
+        return buildHighlightedLineDecorations(state, startLine, endLine)
+      },
+      update(_value, transaction) {
+        return buildHighlightedLineDecorations(transaction.state, startLine, endLine)
+      },
+      provide(field) {
+        return EditorView.decorations.from(field)
+      },
+    }),
+  ]
 }
 
 function createDiffLineExtension(diff?: GitFileDiff | null): Extension | null {
@@ -1148,6 +1270,16 @@ class ModifiedDiffGutterMarker extends GutterMarker {
 
 const addedDiffGutterMarker = new AddedDiffGutterMarker()
 const modifiedDiffGutterMarker = new ModifiedDiffGutterMarker()
+const highlightedLineDecoration = Decoration.line({
+  attributes: {
+    class: 'cm-semanticode-highlight-line',
+  },
+})
+const dimmedLineDecoration = Decoration.line({
+  attributes: {
+    class: 'cm-semanticode-dim-line',
+  },
+})
 const addedDiffLineDecoration = Decoration.line({
   attributes: {
     class: 'cm-semanticode-diff-added-line',
@@ -1170,6 +1302,25 @@ function buildHighlightedGutterMarkers(
   for (let lineNumber = startLine; lineNumber <= maxLine; lineNumber += 1) {
     const line = state.doc.line(lineNumber)
     builder.add(line.from, line.from, highlightedGutterMarker)
+  }
+
+  return builder.finish()
+}
+
+function buildHighlightedLineDecorations(
+  state: EditorState,
+  startLine: number,
+  endLine: number,
+) {
+  const builder = new RangeSetBuilder<Decoration>()
+
+  for (let lineNumber = 1; lineNumber <= state.doc.lines; lineNumber += 1) {
+    const line = state.doc.line(lineNumber)
+    const decoration =
+      lineNumber >= startLine && lineNumber <= endLine
+        ? highlightedLineDecoration
+        : dimmedLineDecoration
+    builder.add(line.from, line.from, decoration)
   }
 
   return builder.finish()
@@ -1268,6 +1419,34 @@ function getFlowEdgeData(edge: Edge | null | undefined) {
 
   return edge.data as {
     kind?: string
+  }
+}
+
+function formatKindTag(symbol: SymbolNode | null) {
+  if (!symbol) {
+    return 'file'
+  }
+
+  if (symbol.facets.includes('react:component')) {
+    return 'comp'
+  }
+
+  if (symbol.facets.includes('react:hook')) {
+    return 'hook'
+  }
+
+  switch (symbol.symbolKind) {
+    case 'class':
+      return 'class'
+    case 'constant':
+      return 'const'
+    case 'variable':
+      return 'var'
+    case 'method':
+      return 'meth'
+    case 'function':
+    default:
+      return 'fn'
   }
 }
 

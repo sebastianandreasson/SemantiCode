@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>SemantiCode · design exploration</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet"/>
+<style>
+  html, body { margin: 0; padding: 0; background: #0d0f13; color: #e6e8eb; overflow: hidden; }
+  body { font-family: 'Inter', system-ui, sans-serif; }
+  * { box-sizing: border-box; }
+  button { font-family: inherit; }
+  /* tweaks panel */
+  .tweaks {
+    position: fixed; right: 16px; bottom: 16px; z-index: 1000;
+    background: oklch(0.215 0.008 260); color: #e6e8eb;
+    border: 1px solid oklch(0.305 0.010 260);
+    border-radius: 6px; padding: 12px 14px; width: 260px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11px;
+    box-shadow: 0 16px 48px -12px rgba(0,0,0,0.6);
+  }
+  .tweaks-title { font-size: 9.5px; letter-spacing: 1.4px; text-transform: uppercase;
+    color: oklch(0.555 0.012 260); margin-bottom: 10px; display:flex; align-items:center; gap:6px; }
+  .tweaks-row { display: flex; flex-direction: column; gap: 5px; margin-bottom: 11px; }
+  .tweaks-row label { font-size: 10px; color: oklch(0.745 0.010 260); letter-spacing: 0.3px; }
+  .tweaks-row input[type="range"] { width: 100%; accent-color: var(--accent, oklch(0.74 0.14 215)); }
+  .tweaks-seg { display: flex; gap: 2px; background: oklch(0.142 0.008 260); padding: 2px; border-radius: 4px; }
+  .tweaks-seg button {
+    flex: 1; padding: 4px 6px; background: transparent; border: none; cursor: pointer;
+    color: oklch(0.555 0.012 260); font-family: inherit; font-size: 10px; border-radius: 3px;
+  }
+  .tweaks-seg button.is-active { background: oklch(0.245 0.008 260); color: #e6e8eb; }
+  .tweaks-hue-preview {
+    width: 100%; height: 6px; border-radius: 3px;
+    background: linear-gradient(to right,
+      oklch(0.74 0.14 0), oklch(0.74 0.14 60), oklch(0.74 0.14 120),
+      oklch(0.74 0.14 180), oklch(0.74 0.14 240), oklch(0.74 0.14 300), oklch(0.74 0.14 360));
+    margin-top: 2px;
+  }
+</style>
+</head>
+<body>
+
+<template id="__bundler_thumbnail" data-bg-color="#0d0f13">
+  <svg viewBox="0 0 1200 800" xmlns="http://www.w3.org/2000/svg">
+    <rect width="1200" height="800" fill="#0d0f13"/>
+    <g stroke="#2a2f3a" stroke-width="1" fill="none">
+      <path d="M 300 260 C 360 260, 380 360, 440 360"/>
+      <path d="M 300 260 C 360 260, 500 440, 560 440"/>
+      <path d="M 640 360 C 700 360, 720 540, 780 540"/>
+    </g>
+    <g font-family="monospace" font-size="18" fill="#e6e8eb">
+      <rect x="240" y="240" width="180" height="40" rx="4" fill="#21252e" stroke="#7aa7ff" stroke-width="2"/>
+      <text x="258" y="266" fill="#7aa7ff">fn</text>
+      <text x="290" y="266">useTodos</text>
+
+      <rect x="440" y="340" width="180" height="40" rx="4" fill="#1a1d24" stroke="#2a2f3a"/>
+      <text x="458" y="366" fill="#c79aff">comp</text>
+      <text x="498" y="366">TodoList</text>
+
+      <rect x="580" y="420" width="180" height="40" rx="4" fill="#1a1d24" stroke="#2a2f3a"/>
+      <text x="598" y="446" fill="#c79aff">comp</text>
+      <text x="638" y="446">TodoItem</text>
+
+      <rect x="760" y="520" width="180" height="40" rx="4" fill="#1a1d24" stroke="#2a2f3a"/>
+      <text x="778" y="546" fill="#e9c27a">type</text>
+      <text x="818" y="546">Todo</text>
+    </g>
+    <g font-family="monospace" font-size="14" fill="#6b7180">
+      <text x="240" y="200">semanticode ·</text>
+      <text x="360" y="200" fill="#e6e8eb">canvas code editor</text>
+    </g>
+  </svg>
+</template>
+
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" src="design-canvas.jsx"></script>
+<script type="text/babel" src="app-shell.jsx"></script>
+<script type="text/babel" src="variants.jsx"></script>
+
+<script type="text/babel">
+const DEFAULTS = /*EDITMODE-BEGIN*/{
+  "accent_hue": 215,
+  "density": "compact",
+  "agent_focus": "all"
+}/*EDITMODE-END*/;
+
+function App() {
+  const [state, setState] = React.useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('semanticode-tweaks') || 'null');
+      return { ...DEFAULTS, ...(saved || {}) };
+    } catch { return DEFAULTS; }
+  });
+  const [tweaksOpen, setTweaksOpen] = React.useState(false);
+
+  React.useEffect(() => {
+    const onMsg = (e) => {
+      if (e.data?.type === '__activate_edit_mode') setTweaksOpen(true);
+      if (e.data?.type === '__deactivate_edit_mode') setTweaksOpen(false);
+    };
+    window.addEventListener('message', onMsg);
+    window.parent.postMessage({ type: '__edit_mode_available' }, '*');
+    return () => window.removeEventListener('message', onMsg);
+  }, []);
+
+  const update = (patch) => {
+    const next = { ...state, ...patch };
+    setState(next);
+    try { localStorage.setItem('semanticode-tweaks', JSON.stringify(next)); } catch {}
+    window.parent.postMessage({ type: '__edit_mode_set_keys', edits: patch }, '*');
+  };
+
+  const accent = accentColor(state.accent_hue);
+  const density = state.density;
+
+  // Variant visibility
+  const show = (key) => state.agent_focus === 'all' || state.agent_focus === key;
+
+  return (
+    <div style={{ '--accent': accent }}>
+      <DesignCanvas minScale={0.15} maxScale={2}
+        style={{
+          background: 'oklch(0.125 0.008 260)',
+          backgroundImage: `radial-gradient(circle at 1px 1px, oklch(0.25 0.010 260) 1px, transparent 0)`,
+          backgroundSize: '28px 28px',
+        }}>
+        <div style={{
+          padding: '80px 60px 40px',
+          fontFamily: "'JetBrains Mono', ui-monospace, monospace",
+          color: 'oklch(0.555 0.012 260)',
+        }}>
+          <div style={{ fontSize: 10.5, letterSpacing: 1.6, textTransform: 'uppercase', marginBottom: 6 }}>
+            semanticode · design exploration · 04 variants
+          </div>
+          <div style={{ fontSize: 26, color: 'oklch(0.945 0.005 260)', fontWeight: 500, letterSpacing: -0.5, fontFamily: "'Inter', sans-serif", marginBottom: 6 }}>
+            canvas-first code editor · agentic coding
+          </div>
+          <div style={{ fontSize: 13, color: 'oklch(0.745 0.010 260)', maxWidth: 720, lineHeight: 1.6, fontFamily: "'Inter', sans-serif" }}>
+            Editor-minimal, dark, mono-forward. Each variant is a full app shell over the same generic todo-app codebase, with the semantic canvas as the primary surface. The variants explore <em style={{ color: accent, fontStyle: 'normal' }}>where the agent lives</em> — a decision that reshapes everything else. Use the Tweaks panel to tune accent hue and symbol-node density.
+          </div>
+        </div>
+
+        {show('chat') && (
+          <DCSection title="A · Chat panel" subtitle="Agent as a persistent right-rail conversation. Inspector above, agent below. Most context-rich.">
+            <DCArtboard label="1440 × 900 · variant A" width={BOARD_W} height={BOARD_H}>
+              <VariantA accent={accent} density={density}/>
+            </DCArtboard>
+          </DCSection>
+        )}
+
+        {show('drawer') && (
+          <DCSection title="B · Bottom drawer" subtitle="Canvas maximized. Agent shares a tabbed drawer with runs, terminal, diffs. Zed/VS-Code energy.">
+            <DCArtboard label="1440 × 900 · variant B" width={BOARD_W} height={BOARD_H}>
+              <VariantB accent={accent} density={density}/>
+            </DCArtboard>
+          </DCSection>
+        )}
+
+        {show('palette') && (
+          <DCSection title="C · Command palette" subtitle="Keyboard-first. Agent summoned by ⌘K, grounded in the symbols currently on screen.">
+            <DCArtboard label="1440 × 900 · variant C" width={BOARD_W} height={BOARD_H}>
+              <VariantC accent={accent} density={density}/>
+            </DCArtboard>
+          </DCSection>
+        )}
+
+        {show('inline') && (
+          <DCSection title="D · Inline popover" subtitle="No persistent panel. Hover a symbol, press A, get a scoped-to-that-symbol prompt. Minimal chrome.">
+            <DCArtboard label="1440 × 900 · variant D" width={BOARD_W} height={BOARD_H}>
+              <VariantD accent={accent} density={density}/>
+            </DCArtboard>
+          </DCSection>
+        )}
+
+        {/* Node density reference strip */}
+        <DCSection title="Symbol node · density reference" subtitle="The atomic card. Shared across all variants; tune via the Tweaks panel.">
+          {[
+            { label: 'minimal', d: 'minimal' },
+            { label: 'compact (default)', d: 'compact' },
+            { label: 'rich', d: 'rich' },
+          ].map(v => (
+            <DCArtboard key={v.d} label={`${v.label}`} width={520} height={280}>
+              <div style={{
+                width: '100%', height: '100%', background: 'oklch(0.142 0.008 260)',
+                backgroundImage: 'radial-gradient(circle at 1px 1px, oklch(0.255 0.010 260) 1px, transparent 0)',
+                backgroundSize: '16px 16px', position: 'relative', padding: 24,
+              }}>
+                {[
+                  { id:'TodoItem', name:'TodoItem', kind:'component', sig:'<TodoItem todo onToggle />', file:'components/TodoItem.tsx', callers: 3 },
+                  { id:'useTodos', name:'useTodos', kind:'hook', sig:'() → TodoStore', file:'store/useTodos.ts', callers: 9 },
+                  { id:'syncTodos', name:'syncTodos', kind:'function', sig:'(local, remote) → Todo[]', file:'sync/syncTodos.ts', callers: 2 },
+                ].map((s, i) => (
+                  <SymbolNode key={s.id} symbol={s}
+                    x={24} y={24 + i * 76} w={240} h={64}
+                    density={v.d} accent={accent}
+                    selected={i === 1 && v.d === 'compact'}
+                  />
+                ))}
+              </div>
+            </DCArtboard>
+          ))}
+        </DCSection>
+
+        {/* Kind palette */}
+        <DCSection title="Semantic kind palette" subtitle="Six kinds, one chroma, hues spaced. Edges and tags inherit from these.">
+          <DCArtboard label="kinds" width={760} height={200}>
+            <div style={{
+              width: '100%', height: '100%', background: 'oklch(0.142 0.008 260)',
+              display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 1,
+              padding: 1, fontFamily: "'JetBrains Mono', monospace",
+            }}>
+              {Object.entries(T.kind).slice(0, 6).map(([k, c]) => (
+                <div key={k} style={{
+                  background: 'oklch(0.178 0.008 260)', padding: 14,
+                  display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
+                }}>
+                  <div style={{ width: 14, height: 14, borderRadius: 2, background: c, marginBottom: 8 }}/>
+                  <div>
+                    <div style={{ fontSize: 11, color: '#e6e8eb' }}>{k}</div>
+                    <div style={{ fontSize: 9.5, color: 'oklch(0.555 0.012 260)', marginTop: 2 }}>{c.replace('oklch(','').replace(')','')}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </DCArtboard>
+        </DCSection>
+
+      </DesignCanvas>
+
+      {/* Tweaks panel — only visible when toolbar toggle is on */}
+      {tweaksOpen && (
+        <div className="tweaks">
+          <div className="tweaks-title">
+            <span style={{ width: 6, height: 6, borderRadius: 999, background: accent, boxShadow: `0 0 6px ${accent}` }}/>
+            tweaks
+          </div>
+
+          <div className="tweaks-row">
+            <label>accent hue · {state.accent_hue}°</label>
+            <input type="range" min="0" max="360" step="1"
+              value={state.accent_hue}
+              onChange={e => update({ accent_hue: Number(e.target.value) })}/>
+            <div className="tweaks-hue-preview"/>
+          </div>
+
+          <div className="tweaks-row">
+            <label>node density</label>
+            <div className="tweaks-seg">
+              {['minimal','compact','rich'].map(d => (
+                <button key={d}
+                  className={state.density === d ? 'is-active' : ''}
+                  onClick={() => update({ density: d })}>{d}</button>
+              ))}
+            </div>
+          </div>
+
+          <div className="tweaks-row">
+            <label>focus variant</label>
+            <div className="tweaks-seg">
+              {[
+                {k:'all', n:'all'},
+                {k:'chat', n:'A'},
+                {k:'drawer', n:'B'},
+                {k:'palette', n:'C'},
+                {k:'inline', n:'D'},
+              ].map(o => (
+                <button key={o.k}
+                  className={state.agent_focus === o.k ? 'is-active' : ''}
+                  onClick={() => update({ agent_focus: o.k })}>{o.n}</button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App/>);
+</script>
+
+</body>
+</html>

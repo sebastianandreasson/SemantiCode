@@ -31,6 +31,8 @@ export interface AgentScopeContext {
 }
 
 interface AgentPanelProps {
+  autoFocusComposer?: boolean
+  composerFocusRequestKey?: number
   desktopHostAvailable?: boolean
   inspectorContext?: AgentScopeContext
   onOpenSettings?: () => void
@@ -38,6 +40,10 @@ interface AgentPanelProps {
   onAdoptInspectorContextAsWorkingSet?: () => void
   onClearWorkingSet?: () => void
   preprocessedWorkspaceContext?: PreprocessedWorkspaceContext | null
+  promptSeed?: {
+    id: string
+    value: string
+  } | null
   settingsOnly?: boolean
   workingSet?: WorkingSetState | null
   workingSetContext?: AgentScopeContext | null
@@ -45,6 +51,8 @@ interface AgentPanelProps {
 }
 
 export function AgentPanel({
+  autoFocusComposer = false,
+  composerFocusRequestKey = 0,
   desktopHostAvailable = false,
   inspectorContext,
   onOpenSettings,
@@ -52,6 +60,7 @@ export function AgentPanel({
   onAdoptInspectorContextAsWorkingSet,
   onClearWorkingSet,
   preprocessedWorkspaceContext = null,
+  promptSeed = null,
   settingsOnly = false,
   workingSet = null,
   workingSetContext = null,
@@ -61,7 +70,13 @@ export function AgentPanel({
   const [bridgeInfo, setBridgeInfo] = useState<DesktopAgentBridgeInfo>(() =>
     normalizeBridgeInfo(agentClient.getBridgeInfo(), desktopHostAvailable),
   )
-  const [composerValue, setComposerValue] = useState('')
+  const [composerState, setComposerState] = useState<{
+    seedId: string | null
+    value: string
+  }>({
+    seedId: null,
+    value: '',
+  })
   const [messages, setMessages] = useState<AgentMessage[]>([])
   const [session, setSession] = useState<AgentSessionSummary | null>(null)
   const [settings, setSettings] = useState<AgentSettingsState | null>(null)
@@ -81,8 +96,13 @@ export function AgentPanel({
   const [oauthStatusMessage, setOauthStatusMessage] = useState<string | null>(null)
   const [oauthLoginUrl, setOauthLoginUrl] = useState<string | null>(null)
   const messageListRef = useRef<HTMLDivElement | null>(null)
+  const composerRef = useRef<HTMLTextAreaElement | null>(null)
   const sessionRef = useRef<AgentSessionSummary | null>(null)
   const previousRunStateRef = useRef<AgentSessionSummary['runState'] | null>(null)
+  const composerValue =
+    promptSeed && promptSeed.id !== composerState.seedId
+      ? promptSeed.value
+      : composerState.value
 
   useEffect(() => {
     sessionRef.current = session
@@ -273,6 +293,43 @@ export function AgentPanel({
     messageListRef.current.scrollTop = messageListRef.current.scrollHeight
   }, [messages])
 
+  useEffect(() => {
+    if (!promptSeed) {
+      return
+    }
+
+    window.setTimeout(() => {
+      composerRef.current?.focus()
+      composerRef.current?.setSelectionRange(
+        promptSeed.value.length,
+        promptSeed.value.length,
+      )
+    }, 0)
+  }, [promptSeed])
+
+  useEffect(() => {
+    if (settingsOnly) {
+      return
+    }
+
+    window.setTimeout(() => {
+      composerRef.current?.focus()
+    }, 0)
+  }, [composerFocusRequestKey, settingsOnly])
+
+  const sessionIsInteractive =
+    session?.runState === 'ready' || session?.runState === 'running'
+
+  useEffect(() => {
+    if (!autoFocusComposer || settingsOnly || !sessionIsInteractive) {
+      return
+    }
+
+    window.setTimeout(() => {
+      composerRef.current?.focus()
+    }, 0)
+  }, [autoFocusComposer, sessionIsInteractive, settingsOnly])
+
   async function handleSubmit() {
     const nextPrompt = composerValue.trim()
 
@@ -305,7 +362,10 @@ export function AgentPanel({
         throw new Error('No active desktop agent session is available.')
       }
 
-      setComposerValue('')
+      setComposerState({
+        seedId: promptSeed?.id ?? composerState.seedId,
+        value: '',
+      })
     } catch (error) {
       setErrorMessage(
         error instanceof Error ? error.message : 'Failed to send the prompt to the agent.',
@@ -654,8 +714,6 @@ export function AgentPanel({
           : pending
             ? 'A prompt is already being sent.'
             : null
-  const sessionIsInteractive =
-    session?.runState === 'ready' || session?.runState === 'running'
   const hasInspectorContext = hasScopeContext(inspectorContext)
   const hasWorkingSetContext = hasScopeContext(workingSetContext)
   const workingSetMatchesInspectorContext =
@@ -954,124 +1012,130 @@ export function AgentPanel({
           ) : null}
         </div>
       ) : (
-      <>
-      <div className="cbv-agent-messages" ref={messageListRef}>
-        {messages.length ? (
-          messages.map((message) => (
-            <article
-              className={`cbv-agent-message is-${message.role}`}
-              key={message.id}
-            >
-              <header>
-                <strong>{message.role}</strong>
-                {message.isStreaming ? <span>streaming</span> : null}
-              </header>
-              <div className="cbv-agent-message-body">
-                {message.blocks.length ? (
-                  message.blocks.map((block, index) => (
-                    <p key={`${message.id}:${block.kind}:${index}`}>{block.text || ' '}</p>
-                  ))
-                ) : (
-                  <p>{message.role === 'assistant' ? '…' : ''}</p>
-                )}
-              </div>
-            </article>
-          ))
-        ) : (
-          <div className="cbv-empty">
-            <h2>No agent messages yet</h2>
-            <p>Send a prompt to the embedded PI runtime from here.</p>
-          </div>
-        )}
-      </div>
+      <div className="cbv-agent-thread">
+        <div className="cbv-agent-messages" ref={messageListRef}>
+          {messages.length ? (
+            messages.map((message) => (
+              <article
+                className={`cbv-agent-message is-${message.role}`}
+                key={message.id}
+              >
+                <header>
+                  <strong>{message.role}</strong>
+                  {message.isStreaming ? <span>streaming</span> : null}
+                </header>
+                <div className="cbv-agent-message-body">
+                  {message.blocks.length ? (
+                    message.blocks.map((block, index) => (
+                      <p key={`${message.id}:${block.kind}:${index}`}>{block.text || ' '}</p>
+                    ))
+                  ) : (
+                    <p>{message.role === 'assistant' ? '…' : ''}</p>
+                  )}
+                </div>
+              </article>
+            ))
+          ) : (
+            <div className="cbv-empty">
+              <h2>No agent messages yet</h2>
+              <p>Send a prompt to the embedded PI runtime from here.</p>
+            </div>
+          )}
+        </div>
 
-      <div className="cbv-agent-composer">
-        {hasWorkingSetContext ? (
-          <div className="cbv-agent-context">
-            <p className="cbv-eyebrow">Pinned working set</p>
-            <strong>
-              {describeScopeContextTitle(workingSetContext)}
-            </strong>
-            <p>
-              Agent requests will start from this working set and only leave it when blocked.
-              {workingSet?.source === 'selection' ? ' Pinned from selection.' : ''}
-            </p>
-            {renderScopeContextList(workingSetContext)}
-            {renderScopeContextOverflow(workingSetContext)}
-            <div className="cbv-agent-context-actions">
-              {hasInspectorContext && !workingSetMatchesInspectorContext && onAdoptInspectorContextAsWorkingSet ? (
-                <button onClick={onAdoptInspectorContextAsWorkingSet} type="button">
-                  Replace with current selection
-                </button>
-              ) : null}
-              {onClearWorkingSet ? (
-                <button className="is-secondary" onClick={onClearWorkingSet} type="button">
-                  Clear working set
-                </button>
+        <div className="cbv-agent-composer">
+          {hasWorkingSetContext ? (
+            <div className="cbv-agent-context">
+              <p className="cbv-eyebrow">Pinned working set</p>
+              <strong>
+                {describeScopeContextTitle(workingSetContext)}
+              </strong>
+              <p>
+                Agent requests will start from this working set and only leave it when blocked.
+                {workingSet?.source === 'selection' ? ' Pinned from selection.' : ''}
+              </p>
+              {renderScopeContextList(workingSetContext)}
+              {renderScopeContextOverflow(workingSetContext)}
+              <div className="cbv-agent-context-actions">
+                {hasInspectorContext && !workingSetMatchesInspectorContext && onAdoptInspectorContextAsWorkingSet ? (
+                  <button onClick={onAdoptInspectorContextAsWorkingSet} type="button">
+                    Replace with current selection
+                  </button>
+                ) : null}
+                {onClearWorkingSet ? (
+                  <button className="is-secondary" onClick={onClearWorkingSet} type="button">
+                    Clear working set
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          ) : hasInspectorContext ? (
+            <div className="cbv-agent-context">
+              <p className="cbv-eyebrow">Current inspector target</p>
+              <strong>
+                {describeScopeContextTitle(inspectorContext)}
+              </strong>
+              <p>
+                {describeInspectorContext(inspectorContext)}
+              </p>
+              {renderScopeContextList(inspectorContext)}
+              {renderScopeContextOverflow(inspectorContext)}
+              {onAdoptInspectorContextAsWorkingSet ? (
+                <div className="cbv-agent-context-actions">
+                  <button onClick={onAdoptInspectorContextAsWorkingSet} type="button">
+                    Use as working set
+                  </button>
+                </div>
               ) : null}
             </div>
-          </div>
-        ) : hasInspectorContext ? (
-          <div className="cbv-agent-context">
-            <p className="cbv-eyebrow">Current inspector target</p>
-            <strong>
-              {describeScopeContextTitle(inspectorContext)}
-            </strong>
-            <p>
-              {describeInspectorContext(inspectorContext)}
-            </p>
-            {renderScopeContextList(inspectorContext)}
-            {renderScopeContextOverflow(inspectorContext)}
-            {onAdoptInspectorContextAsWorkingSet ? (
-              <div className="cbv-agent-context-actions">
-                <button onClick={onAdoptInspectorContextAsWorkingSet} type="button">
-                  Use as working set
-                </button>
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-        <textarea
-          onChange={(event) => setComposerValue(event.target.value)}
-          onKeyDown={(event) => {
-            if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
-              event.preventDefault()
-              void handleSubmit()
+          ) : null}
+          <textarea
+            ref={composerRef}
+            onChange={(event) =>
+              setComposerState({
+                seedId: promptSeed?.id ?? composerState.seedId,
+                value: event.target.value,
+              })
             }
-          }}
-          placeholder="Ask about this repository or request a change…"
-          rows={4}
-          value={composerValue}
-        />
-        <div className="cbv-agent-actions">
-          <button
-            className="is-secondary"
-            disabled={session?.runState !== 'running'}
-            onClick={() => {
-              void handleCancel()
+            onKeyDown={(event) => {
+              if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+                event.preventDefault()
+                void handleSubmit()
+              }
             }}
-            type="button"
-          >
-            Cancel
-          </button>
-          <button
-            disabled={
-              pending ||
-              composerValue.trim().length === 0 ||
-              session?.runState === 'disabled' ||
-              session?.runState === 'initializing'
-            }
-            title={sendDisabledReason ?? undefined}
-            onClick={() => {
-              void handleSubmit()
-            }}
-            type="button"
-          >
-            Send
-          </button>
+            placeholder="Ask about this repository or request a change…"
+            rows={4}
+            value={composerValue}
+          />
+          <div className="cbv-agent-actions">
+            <button
+              className="is-secondary"
+              disabled={session?.runState !== 'running'}
+              onClick={() => {
+                void handleCancel()
+              }}
+              type="button"
+            >
+              Cancel
+            </button>
+            <button
+              disabled={
+                pending ||
+                composerValue.trim().length === 0 ||
+                session?.runState === 'disabled' ||
+                session?.runState === 'initializing'
+              }
+              title={sendDisabledReason ?? undefined}
+              onClick={() => {
+                void handleSubmit()
+              }}
+              type="button"
+            >
+              Send
+            </button>
+          </div>
         </div>
       </div>
-      </>
       )}
     </div>
   )

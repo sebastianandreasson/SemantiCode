@@ -64,7 +64,7 @@ import { useVisualizerStore } from '../store/visualizerStore'
 import { buildStructuralLayout } from '../layouts/structuralLayout'
 import { buildSymbolLayout } from '../layouts/symbolLayout'
 import { buildSemanticLayout } from '../semantic/semanticLayout'
-import { WorkspaceAgentActivity } from './agent/WorkspaceAgentActivity'
+import { AgentDrawer } from './agent/AgentDrawer'
 import { CodebaseAnnotationNode } from './CodebaseAnnotationNode'
 import { CodebaseCanvasNode } from './CodebaseCanvasNode'
 import { CodebaseSymbolNode } from './CodebaseSymbolNode'
@@ -72,7 +72,12 @@ import { getInspectorHeaderSummary } from './inspector/inspectorUtils'
 import { AutonomousRunsPanel } from './runs/AutonomousRunsPanel'
 import { SemanticodeErrorBoundary } from './SemanticodeErrorBoundary'
 import type { ThemeMode } from './settings/GeneralSettingsPanel'
-import { ProjectsSidebar } from './shell/ProjectsSidebar'
+import {
+  WorkspaceSidebar,
+  type WorkspaceSidebarGroup,
+  type WorkspaceSidebarGroupItem,
+} from './shell/WorkspaceSidebar'
+import { DraftActionStrip } from './shell/DraftActionStrip'
 import { WorkspaceSyncModal } from './shell/WorkspaceSyncModal'
 import { WorkspaceToolbar } from './shell/WorkspaceToolbar'
 import {
@@ -268,9 +273,10 @@ const nodeTypes = {
 }
 
 const SYMBOL_LEGEND_ITEMS = [
+  { label: 'Component', kindClass: 'component' },
+  { label: 'Hook', kindClass: 'hook' },
   { label: 'Class', kindClass: 'class' },
   { label: 'Function', kindClass: 'function' },
-  { label: 'Method', kindClass: 'method' },
   { label: 'Constant', kindClass: 'constant' },
   { label: 'Variable', kindClass: 'variable' },
 ] as const
@@ -291,6 +297,14 @@ interface DesktopBridge {
   isDesktop?: boolean
   openWorkspaceDialog?: () => Promise<boolean>
   openWorkspaceRootDir?: (rootDir: string) => Promise<boolean>
+  removeWorkspaceHistoryEntry?: (rootDir: string) => Promise<{
+    activeWorkspaceRootDir: string | null
+    recentWorkspaces: {
+      name: string
+      rootDir: string
+      lastOpenedAt: string
+    }[]
+  }>
   setUiPreferences?: (preferences: UiPreferences) => Promise<UiPreferences>
 }
 
@@ -360,6 +374,11 @@ export function Semanticode({
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [runsPanelOpen, setRunsPanelOpen] = useState(false)
   const [workspaceSyncOpen, setWorkspaceSyncOpen] = useState(false)
+  const [agentDrawerOpen, setAgentDrawerOpen] = useState(false)
+  const [agentDrawerTab, setAgentDrawerTab] = useState<'chat' | 'agents' | 'layout'>(
+    'chat',
+  )
+  const [agentComposerFocusRequestKey, setAgentComposerFocusRequestKey] = useState(0)
   const [themeMode, setThemeMode] = useState<ThemeMode>(
     () => storedUiPreferences.themeMode ?? readThemeMode(),
   )
@@ -432,6 +451,7 @@ export function Semanticode({
   const [liveChangedFiles, setLiveChangedFiles] = useState<string[]>([])
   const [followDirtyFileSignals, setFollowDirtyFileSignals] = useState<DirtyFileEditSignal[]>([])
   const hasRunningAutonomousRun = autonomousRuns.some((run) => run.status === 'running')
+  const runsSurfaceOpen = runsPanelOpen || (agentDrawerOpen && agentDrawerTab === 'agents')
   const currentSnapshot = useVisualizerStore((state) => state.snapshot)
   const draftLayouts = useVisualizerStore((state) => state.draftLayouts)
   const activeDraftId = useVisualizerStore((state) => state.activeDraftId)
@@ -762,7 +782,7 @@ export function Semanticode({
     void refreshTelemetry()
     const intervalId = window.setInterval(() => {
       void refreshTelemetry()
-    }, runsPanelOpen || telemetryWindow === 'run' || hasRunningAutonomousRun ? 2500 : 5000)
+    }, runsSurfaceOpen || telemetryWindow === 'run' || hasRunningAutonomousRun ? 2500 : 5000)
 
     return () => {
       cancelled = true
@@ -771,7 +791,7 @@ export function Semanticode({
   }, [
     effectiveSnapshot?.rootDir,
     hasRunningAutonomousRun,
-    runsPanelOpen,
+    runsSurfaceOpen,
     selectedRunId,
     telemetryEnabled,
     telemetryMode,
@@ -924,7 +944,7 @@ export function Semanticode({
   useEffect(() => {
     let cancelled = false
 
-    if (!runsPanelOpen || !effectiveSnapshot?.rootDir) {
+    if (!runsSurfaceOpen || !effectiveSnapshot?.rootDir) {
       return
     }
 
@@ -939,11 +959,17 @@ export function Semanticode({
         setAutonomousRuns(runsResponse.runs)
         setDetectedTaskFile(runsResponse.detectedTaskFile)
         setRunActionError(null)
-        setSelectedRunId((currentRunId) =>
-          currentRunId && runsResponse.runs.some((run) => run.runId === currentRunId)
-            ? currentRunId
-            : null,
-        )
+        setSelectedRunId((currentRunId) => {
+          if (currentRunId && runsResponse.runs.some((run) => run.runId === currentRunId)) {
+            return currentRunId
+          }
+
+          return (
+            runsResponse.runs.find((run) => run.status === 'running')?.runId ??
+            runsResponse.runs[0]?.runId ??
+            null
+          )
+        })
       } catch (error) {
         if (!cancelled) {
           setRunActionError(
@@ -962,12 +988,12 @@ export function Semanticode({
       cancelled = true
       window.clearInterval(intervalId)
     }
-  }, [effectiveSnapshot?.rootDir, hasRunningAutonomousRun, runsPanelOpen])
+  }, [effectiveSnapshot?.rootDir, hasRunningAutonomousRun, runsSurfaceOpen])
 
   useEffect(() => {
     let cancelled = false
 
-    if (!runsPanelOpen || !effectiveSnapshot?.rootDir || !selectedRunId) {
+    if (!runsSurfaceOpen || !effectiveSnapshot?.rootDir || !selectedRunId) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setSelectedRunDetail(null)
       setSelectedRunTimeline([])
@@ -1006,7 +1032,7 @@ export function Semanticode({
       cancelled = true
       window.clearInterval(intervalId)
     }
-  }, [effectiveSnapshot?.rootDir, runsPanelOpen, selectedRunId])
+  }, [effectiveSnapshot?.rootDir, runsSurfaceOpen, selectedRunId])
 
   useEffect(() => {
     if (!effectiveSnapshot?.rootDir) {
@@ -1946,6 +1972,14 @@ export function Semanticode({
   const workspaceName = effectiveSnapshot
     ? getWorkspaceName(effectiveSnapshot.rootDir)
     : 'Workspace'
+  const workspaceSidebarGroups = useMemo(
+    () =>
+      buildWorkspaceSidebarGroups({
+        layout: resolvedScene?.layoutSpec ?? null,
+        snapshot: effectiveSnapshot,
+      }),
+    [effectiveSnapshot, resolvedScene],
+  )
   const workingSetSummary =
     workingSet.nodeIds.length > 0
       ? {
@@ -1968,7 +2002,6 @@ export function Semanticode({
         workspaceSync: workspaceSyncStatus
           ? {
               isOutdated: hasWorkspaceSyncUpdates(workspaceSyncStatus),
-              label: formatWorkspaceSyncLabel(workspaceSyncStatus),
               title: formatWorkspaceSyncTitle(workspaceSyncStatus),
             }
           : null,
@@ -2049,7 +2082,6 @@ export function Semanticode({
   ])
   const activeRunId =
     autonomousRuns.find((run) => run.status === 'running')?.runId ?? null
-  const runsActive = activeRunId !== null
   const agentHeatHelperText = useMemo(() => {
     if (!telemetryEnabled) {
       return 'Agent heat is off. Adjust these controls to load telemetry.'
@@ -2078,6 +2110,32 @@ export function Semanticode({
 
     return `${requestText} · ${tokenText}${runText}`
   }, [telemetryEnabled, telemetryError, telemetryOverview, telemetryWindow])
+  const agentHeatSummaryText = useMemo(() => {
+    if (!telemetryEnabled) {
+      return 'heat off'
+    }
+
+    if (telemetryError) {
+      return 'telemetry error'
+    }
+
+    if (!telemetryOverview) {
+      return 'loading activity'
+    }
+
+    if (telemetryOverview.requestCount === 0) {
+      return telemetryWindow === 'run' ? '0 req · run' : '0 req'
+    }
+
+    const requestText = `${telemetryOverview.requestCount} req`
+    const tokenText = `${Math.round(telemetryOverview.totalTokens)} tok`
+    const runText =
+      telemetryOverview.activeRuns.length > 0
+        ? ` · ${telemetryOverview.activeRuns.length} run${telemetryOverview.activeRuns.length === 1 ? '' : 's'}`
+        : ''
+
+    return `${requestText} · ${tokenText}${runText}`
+  }, [telemetryEnabled, telemetryError, telemetryOverview, telemetryWindow])
   const agentHeatFollowText = useMemo(() => {
     if (!followActiveAgent) {
       return 'Follow active agent off.'
@@ -2096,9 +2154,17 @@ export function Semanticode({
 
     return `${modeLabel}: ${followDebugState.currentTarget.path}`
   }, [followActiveAgent, followDebugState, telemetryEnabled])
+  const agentStripTrailLabel =
+    followDebugState.currentTarget?.path ??
+    selectedSymbol?.name ??
+    selectedFile?.path ??
+    workingSetSummary?.label ??
+    workspaceName
 
-  const handleOpenRunsPanel = useCallback(() => {
-    setRunsPanelOpen(true)
+  const handleFocusAgentDrawerComposer = useCallback(() => {
+    setAgentDrawerTab('chat')
+    setAgentDrawerOpen(true)
+    setAgentComposerFocusRequestKey((current) => current + 1)
   }, [])
 
   const handleTelemetrySourceChange = useCallback((source: TelemetrySource) => {
@@ -2456,27 +2522,6 @@ export function Semanticode({
     }
   }
 
-  async function handleCloseWorkspace() {
-    if (!desktopBridge?.closeWorkspace) {
-      if (isDesktopHost) {
-        navigateSemanticodeAction('close-workspace')
-      }
-      return
-    }
-
-    try {
-      setWorkspaceActionPending(true)
-      setWorkspaceActionError(null)
-      await desktopBridge.closeWorkspace()
-    } catch (error) {
-      setWorkspaceActionError(
-        error instanceof Error ? error.message : 'Failed to close the current folder.',
-      )
-    } finally {
-      setWorkspaceActionPending(false)
-    }
-  }
-
   async function handleOpenRecentProject(rootDir: string) {
     if (!desktopBridge?.openWorkspaceRootDir) {
       if (isDesktopHost) {
@@ -2492,6 +2537,32 @@ export function Semanticode({
     } catch (error) {
       setWorkspaceActionError(
         error instanceof Error ? error.message : 'Failed to open the selected folder.',
+      )
+    } finally {
+      setWorkspaceActionPending(false)
+    }
+  }
+
+  async function handleRemoveRecentProject(rootDir: string) {
+    if (!rootDir) {
+      return
+    }
+
+    try {
+      setWorkspaceActionPending(true)
+      setWorkspaceActionError(null)
+
+      if (desktopBridge?.removeWorkspaceHistoryEntry) {
+        const history = await desktopBridge.removeWorkspaceHistoryEntry(rootDir)
+        setRecentProjects(history.recentWorkspaces)
+      } else {
+        setRecentProjects((currentProjects) =>
+          currentProjects.filter((project) => project.rootDir !== rootDir),
+        )
+      }
+    } catch (error) {
+      setWorkspaceActionError(
+        error instanceof Error ? error.message : 'Failed to remove the selected workspace.',
       )
     } finally {
       setWorkspaceActionPending(false)
@@ -2514,7 +2585,8 @@ export function Semanticode({
         taskFile: detectedTaskFile,
       })
 
-      setRunsPanelOpen(true)
+      setAgentDrawerTab('agents')
+      setAgentDrawerOpen(true)
       setSelectedRunId(response.run.runId)
       setSelectedRunDetail(response.run)
       setDetectedTaskFile(response.detectedTaskFile)
@@ -2790,210 +2862,259 @@ export function Semanticode({
     >
       <ReactFlowProvider>
       <div
-        className={`cbv-app-shell${canManageProjects ? ' is-desktop-host' : ''}${projectsSidebarOpen ? ' is-projects-open' : ''}`}
+        className={`cbv-app-shell${canManageProjects ? ' is-desktop-host' : ''}`}
       >
-        <ProjectsSidebar
-          canManageProjects={canManageProjects}
-          currentRootDir={effectiveSnapshot.rootDir}
-          onClose={() => setProjectsSidebarOpen(false)}
-          onCloseWorkspace={() => {
-            void handleCloseWorkspace()
-          }}
-          onOpenRecentProject={(rootDir) => {
-            void handleOpenRecentProject(rootDir)
-          }}
-          onOpenWorkspace={() => {
-            void handleOpenAnotherWorkspace()
-          }}
-          open={projectsSidebarOpen}
-          recentProjects={recentProjects}
-          workspaceActionError={workspaceActionError}
-          workspaceActionPending={workspaceActionPending}
-        />
         <section className="cbv-shell">
           <WorkspaceToolbar
-            activeDraft={Boolean(activeDraft)}
-            activeLayoutSyncNote={activeLayoutSyncNote}
-            compareOverlayActive={compareOverlayActive}
-            layoutActionsPending={layoutActionsPending}
             layoutOptions={layoutOptions}
-            onAcceptDraft={
-              activeDraft && onAcceptDraft
-                ? async () => {
-                    try {
-                      setDraftActionError(null)
-                      await onAcceptDraft(activeDraft.id)
-                    } catch (error) {
-                      setDraftActionError(
-                        error instanceof Error
-                          ? error.message
-                          : 'Failed to accept draft.',
-                      )
-                    }
-                  }
-                : undefined
-            }
-            onActivateCompareOverlay={
-              currentCompareSource ? handleActivateCompareOverlay : undefined
-            }
-            onBuildSemanticEmbeddings={onBuildSemanticEmbeddings}
-            onClearCompareOverlay={compareOverlayActive ? handleClearCompareOverlay : undefined}
             onOpenAgentSettings={() => setSettingsOpen(true)}
-            onOpenRunsPanel={handleOpenRunsPanel}
             onOpenWorkspaceSync={
               workspaceSyncStatus ? () => setWorkspaceSyncOpen(true) : undefined
             }
-            onRejectDraft={
-              activeDraft && onRejectDraft
-                ? async () => {
-                    try {
-                      setDraftActionError(null)
-                      await onRejectDraft(activeDraft.id)
-                    } catch (error) {
-                      setDraftActionError(
-                        error instanceof Error
-                          ? error.message
-                          : 'Failed to reject draft.',
-                      )
-                    }
-                  }
-                : undefined
-            }
             onSelectLayoutValue={handleLayoutSelectionChange}
-            onStartPreprocessing={onStartPreprocessing}
             onToggleProjectsSidebar={
               () => setProjectsSidebarOpen((current) => !current)
             }
             preprocessingStatus={formattedPreprocessingStatus}
             projectsSidebarOpen={projectsSidebarOpen}
-            runsActive={runsActive}
             selectedLayoutValue={selectedLayoutValue}
-            showCompareAction={Boolean(currentCompareSource)}
             workingSetSummary={workingSetSummary}
             workspaceName={workspaceName}
             workspaceRootDir={effectiveSnapshot.rootDir}
           />
-
-	        <div
-            className={`cbv-workspace${inspectorOpen ? '' : ' is-inspector-closed'}`}
-            ref={workspaceRef}
-            style={{
-              '--cbv-canvas-width': `${(canvasWidthRatio * 100).toFixed(2)}%`,
-              '--cbv-inspector-width': `${(inspectorWidthRatio * 100).toFixed(2)}%`,
-            } as CSSProperties}
-          >
-          <MemoizedCanvasViewport
-              agentHeatHelperText={agentHeatHelperText}
-              agentHeatFollowEnabled={followActiveAgent}
-              agentHeatFollowText={agentHeatFollowText}
-              agentHeatDebugOpen={followDebugOpen}
-              agentHeatDebugState={followDebugState}
-              agentHeatMode={telemetryMode}
-              agentHeatSource={telemetrySource}
-              agentHeatWindow={telemetryWindow}
-              denseCanvasMode={denseCanvasMode}
-              edges={edges}
-              graphLayers={graphLayers}
-              layoutSuggestionError={layoutSuggestionError}
-              layoutSuggestionPending={layoutSuggestionPending}
-              layoutSuggestionText={layoutSuggestionText}
-              nodes={nodes}
-              onEdgeClick={handleCanvasEdgeClick}
-              onEdgesChange={onEdgesChange}
-              onInit={setFlowInstance}
-              onAgentHeatModeChange={handleTelemetryModeChange}
-              onAgentHeatSourceChange={handleTelemetrySourceChange}
-              onToggleAgentHeatDebug={handleToggleFollowDebug}
-              onToggleAgentHeatFollow={handleToggleFollowActiveAgent}
-              onAgentHeatWindowChange={handleTelemetryWindowChange}
-              onLayoutSuggestionChange={handleLayoutSuggestionChange}
-              onLayoutSuggestionSubmit={handleLayoutSuggestionSubmit}
-              onMoveEnd={handleCanvasMoveEnd}
-              onNodeClick={handleCanvasNodeClick}
-              onNodeDoubleClick={handleCanvasNodeDoubleClick}
-              onNodeDrag={handleCanvasNodeDrag}
-              onNodeDragStop={handleCanvasNodeDragStop}
-              onNodesChange={onNodesChange}
-              onSemanticSearchChange={setSemanticSearchQuery}
-              onSemanticSearchClear={() => {
-                setSemanticSearchQuery('')
-                setSemanticSearchRankedMatches([])
-                setSemanticSearchError(null)
-                setSemanticSearchPending(false)
+          {activeDraft ? (
+            <DraftActionStrip
+              draftLabel={activeDraft.layout?.title ?? activeDraft.id}
+              errorMessage={draftActionError}
+              layoutSyncNote={activeLayoutSyncNote}
+              onAccept={
+                onAcceptDraft
+                  ? async () => {
+                      try {
+                        setDraftActionError(null)
+                        await onAcceptDraft(activeDraft.id)
+                      } catch (error) {
+                        setDraftActionError(
+                          error instanceof Error
+                            ? error.message
+                            : 'Failed to accept draft.',
+                        )
+                      }
+                    }
+                  : undefined
+              }
+              onReject={
+                onRejectDraft
+                  ? async () => {
+                      try {
+                        setDraftActionError(null)
+                        await onRejectDraft(activeDraft.id)
+                      } catch (error) {
+                        setDraftActionError(
+                          error instanceof Error
+                            ? error.message
+                            : 'Failed to reject draft.',
+                        )
+                      }
+                    }
+                  : undefined
+              }
+              pending={layoutActionsPending}
+            />
+          ) : null}
+          <div className="cbv-main-layout">
+            <WorkspaceSidebar
+              canManageProjects={canManageProjects}
+              currentRootDir={effectiveSnapshot.rootDir}
+              groups={workspaceSidebarGroups}
+              onClose={() => setProjectsSidebarOpen(false)}
+              onOpenRecentProject={(rootDir) => {
+                void handleOpenRecentProject(rootDir)
               }}
-              onSemanticSearchLimitChange={setSemanticSearchMatchLimit}
-              onSemanticSearchModeChange={handleSemanticSearchModeChange}
-              onSemanticSearchStrictnessChange={setSemanticSearchStrictness}
-              onToggleLayer={toggleGraphLayer}
-              semanticSearchAvailable={semanticSearchAvailable}
-              semanticSearchGroupSearchAvailable={semanticGroupSearchAvailable}
-              semanticSearchHelperText={semanticSearchStatus.helper}
-              semanticSearchLimit={semanticSearchMatchLimit}
-              semanticSearchMode={semanticSearchMode}
-              semanticSearchPending={semanticSearchPending}
-              semanticSearchQuery={semanticSearchQuery}
-              semanticSearchStrictness={semanticSearchStrictness}
-              semanticSearchResultCount={semanticSearchStatus.resultCount}
-              showLayoutSuggestion={Boolean(onSuggestLayout)}
-              showSemanticSearch={viewMode === 'symbols' && semanticSearchAvailable}
-              themeMode={themeMode}
-              viewMode={viewMode}
-              viewport={viewport}
-              visibleLayerToggles={visibleLayerToggles}
+              onRemoveRecentProject={(rootDir) => {
+                void handleRemoveRecentProject(rootDir)
+              }}
+              onOpenWorkspace={() => {
+                void handleOpenAnotherWorkspace()
+              }}
+              onSelectSymbol={(nodeId) => {
+                selectNode(nodeId)
+                setInspectorTab('file')
+                setInspectorOpen(true)
+              }}
+              open={projectsSidebarOpen}
+              recentProjects={recentProjects}
+              selectedNodeId={selectedNodeId}
+              workspaceActionError={workspaceActionError}
+              workspaceActionPending={workspaceActionPending}
             />
 
-          {inspectorOpen ? (
-            <button
-              aria-label="Resize canvas and inspector"
-              className="cbv-workspace-resize-handle"
-              onPointerDown={handleResizePointerDown}
-              type="button"
+            <div
+              className={`cbv-workspace${inspectorOpen ? '' : ' is-inspector-closed'}`}
+              ref={workspaceRef}
+              style={{
+                '--cbv-canvas-width': `${(canvasWidthRatio * 100).toFixed(2)}%`,
+                '--cbv-inspector-width': `${(inspectorWidthRatio * 100).toFixed(2)}%`,
+              } as CSSProperties}
             >
-              <span />
-            </button>
-          ) : null}
+              <MemoizedCanvasViewport
+                  agentHeatHelperText={agentHeatHelperText}
+                  agentHeatFollowEnabled={followActiveAgent}
+                  agentHeatFollowText={agentHeatFollowText}
+                  agentHeatDebugOpen={followDebugOpen}
+                  agentHeatDebugState={followDebugState}
+                  agentHeatMode={telemetryMode}
+                  agentHeatSource={telemetrySource}
+                  agentHeatWindow={telemetryWindow}
+                  compareOverlayActive={compareOverlayActive}
+                  compareSourceTitle={currentCompareSource?.title ?? null}
+                  denseCanvasMode={denseCanvasMode}
+                  edges={edges}
+                  graphLayers={graphLayers}
+                  nodes={nodes}
+                  onEdgeClick={handleCanvasEdgeClick}
+                  onEdgesChange={onEdgesChange}
+                  onInit={setFlowInstance}
+                  onAgentHeatModeChange={handleTelemetryModeChange}
+                  onAgentHeatSourceChange={handleTelemetrySourceChange}
+                  onToggleAgentHeatDebug={handleToggleFollowDebug}
+                  onToggleAgentHeatFollow={handleToggleFollowActiveAgent}
+                  onAgentHeatWindowChange={handleTelemetryWindowChange}
+                  onActivateCompareOverlay={
+                    currentCompareSource ? handleActivateCompareOverlay : undefined
+                  }
+                  onClearCompareOverlay={compareOverlayActive ? handleClearCompareOverlay : undefined}
+                  onMoveEnd={handleCanvasMoveEnd}
+                  onNodeClick={handleCanvasNodeClick}
+                  onNodeDoubleClick={handleCanvasNodeDoubleClick}
+                  onNodeDrag={handleCanvasNodeDrag}
+                  onNodeDragStop={handleCanvasNodeDragStop}
+                  onNodesChange={onNodesChange}
+                  onSemanticSearchChange={setSemanticSearchQuery}
+                  onSemanticSearchClear={() => {
+                    setSemanticSearchQuery('')
+                    setSemanticSearchRankedMatches([])
+                    setSemanticSearchError(null)
+                    setSemanticSearchPending(false)
+                  }}
+                  onSemanticSearchLimitChange={setSemanticSearchMatchLimit}
+                  onSemanticSearchModeChange={handleSemanticSearchModeChange}
+                  onSemanticSearchStrictnessChange={setSemanticSearchStrictness}
+                  onToggleLayer={toggleGraphLayer}
+                  semanticSearchAvailable={semanticSearchAvailable}
+                  semanticSearchGroupSearchAvailable={semanticGroupSearchAvailable}
+                  semanticSearchHelperText={semanticSearchStatus.helper}
+                  semanticSearchLimit={semanticSearchMatchLimit}
+                  semanticSearchMode={semanticSearchMode}
+                  semanticSearchPending={semanticSearchPending}
+                  semanticSearchQuery={semanticSearchQuery}
+                  semanticSearchStrictness={semanticSearchStrictness}
+                  semanticSearchResultCount={semanticSearchStatus.resultCount}
+                  showCompareAction={Boolean(currentCompareSource)}
+                  showSemanticSearch={viewMode === 'symbols' && semanticSearchAvailable}
+                  themeMode={themeMode}
+                  utilitySummaryText={agentHeatSummaryText}
+                  viewMode={viewMode}
+                  viewport={viewport}
+                  visibleLayerToggles={visibleLayerToggles}
+                />
+              {inspectorOpen ? (
+                <button
+                  aria-label="Resize canvas and inspector"
+                  className="cbv-workspace-resize-handle"
+                  onPointerDown={handleResizePointerDown}
+                  type="button"
+                >
+                  <span />
+                </button>
+              ) : null}
 
-          {inspectorOpen ? (
-            <Suspense fallback={<InspectorFallback header={inspectorHeader} onClose={() => setInspectorOpen(false)} />}>
-              <LazyInspectorPane
-                activeDraft={activeDraft}
-                compareOverlayActive={compareOverlayActive}
-                desktopHostAvailable={isDesktopHost}
-                draftActionError={draftActionError}
-                detectedPlugins={snapshot?.detectedPlugins ?? []}
-                facetDefinitions={snapshot?.facetDefinitions ?? []}
-                graphSummary={graphSummary}
-                header={inspectorHeader}
-                inspectorBodyRef={inspectorBodyRef}
-                inspectorTab={inspectorTab}
-                onAgentRunSettled={onAgentRunSettled}
-                onAdoptInspectorContextAsWorkingSet={adoptSelectionAsWorkingSet}
-                onClearCompareOverlay={handleClearCompareOverlay}
-                onClearWorkingSet={clearWorkingSet}
-                onClose={() => setInspectorOpen(false)}
-                onOpenAgentSettings={() => setSettingsOpen(true)}
-                onSetInspectorTab={setInspectorTab}
-                preprocessedWorkspaceContext={preprocessedWorkspaceContext}
-                resolvedCompareOverlay={resolvedCompareOverlay}
-                selectedEdge={selectedEdge}
-                selectedFile={selectedFile}
-                selectedFiles={selectedFiles}
-                selectedLayoutGroup={selectedLayoutGroup}
-                selectedLayoutGroupNearbySymbols={selectedGroupNearbySymbols}
-                selectedLayoutGroupPrototype={selectedGroupPrototype}
-                selectedNodeTelemetry={selectedNodeTelemetry}
-                selectedNode={selectedNode}
-                selectedSymbol={selectedSymbol}
-                selectedSymbols={selectedSymbols}
-                scrollToDiffRequestKey={followedEditDiffRequestKey}
-                themeMode={themeMode}
-                workingSet={workingSet.nodeIds.length > 0 ? workingSet : null}
-                workingSetContext={workingSetContext}
-                workspaceProfile={workspaceProfile}
-              />
-            </Suspense>
-          ) : null}
-        </div>
+              {inspectorOpen ? (
+                <Suspense fallback={<InspectorFallback header={inspectorHeader} onClose={() => setInspectorOpen(false)} />}>
+                  <LazyInspectorPane
+                    activeDraft={activeDraft}
+                    compareOverlayActive={compareOverlayActive}
+                    desktopHostAvailable={isDesktopHost}
+                    draftActionError={draftActionError}
+                    detectedPlugins={effectiveSnapshot?.detectedPlugins ?? []}
+                    facetDefinitions={effectiveSnapshot?.facetDefinitions ?? []}
+                    graphSummary={graphSummary}
+                    header={inspectorHeader}
+                    inspectorBodyRef={inspectorBodyRef}
+                    inspectorTab={inspectorTab}
+                    onAdoptInspectorContextAsWorkingSet={adoptSelectionAsWorkingSet}
+                    onClearCompareOverlay={handleClearCompareOverlay}
+                    onClearWorkingSet={clearWorkingSet}
+                    onClose={() => setInspectorOpen(false)}
+                    onOpenAgentDrawer={handleFocusAgentDrawerComposer}
+                    onOpenAgentSettings={() => setSettingsOpen(true)}
+                    onSetInspectorTab={setInspectorTab}
+                    preprocessedWorkspaceContext={preprocessedWorkspaceContext}
+                    resolvedCompareOverlay={resolvedCompareOverlay}
+                    selectedEdge={selectedEdge}
+                    selectedFile={selectedFile}
+                    selectedFiles={selectedFiles}
+                    selectedLayoutGroup={selectedLayoutGroup}
+                    selectedLayoutGroupNearbySymbols={selectedGroupNearbySymbols}
+                    selectedLayoutGroupPrototype={selectedGroupPrototype}
+                    selectedNodeTelemetry={selectedNodeTelemetry}
+                    selectedNode={selectedNode}
+                    selectedSymbol={selectedSymbol}
+                    selectedSymbols={selectedSymbols}
+                    scrollToDiffRequestKey={followedEditDiffRequestKey}
+                    themeMode={themeMode}
+                    workingSet={workingSet.nodeIds.length > 0 ? workingSet : null}
+                    workingSetContext={workingSetContext}
+                    workspaceProfile={workspaceProfile}
+                  />
+                </Suspense>
+              ) : null}
+            </div>
+          </div>
+          <AgentDrawer
+            activeRunId={activeRunId}
+            activeTab={agentDrawerTab}
+            autonomousRuns={autonomousRuns}
+            composerFocusRequestKey={agentComposerFocusRequestKey}
+            desktopHostAvailable={isDesktopHost}
+            detectedTaskFile={detectedTaskFile}
+            errorMessage={runActionError}
+            inspectorContext={{
+              file: selectedFile,
+              files: selectedFiles,
+              node: selectedNode,
+              symbol: selectedSymbol,
+              symbols: selectedSymbols,
+            }}
+            layoutSuggestionError={layoutSuggestionError}
+            layoutSuggestionPending={layoutSuggestionPending}
+            layoutSuggestionText={layoutSuggestionText}
+            onAdoptInspectorContextAsWorkingSet={adoptSelectionAsWorkingSet}
+            onChangeTab={setAgentDrawerTab}
+            onClearWorkingSet={clearWorkingSet}
+            onLayoutSuggestionChange={handleLayoutSuggestionChange}
+            onLayoutSuggestionSubmit={handleLayoutSuggestionSubmit}
+            onOpenSettings={() => setSettingsOpen(true)}
+            onRunSettled={onAgentRunSettled}
+            onSelectRun={handleSelectRun}
+            onStartRun={() => {
+              void handleStartAutonomousRun()
+            }}
+            onStopRun={(runId) => {
+              void handleStopAutonomousRun(runId)
+            }}
+            onToggleOpen={() => setAgentDrawerOpen((current) => !current)}
+            open={agentDrawerOpen}
+            pendingRunAction={runActionPending}
+            preprocessedWorkspaceContext={preprocessedWorkspaceContext}
+            selectedRunDetail={selectedRunDetail}
+            selectedRunId={selectedRunId}
+            timeline={selectedRunTimeline}
+            trailLabel={agentStripTrailLabel}
+            workingSet={workingSet.nodeIds.length > 0 ? workingSet : null}
+            workingSetContext={workingSetContext}
+            workspaceProfile={workspaceProfile}
+          />
         {settingsOpen ? (
           <div
             className="cbv-modal-backdrop"
@@ -3002,7 +3123,7 @@ export function Semanticode({
           >
             <section
               aria-label="General settings"
-              className="cbv-modal"
+              className="cbv-modal cbv-settings-modal"
               onClick={(event) => event.stopPropagation()}
             >
               <div className="cbv-modal-header">
@@ -3061,11 +3182,6 @@ export function Semanticode({
             runs={autonomousRuns}
           />
         ) : null}
-        <WorkspaceAgentActivity
-          desktopHostAvailable={isDesktopHost}
-          preprocessingStatus={preprocessingStatus}
-          workingSetSummary={workingSetSummary}
-        />
       </section>
       </div>
       </ReactFlowProvider>
@@ -3082,12 +3198,11 @@ interface CanvasViewportProps {
   agentHeatMode: TelemetryMode
   agentHeatSource: TelemetrySource
   agentHeatWindow: TelemetryWindow
+  compareOverlayActive: boolean
+  compareSourceTitle: string | null
   denseCanvasMode: boolean
   edges: Edge[]
   graphLayers: Record<GraphLayerKey, boolean>
-  layoutSuggestionError: string | null
-  layoutSuggestionPending: boolean
-  layoutSuggestionText: string
   nodes: Node[]
   onEdgeClick: (_event: unknown, edge: Edge) => void
   onEdgesChange: ReturnType<typeof useEdgesState<Edge>>[2]
@@ -3097,8 +3212,8 @@ interface CanvasViewportProps {
   onToggleAgentHeatDebug: () => void
   onToggleAgentHeatFollow: () => void
   onAgentHeatWindowChange: (window: TelemetryWindow) => void
-  onLayoutSuggestionChange: (value: string) => void
-  onLayoutSuggestionSubmit: () => void
+  onActivateCompareOverlay?: () => void
+  onClearCompareOverlay?: () => void
   onMoveEnd: (_event: MouseEvent | TouchEvent | null, flowViewport: { x: number; y: number; zoom: number }) => void
   onNodeClick: (
     event: { metaKey?: boolean; ctrlKey?: boolean; shiftKey?: boolean },
@@ -3123,9 +3238,10 @@ interface CanvasViewportProps {
   semanticSearchQuery: string
   semanticSearchResultCount: number
   semanticSearchStrictness: number
-  showLayoutSuggestion: boolean
+  showCompareAction: boolean
   showSemanticSearch: boolean
   themeMode: ThemeMode
+  utilitySummaryText: string
   viewMode: VisualizerViewMode
   viewport: { x: number; y: number; zoom: number }
   visibleLayerToggles: GraphLayerKey[]
@@ -3140,12 +3256,11 @@ const MemoizedCanvasViewport = memo(function CanvasViewport({
   agentHeatMode,
   agentHeatSource,
   agentHeatWindow,
+  compareOverlayActive,
+  compareSourceTitle,
   denseCanvasMode,
   edges,
   graphLayers,
-  layoutSuggestionError,
-  layoutSuggestionPending,
-  layoutSuggestionText,
   nodes,
   onEdgeClick,
   onEdgesChange,
@@ -3155,8 +3270,8 @@ const MemoizedCanvasViewport = memo(function CanvasViewport({
   onToggleAgentHeatDebug,
   onToggleAgentHeatFollow,
   onAgentHeatWindowChange,
-  onLayoutSuggestionChange,
-  onLayoutSuggestionSubmit,
+  onActivateCompareOverlay,
+  onClearCompareOverlay,
   onMoveEnd,
   onNodeClick,
   onNodeDoubleClick,
@@ -3178,13 +3293,15 @@ const MemoizedCanvasViewport = memo(function CanvasViewport({
   semanticSearchQuery,
   semanticSearchResultCount,
   semanticSearchStrictness,
-  showLayoutSuggestion,
+  showCompareAction,
   showSemanticSearch,
   themeMode,
+  utilitySummaryText,
   viewMode,
   viewport,
   visibleLayerToggles,
 }: CanvasViewportProps) {
+  const [utilityPaletteOpen, setUtilityPaletteOpen] = useState(false)
   const canvasDotColor = themeMode === 'dark' ? '#4f5f74' : '#d8d1c3'
   const minimapMaskColor =
     themeMode === 'dark' ? 'rgba(7, 9, 12, 0.42)' : 'rgba(44, 35, 27, 0.16)'
@@ -3217,211 +3334,270 @@ const MemoizedCanvasViewport = memo(function CanvasViewport({
   return (
     <section className="cbv-canvas">
       <div className="cbv-canvas-overlays">
-        <div className="cbv-canvas-left-tools">
-          <div className="cbv-agent-heat-panel">
-            <p className="cbv-eyebrow">Agent Heat</p>
-            <div className="cbv-agent-heat-controls">
-              <label>
-                <span>Source</span>
-                <select
-                  onChange={(event) => {
-                    onAgentHeatSourceChange(event.target.value as TelemetrySource)
-                  }}
-                  value={agentHeatSource}
-                >
-                  <option value="all">All</option>
-                  <option value="autonomous">Autonomous</option>
-                  <option value="interactive">Interactive</option>
-                </select>
-              </label>
-              <label>
-                <span>Window</span>
-                <select
-                  onChange={(event) => {
-                    onAgentHeatWindowChange(parseTelemetryWindow(event.target.value))
-                  }}
-                  value={String(agentHeatWindow)}
-                >
-                  <option value="30">30s</option>
-                  <option value="60">60s</option>
-                  <option value="120">2m</option>
-                  <option value="run">Run</option>
-                  <option value="workspace">Workspace</option>
-                </select>
-              </label>
-              <label>
-                <span>Mode</span>
-                <select
-                  onChange={(event) => {
-                    onAgentHeatModeChange(event.target.value as TelemetryMode)
-                  }}
-                  value={agentHeatMode}
-                >
-                  <option value="files">Files</option>
-                  <option value="symbols">Symbols</option>
-                </select>
-              </label>
-            </div>
-            <button
-              aria-pressed={agentHeatFollowEnabled}
-              className={`cbv-agent-heat-follow-toggle${agentHeatFollowEnabled ? ' is-active' : ''}`}
-              onClick={onToggleAgentHeatFollow}
-              type="button"
-            >
-              {agentHeatFollowEnabled ? 'Following active agent' : 'Follow active agent'}
-            </button>
-            <p className="cbv-agent-heat-meta">{agentHeatHelperText}</p>
-            <p className="cbv-agent-heat-follow-meta">{agentHeatFollowText}</p>
-            <button
-              aria-expanded={agentHeatDebugOpen}
-              className="cbv-agent-heat-debug-toggle"
-              onClick={onToggleAgentHeatDebug}
-              type="button"
-            >
-              {agentHeatDebugOpen ? 'Hide follow debug' : 'Show follow debug'}
-            </button>
-            {agentHeatDebugOpen ? (
-              <div className="cbv-agent-heat-debug">
-                <p>
-                  <strong>Mode:</strong> {agentHeatDebugState.currentMode}
-                </p>
-                <p>
-                  <strong>Event:</strong>{' '}
-                  {agentHeatDebugState.latestEvent
-                    ? formatFollowDebugEvent(agentHeatDebugState.latestEvent)
-                    : 'None'}
-                </p>
-                <p>
-                  <strong>Target:</strong>{' '}
-                  {agentHeatDebugState.currentTarget
-                    ? formatFollowDebugTarget(agentHeatDebugState.currentTarget)
-                    : 'None'}
-                </p>
-                <p>
-                  <strong>Queue:</strong> {agentHeatDebugState.queueLength}
-                </p>
-                <p>
-                  <strong>Camera lock:</strong>{' '}
-                  {agentHeatDebugState.cameraLockActive
-                    ? formatFollowCameraLock(agentHeatDebugState.cameraLockUntilMs)
-                    : 'Inactive'}
-                </p>
-                <p>
-                  <strong>Refresh:</strong>{' '}
-                  {agentHeatDebugState.refreshInFlight
-                    ? 'In flight'
-                    : agentHeatDebugState.refreshPending
-                      ? 'Pending'
-                      : 'Idle'}
-                </p>
-              </div>
-            ) : null}
-          </div>
-          {showSemanticSearch ? (
-            <form
-              className={`cbv-semantic-search${semanticSearchPending ? ' is-pending' : ''}${semanticSearchAvailable ? '' : ' is-disabled'}`}
-              onSubmit={(event) => event.preventDefault()}
-            >
-              <div className="cbv-semantic-search-mode-toggle" role="tablist" aria-label="Semantic search mode">
-                <button
-                  aria-pressed={semanticSearchMode === 'symbols'}
-                  className={`cbv-semantic-search-mode${semanticSearchMode === 'symbols' ? ' is-active' : ''}`}
-                  onClick={() => onSemanticSearchModeChange('symbols')}
-                  type="button"
-                >
-                  Symbols
-                </button>
-                <button
-                  aria-pressed={semanticSearchMode === 'groups'}
-                  className={`cbv-semantic-search-mode${semanticSearchMode === 'groups' ? ' is-active' : ''}`}
-                  disabled={!semanticSearchGroupSearchAvailable}
-                  onClick={() => onSemanticSearchModeChange('groups')}
-                  type="button"
-                >
-                  Folders
-                </button>
-              </div>
-              <div className="cbv-semantic-search-shell">
-                <input
-                  aria-label="Search semantic projection"
-                  className="cbv-semantic-search-input"
-                  disabled={!semanticSearchAvailable}
-                  onChange={(event) => {
-                    onSemanticSearchChange(event.target.value)
-                  }}
-                  placeholder={
-                    semanticSearchAvailable
-                      ? semanticSearchMode === 'groups'
-                        ? 'Search semantic folders'
-                        : 'Search semantic symbols'
-                      : 'Build embeddings to search'
-                  }
-                  value={semanticSearchQuery}
-                />
-                {semanticSearchQuery ? (
-                  <button
-                    aria-label="Clear semantic search"
-                    className="cbv-semantic-search-clear"
-                    onClick={onSemanticSearchClear}
-                    type="button"
-                  >
-                    ×
-                  </button>
-                ) : null}
-              </div>
-              <div className="cbv-semantic-search-controls">
-                <label className="cbv-semantic-search-slider">
-                  <span>Matches</span>
-                  <strong>{semanticSearchLimit}</strong>
-                  <input
-                    disabled={!semanticSearchAvailable}
-                    max={SEMANTIC_SEARCH_MAX_LIMIT}
-                    min={SEMANTIC_SEARCH_MIN_LIMIT}
-                    onChange={(event) => {
-                      onSemanticSearchLimitChange(Number(event.target.value))
-                    }}
-                    type="range"
-                    value={semanticSearchLimit}
-                  />
-                </label>
-                <label className="cbv-semantic-search-slider">
-                  <span>Proximity</span>
-                  <strong>{semanticSearchStrictness}</strong>
-                  <input
-                    disabled={!semanticSearchAvailable}
-                    max={100}
-                    min={0}
-                    onChange={(event) => {
-                      onSemanticSearchStrictnessChange(Number(event.target.value))
-                    }}
-                    type="range"
-                    value={semanticSearchStrictness}
-                  />
-                </label>
-              </div>
-              <p
-                className={`cbv-semantic-search-meta${semanticSearchResultCount > 0 ? ' has-results' : ''}${!semanticSearchAvailable ? ' is-disabled' : ''}`}
-              >
-                {semanticSearchHelperText}
-              </p>
-            </form>
-          ) : null}
-          <div className="cbv-canvas-layer-toggles">
-            {visibleLayerToggles.map((layer) => (
-              <LayerToggle
-                active={graphLayers[layer]}
-                key={layer}
-                label={getLayerLabel(layer, viewMode)}
-                onClick={() => onToggleLayer(layer)}
-              />
-            ))}
-          </div>
-        </div>
-        {viewMode === 'symbols' ? (
-          <div className="cbv-canvas-legend">
+        <div className="cbv-canvas-utility-stack">
+          <div className="cbv-canvas-legend-anchor">
             <SymbolKindLegend />
           </div>
-        ) : null}
+          <div className="cbv-canvas-utility-anchor">
+          <button
+            aria-expanded={utilityPaletteOpen}
+            className={`cbv-canvas-utility-trigger${utilityPaletteOpen ? ' is-open' : ''}`}
+            onClick={() => setUtilityPaletteOpen((current) => !current)}
+            title={utilitySummaryText}
+            type="button"
+          >
+            <span className="cbv-eyebrow">canvas</span>
+            <strong>{utilitySummaryText}</strong>
+            <span className="cbv-canvas-utility-trigger-meta">
+              {utilityPaletteOpen ? 'hide tools' : 'tools'}
+            </span>
+          </button>
+          {utilityPaletteOpen ? (
+            <div className="cbv-canvas-utility-popover">
+              {showCompareAction ? (
+                <section className="cbv-canvas-utility-section">
+                  <div className="cbv-canvas-utility-section-header">
+                    <p className="cbv-eyebrow">Compare</p>
+                    {compareSourceTitle ? <span>{compareSourceTitle}</span> : null}
+                  </div>
+                  <div className="cbv-canvas-utility-compare">
+                    <button
+                      className={`cbv-toolbar-button${compareOverlayActive ? ' is-active' : ''}`}
+                      onClick={onActivateCompareOverlay}
+                      type="button"
+                    >
+                      {compareOverlayActive ? 'Comparing semantic view' : 'Compare semantic view'}
+                    </button>
+                    {compareOverlayActive && onClearCompareOverlay ? (
+                      <button
+                        className="cbv-toolbar-button is-secondary"
+                        onClick={onClearCompareOverlay}
+                        type="button"
+                      >
+                        Clear
+                      </button>
+                    ) : null}
+                  </div>
+                </section>
+              ) : null}
+              <section className="cbv-canvas-utility-section">
+                <div className="cbv-canvas-utility-section-header">
+                  <p className="cbv-eyebrow">Agent Heat</p>
+                  <span>{agentHeatHelperText}</span>
+                </div>
+                <div className="cbv-agent-heat-panel">
+                  <div className="cbv-agent-heat-controls">
+                    <label>
+                      <span>Source</span>
+                      <select
+                        onChange={(event) => {
+                          onAgentHeatSourceChange(event.target.value as TelemetrySource)
+                        }}
+                        value={agentHeatSource}
+                      >
+                        <option value="all">All</option>
+                        <option value="autonomous">Autonomous</option>
+                        <option value="interactive">Interactive</option>
+                      </select>
+                    </label>
+                    <label>
+                      <span>Window</span>
+                      <select
+                        onChange={(event) => {
+                          onAgentHeatWindowChange(parseTelemetryWindow(event.target.value))
+                        }}
+                        value={String(agentHeatWindow)}
+                      >
+                        <option value="30">30s</option>
+                        <option value="60">60s</option>
+                        <option value="120">2m</option>
+                        <option value="run">Run</option>
+                        <option value="workspace">Workspace</option>
+                      </select>
+                    </label>
+                    <label>
+                      <span>Mode</span>
+                      <select
+                        onChange={(event) => {
+                          onAgentHeatModeChange(event.target.value as TelemetryMode)
+                        }}
+                        value={agentHeatMode}
+                      >
+                        <option value="files">Files</option>
+                        <option value="symbols">Symbols</option>
+                      </select>
+                    </label>
+                  </div>
+                  <button
+                    aria-pressed={agentHeatFollowEnabled}
+                    className={`cbv-agent-heat-follow-toggle${agentHeatFollowEnabled ? ' is-active' : ''}`}
+                    onClick={onToggleAgentHeatFollow}
+                    type="button"
+                  >
+                    {agentHeatFollowEnabled ? 'Following active agent' : 'Follow active agent'}
+                  </button>
+                  <p className="cbv-agent-heat-follow-meta">{agentHeatFollowText}</p>
+                  <button
+                    aria-expanded={agentHeatDebugOpen}
+                    className="cbv-agent-heat-debug-toggle"
+                    onClick={onToggleAgentHeatDebug}
+                    type="button"
+                  >
+                    {agentHeatDebugOpen ? 'Hide follow debug' : 'Show follow debug'}
+                  </button>
+                  {agentHeatDebugOpen ? (
+                    <div className="cbv-agent-heat-debug">
+                      <p>
+                        <strong>Mode:</strong> {agentHeatDebugState.currentMode}
+                      </p>
+                      <p>
+                        <strong>Event:</strong>{' '}
+                        {agentHeatDebugState.latestEvent
+                          ? formatFollowDebugEvent(agentHeatDebugState.latestEvent)
+                          : 'None'}
+                      </p>
+                      <p>
+                        <strong>Target:</strong>{' '}
+                        {agentHeatDebugState.currentTarget
+                          ? formatFollowDebugTarget(agentHeatDebugState.currentTarget)
+                          : 'None'}
+                      </p>
+                      <p>
+                        <strong>Queue:</strong> {agentHeatDebugState.queueLength}
+                      </p>
+                      <p>
+                        <strong>Camera lock:</strong>{' '}
+                        {agentHeatDebugState.cameraLockActive
+                          ? formatFollowCameraLock(agentHeatDebugState.cameraLockUntilMs)
+                          : 'Inactive'}
+                      </p>
+                      <p>
+                        <strong>Refresh:</strong>{' '}
+                        {agentHeatDebugState.refreshInFlight
+                          ? 'In flight'
+                          : agentHeatDebugState.refreshPending
+                            ? 'Pending'
+                            : 'Idle'}
+                      </p>
+                    </div>
+                  ) : null}
+                </div>
+              </section>
+              {showSemanticSearch ? (
+                <section className="cbv-canvas-utility-section">
+                  <div className="cbv-canvas-utility-section-header">
+                    <p className="cbv-eyebrow">Semantic Search</p>
+                    <span>{semanticSearchHelperText}</span>
+                  </div>
+                  <form
+                    className={`cbv-semantic-search${semanticSearchPending ? ' is-pending' : ''}${semanticSearchAvailable ? '' : ' is-disabled'}`}
+                    onSubmit={(event) => event.preventDefault()}
+                  >
+                    <div className="cbv-semantic-search-mode-toggle" role="tablist" aria-label="Semantic search mode">
+                      <button
+                        aria-pressed={semanticSearchMode === 'symbols'}
+                        className={`cbv-semantic-search-mode${semanticSearchMode === 'symbols' ? ' is-active' : ''}`}
+                        onClick={() => onSemanticSearchModeChange('symbols')}
+                        type="button"
+                      >
+                        Symbols
+                      </button>
+                      <button
+                        aria-pressed={semanticSearchMode === 'groups'}
+                        className={`cbv-semantic-search-mode${semanticSearchMode === 'groups' ? ' is-active' : ''}`}
+                        disabled={!semanticSearchGroupSearchAvailable}
+                        onClick={() => onSemanticSearchModeChange('groups')}
+                        type="button"
+                      >
+                        Folders
+                      </button>
+                    </div>
+                    <div className="cbv-semantic-search-shell">
+                      <input
+                        aria-label="Search semantic projection"
+                        className="cbv-semantic-search-input"
+                        disabled={!semanticSearchAvailable}
+                        onChange={(event) => {
+                          onSemanticSearchChange(event.target.value)
+                        }}
+                        placeholder={
+                          semanticSearchAvailable
+                            ? semanticSearchMode === 'groups'
+                              ? 'Search semantic folders'
+                              : 'Search semantic symbols'
+                            : 'Build embeddings to search'
+                        }
+                        value={semanticSearchQuery}
+                      />
+                      {semanticSearchQuery ? (
+                        <button
+                          aria-label="Clear semantic search"
+                          className="cbv-semantic-search-clear"
+                          onClick={onSemanticSearchClear}
+                          type="button"
+                        >
+                          ×
+                        </button>
+                      ) : null}
+                    </div>
+                    <div className="cbv-semantic-search-controls">
+                      <label className="cbv-semantic-search-slider">
+                        <span>Matches</span>
+                        <strong>{semanticSearchLimit}</strong>
+                        <input
+                          disabled={!semanticSearchAvailable}
+                          max={SEMANTIC_SEARCH_MAX_LIMIT}
+                          min={SEMANTIC_SEARCH_MIN_LIMIT}
+                          onChange={(event) => {
+                            onSemanticSearchLimitChange(Number(event.target.value))
+                          }}
+                          type="range"
+                          value={semanticSearchLimit}
+                        />
+                      </label>
+                      <label className="cbv-semantic-search-slider">
+                        <span>Proximity</span>
+                        <strong>{semanticSearchStrictness}</strong>
+                        <input
+                          disabled={!semanticSearchAvailable}
+                          max={100}
+                          min={0}
+                          onChange={(event) => {
+                            onSemanticSearchStrictnessChange(Number(event.target.value))
+                          }}
+                          type="range"
+                          value={semanticSearchStrictness}
+                        />
+                      </label>
+                    </div>
+                    <p
+                      className={`cbv-semantic-search-meta${semanticSearchResultCount > 0 ? ' has-results' : ''}${!semanticSearchAvailable ? ' is-disabled' : ''}`}
+                    >
+                      {semanticSearchHelperText}
+                    </p>
+                  </form>
+                </section>
+              ) : null}
+              <section className="cbv-canvas-utility-section">
+                <div className="cbv-canvas-utility-section-header">
+                  <p className="cbv-eyebrow">Layers</p>
+                  <span>{viewMode}</span>
+                </div>
+                <div className="cbv-canvas-layer-toggles">
+                  {visibleLayerToggles.map((layer) => (
+                    <LayerToggle
+                      active={graphLayers[layer]}
+                      key={layer}
+                      label={getLayerLabel(layer, viewMode)}
+                      onClick={() => onToggleLayer(layer)}
+                    />
+                  ))}
+                </div>
+              </section>
+            </div>
+          ) : null}
+          </div>
+        </div>
       </div>
       <ReactFlow
         defaultViewport={viewport}
@@ -3456,41 +3632,6 @@ const MemoizedCanvasViewport = memo(function CanvasViewport({
           />
         )}
       </ReactFlow>
-
-      {showLayoutSuggestion ? (
-        <form
-          className={`cbv-layout-suggestion${layoutSuggestionPending ? ' is-pending' : ''}`}
-          onSubmit={(event) => {
-            event.preventDefault()
-            onLayoutSuggestionSubmit()
-          }}
-        >
-          <div className="cbv-layout-suggestion-shell">
-            <input
-              aria-label="Suggest layout"
-              className="cbv-layout-suggestion-input"
-              disabled={layoutSuggestionPending}
-              onChange={(event) => {
-                onLayoutSuggestionChange(event.target.value)
-              }}
-              placeholder="Suggest layout"
-              value={layoutSuggestionText}
-            />
-            <button
-              className="cbv-layout-suggestion-submit"
-              disabled={layoutSuggestionPending || !layoutSuggestionText.trim()}
-              type="submit"
-            >
-              {layoutSuggestionPending ? 'Working…' : 'Go'}
-            </button>
-          </div>
-          {layoutSuggestionPending ? (
-            <p className="cbv-layout-suggestion-status">Generating a new layout draft…</p>
-          ) : layoutSuggestionError ? (
-            <p className="cbv-layout-suggestion-error">{layoutSuggestionError}</p>
-          ) : null}
-        </form>
-      ) : null}
     </section>
   )
 })
@@ -3696,39 +3837,6 @@ function hasWorkspaceSyncUpdates(status: WorkspaceArtifactSyncStatus) {
     status.layouts.some((entry) => entry.state === 'outdated') ||
     status.drafts.some((entry) => entry.state === 'outdated')
   )
-}
-
-function formatWorkspaceSyncLabel(status: WorkspaceArtifactSyncStatus) {
-  if (!status.git.isGitRepo) {
-    return 'Repo sync unavailable'
-  }
-
-  const parts: string[] = []
-
-  if (status.summaries.staleCount > 0 || status.summaries.obsoleteCount > 0) {
-    parts.push(`${status.summaries.staleCount + status.summaries.obsoleteCount} summaries`)
-  }
-
-  if (status.embeddings.staleCount > 0 || status.embeddings.obsoleteCount > 0) {
-    parts.push(`${status.embeddings.staleCount + status.embeddings.obsoleteCount} embeddings`)
-  }
-
-  const affectedLayoutCount = [
-    ...status.layouts,
-    ...status.drafts,
-  ].filter((entry) => entry.state === 'outdated').length
-
-  if (affectedLayoutCount > 0) {
-    parts.push(`${affectedLayoutCount} layouts`)
-  }
-
-  if (parts.length === 0) {
-    return status.git.changedFiles.length > 0
-      ? `Repo changed · ${status.git.changedFiles.length} files`
-      : 'Repo sync clean'
-  }
-
-  return `Needs update · ${parts.join(' · ')}`
 }
 
 function formatWorkspaceSyncTitle(status: WorkspaceArtifactSyncStatus) {
@@ -4287,7 +4395,7 @@ function buildFlowNode(
         title: node.name,
         subtitle: getSymbolSubtitle(node, snapshot),
         kind: node.symbolKind,
-        kindClass: getSymbolKindClass(node.symbolKind),
+        kindClass: getSymbolVisualKindClass(node),
         tags: getNodeBadgeLabels(node, snapshot),
         clusterSize,
         clusterExpanded:
@@ -5095,34 +5203,280 @@ function getSymbolNodeDimensions(
   }
 }
 
-function getSymbolKindClass(symbolKind: SymbolNode['symbolKind']) {
-  switch (symbolKind) {
+function getSymbolVisualKindClass(symbol: SymbolNode) {
+  if (symbol.facets.includes('react:hook')) {
+    return 'hook'
+  }
+
+  if (symbol.facets.includes('react:component')) {
+    return 'component'
+  }
+
+  switch (symbol.symbolKind) {
     case 'class':
     case 'function':
-    case 'method':
     case 'constant':
     case 'variable':
-      return symbolKind
-    default:
+    case 'module':
+      return symbol.symbolKind
+    case 'method':
       return 'function'
+    default:
+      return 'module'
   }
 }
 
 function getSymbolKindRank(symbol: SymbolNode) {
+  if (symbol.facets.includes('react:component')) {
+    return 0
+  }
+
+  if (symbol.facets.includes('react:hook')) {
+    return 1
+  }
+
   switch (symbol.symbolKind) {
     case 'class':
-      return 0
-    case 'function':
-      return 1
-    case 'method':
       return 2
-    case 'constant':
+    case 'function':
       return 3
-    case 'variable':
+    case 'method':
       return 4
+    case 'constant':
+      return 5
+    case 'variable':
+      return 6
+    case 'module':
+      return 7
+    default:
+      return 8
+  }
+}
+
+function buildWorkspaceSidebarGroups(input: {
+  layout: LayoutSpec | null
+  snapshot: CodebaseSnapshot | null
+}): WorkspaceSidebarGroup[] {
+  if (!input.snapshot) {
+    return []
+  }
+
+  const snapshot = input.snapshot
+
+  const visibleSymbolIds = getWorkspaceSidebarSymbolIds(snapshot, input.layout)
+  const symbolNodes = visibleSymbolIds
+    .map((nodeId) => snapshot.nodes[nodeId])
+    .filter((node): node is ProjectNode => Boolean(node))
+    .filter(isSymbolNode)
+
+  const groups = new Map<
+    string,
+    {
+      id: string
+      label: string
+      tone: string
+      items: WorkspaceSidebarGroupItem[]
+      locTotal: number
+    }
+  >()
+
+  for (const symbol of symbolNodes) {
+    const semanticGroup = getSymbolSidebarSemanticGroup(symbol)
+    const metric = getSymbolSidebarMetric(symbol)
+    const ownerFile = snapshot.nodes[symbol.fileId]
+    const subtitle = ownerFile && isFileNode(ownerFile) ? ownerFile.path : symbol.path
+    const badge = getSymbolSidebarBadge(symbol)
+    const currentGroup = groups.get(semanticGroup.id) ?? {
+      id: semanticGroup.id,
+      items: [],
+      label: semanticGroup.label,
+      locTotal: 0,
+      tone: semanticGroup.tone,
+    }
+
+    currentGroup.items.push({
+      badge,
+      id: symbol.id,
+      metric,
+      subtitle,
+      title: symbol.name,
+    })
+    currentGroup.locTotal += metric ?? 0
+    groups.set(semanticGroup.id, currentGroup)
+  }
+
+  return [...groups.values()]
+    .map((group) => ({
+      id: group.id,
+      items: group.items.sort((left, right) => {
+        const metricDelta = (right.metric ?? 0) - (left.metric ?? 0)
+
+        if (metricDelta !== 0) {
+          return metricDelta
+        }
+
+        return left.title.localeCompare(right.title)
+      }),
+      label: group.label,
+      metricLabel: `${group.items.length} · ${group.locTotal} loc`,
+      tone: group.tone,
+    }))
+    .sort((left, right) => {
+      const leftRank = getSidebarGroupRank(left.id)
+      const rightRank = getSidebarGroupRank(right.id)
+
+      if (leftRank !== rightRank) {
+        return leftRank - rightRank
+      }
+
+      return left.label.localeCompare(right.label)
+    })
+}
+
+function getWorkspaceSidebarSymbolIds(
+  snapshot: CodebaseSnapshot,
+  layout: LayoutSpec | null,
+) {
+  if (
+    layout &&
+    (layout.nodeScope === 'symbols' || layout.nodeScope === 'mixed')
+  ) {
+    const hiddenNodeIds = new Set(layout.hiddenNodeIds)
+    const visiblePlacedSymbolIds = Object.keys(layout.placements).filter((nodeId) => {
+      if (hiddenNodeIds.has(nodeId)) {
+        return false
+      }
+
+      const node = snapshot.nodes[nodeId]
+      return Boolean(node && isSymbolNode(node))
+    })
+
+    if (visiblePlacedSymbolIds.length > 0) {
+      return visiblePlacedSymbolIds
+    }
+  }
+
+  return Object.values(snapshot.nodes)
+    .filter(isSymbolNode)
+    .sort((left, right) => getSymbolKindRank(left) - getSymbolKindRank(right))
+    .map((node) => node.id)
+}
+
+function getSymbolSidebarSemanticGroup(symbol: SymbolNode) {
+  if (symbol.facets.includes('react:component')) {
+    return {
+      id: 'react:component',
+      label: 'Components',
+      tone: '--cbv-kind-component',
+    }
+  }
+
+  if (symbol.facets.includes('react:hook')) {
+    return {
+      id: 'react:hook',
+      label: 'Hooks',
+      tone: '--cbv-kind-hook',
+    }
+  }
+
+  switch (symbol.symbolKind) {
+    case 'class':
+      return {
+        id: 'symbol:class',
+        label: 'Classes',
+        tone: '--cbv-kind-class',
+      }
+    case 'module':
+      return {
+        id: 'symbol:module',
+        label: 'Modules',
+        tone: '--cbv-kind-module',
+      }
+    case 'constant':
+      return {
+        id: 'symbol:constant',
+        label: 'Constants',
+        tone: '--cbv-kind-constant',
+      }
+    case 'variable':
+      return {
+        id: 'symbol:variable',
+        label: 'Variables',
+        tone: '--cbv-kind-variable',
+      }
+    case 'method':
+    case 'function':
+      return {
+        id: 'symbol:function',
+        label: 'Functions',
+        tone: '--cbv-kind-function',
+      }
+    default:
+      return {
+        id: 'symbol:unknown',
+        label: 'Other',
+        tone: '--cbv-kind-module',
+      }
+  }
+}
+
+function getSidebarGroupRank(groupId: string) {
+  switch (groupId) {
+    case 'react:component':
+      return 0
+    case 'react:hook':
+      return 1
+    case 'symbol:class':
+      return 2
+    case 'symbol:function':
+      return 3
+    case 'symbol:constant':
+      return 4
+    case 'symbol:variable':
+      return 5
+    case 'symbol:module':
+      return 6
+    case 'symbol:unknown':
+      return 7
     default:
       return 99
   }
+}
+
+function getSymbolSidebarBadge(symbol: SymbolNode) {
+  if (symbol.facets.includes('react:client-component')) {
+    return 'client'
+  }
+
+  if (symbol.facets.includes('react:component')) {
+    return 'react'
+  }
+
+  if (symbol.facets.includes('react:hook')) {
+    return 'hook'
+  }
+
+  if (symbol.symbolKind === 'method') {
+    return 'method'
+  }
+
+  if (symbol.symbolKind === 'module') {
+    return 'module'
+  }
+
+  if (symbol.symbolKind === 'unknown') {
+    return 'other'
+  }
+
+  return null
+}
+
+function getSymbolSidebarMetric(symbol: SymbolNode) {
+  if (symbol.range) {
+    return Math.max(1, symbol.range.end.line - symbol.range.start.line + 1)
+  }
+
+  return symbol.signature ? Math.max(1, Math.ceil(symbol.signature.length / 18)) : 1
 }
 
 function getFileNodeId(

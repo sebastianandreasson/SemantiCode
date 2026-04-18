@@ -12,6 +12,7 @@ import {
   loadWorkspaceHistoryState,
   persistWorkspaceHistoryState,
   rememberWorkspace,
+  removeWorkspaceFromHistory,
   type WorkspaceHistoryState,
 } from './workspaceHistory'
 import {
@@ -84,6 +85,23 @@ void app.whenReady().then(async () => {
     activeWorkspaceRootDir,
     recentWorkspaces: workspaceHistoryState.recentWorkspaces,
   }))
+
+  ipcMain.handle('semanticode:remove-workspace-history-entry', async (_event, rootDir: string) => {
+    if (!rootDir) {
+      return {
+        activeWorkspaceRootDir,
+        recentWorkspaces: workspaceHistoryState.recentWorkspaces,
+      }
+    }
+
+    workspaceHistoryState = removeWorkspaceFromHistory(workspaceHistoryState, rootDir)
+    await persistWorkspaceHistoryState(app.getPath('userData'), workspaceHistoryState)
+
+    return {
+      activeWorkspaceRootDir,
+      recentWorkspaces: workspaceHistoryState.recentWorkspaces,
+    }
+  })
 
   ipcMain.on('semanticode:get-initial-ui-preferences', (event) => {
     event.returnValue = uiPreferencesState
@@ -201,6 +219,7 @@ app.on('before-quit', () => {
   ipcMain.removeHandler('semanticode:open-workspace-root-dir')
   ipcMain.removeHandler('semanticode:close-workspace')
   ipcMain.removeHandler('semanticode:get-workspace-history')
+  ipcMain.removeHandler('semanticode:remove-workspace-history-entry')
   ipcMain.removeAllListeners('semanticode:get-initial-ui-preferences')
   ipcMain.removeHandler('semanticode:get-ui-preferences')
   ipcMain.removeHandler('semanticode:set-ui-preferences')

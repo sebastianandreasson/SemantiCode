@@ -15,6 +15,8 @@ contextBridge.exposeInMainWorld('semanticodeDesktop', {
   setUiPreferences: (preferences: UiPreferences) =>
     ipcRenderer.invoke('semanticode:set-ui-preferences', preferences) as Promise<UiPreferences>,
   getWorkspaceHistory: () => ipcRenderer.invoke('semanticode:get-workspace-history'),
+  removeWorkspaceHistoryEntry: (rootDir: string) =>
+    ipcRenderer.invoke('semanticode:remove-workspace-history-entry', rootDir),
   openWorkspaceDialog: () => ipcRenderer.invoke('semanticode:open-workspace'),
   openWorkspaceRootDir: (rootDir: string) =>
     ipcRenderer.invoke('semanticode:open-workspace-root-dir', rootDir),

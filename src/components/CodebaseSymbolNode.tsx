@@ -24,6 +24,8 @@ export const CodebaseSymbolNode = memo(function CodebaseSymbolNode({
   selected,
 }: NodeProps) {
   const nodeData = data as CodebaseSymbolNodeData
+  const kindTag = formatSymbolKindTag(nodeData.kindClass ?? nodeData.kind)
+  const tags = nodeData.tags.filter((tag) => !matchesKindTag(tag, nodeData.kindClass ?? nodeData.kind))
 
   return (
     <div
@@ -56,7 +58,8 @@ export const CodebaseSymbolNode = memo(function CodebaseSymbolNode({
         type="target"
       />
       <div className="cbv-node-meta">
-        {nodeData.tags.map((tag) => (
+        <span className="cbv-node-kind">{kindTag}</span>
+        {tags.map((tag) => (
           <span className="cbv-node-tag" key={tag}>
             {tag}
           </span>
@@ -82,3 +85,51 @@ export const CodebaseSymbolNode = memo(function CodebaseSymbolNode({
     </div>
   )
 })
+
+function formatSymbolKindTag(kind: string) {
+  switch (kind) {
+    case 'component':
+      return 'comp'
+    case 'hook':
+      return 'hook'
+    case 'class':
+      return 'class'
+    case 'constant':
+      return 'const'
+    case 'variable':
+      return 'var'
+    case 'unknown':
+      return 'misc'
+    case 'module':
+      return 'mod'
+    case 'function':
+    case 'method':
+    default:
+      return 'fn'
+  }
+}
+
+function matchesKindTag(tag: string, kind: string) {
+  const normalizedTag = tag.trim().toLowerCase()
+
+  switch (kind) {
+    case 'component':
+      return normalizedTag === 'component' || normalizedTag === 'react'
+    case 'hook':
+      return normalizedTag === 'hook'
+    case 'class':
+      return normalizedTag === 'class'
+    case 'constant':
+      return normalizedTag === 'constant'
+    case 'variable':
+      return normalizedTag === 'variable'
+    case 'unknown':
+      return normalizedTag === 'other' || normalizedTag === 'unknown'
+    case 'module':
+      return normalizedTag === 'module'
+    case 'function':
+    case 'method':
+    default:
+      return normalizedTag === 'function' || normalizedTag === 'method'
+  }
+}

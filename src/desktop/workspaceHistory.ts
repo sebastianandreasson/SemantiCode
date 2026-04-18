@@ -69,6 +69,24 @@ export function rememberWorkspace(
   }
 }
 
+export function removeWorkspaceFromHistory(
+  state: WorkspaceHistoryState,
+  rootDir: string,
+): WorkspaceHistoryState {
+  const normalizedRootDir = resolve(rootDir)
+  const recentWorkspaces = state.recentWorkspaces.filter(
+    (entry) => entry.rootDir !== normalizedRootDir,
+  )
+
+  return {
+    lastOpenedRootDir:
+      state.lastOpenedRootDir === normalizedRootDir
+        ? recentWorkspaces[0]?.rootDir ?? null
+        : state.lastOpenedRootDir,
+    recentWorkspaces,
+  }
+}
+
 function getWorkspaceHistoryPath(userDataDir: string) {
   return join(userDataDir, WORKSPACE_HISTORY_FILENAME)
 }
