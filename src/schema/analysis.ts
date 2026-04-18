@@ -6,6 +6,7 @@ import type {
   ProjectSnapshot,
   ReadProjectSnapshotOptions,
 } from './snapshot'
+import type { AnalysisFact } from './projectPlugin'
 
 export interface LanguageAdapterCapabilities {
   symbols: boolean
@@ -24,6 +25,7 @@ export interface LanguageAdapterResult {
   edges?: GraphEdge[]
   entryFileIds?: string[]
   tags?: NodeTag[]
+  facts?: AnalysisFact[]
 }
 
 export interface LanguageAdapter {

@@ -281,6 +281,7 @@ function buildPurposeEmbeddingText(input: {
     `kind: ${input.symbol.symbolKind}`,
     `symbol: ${input.symbol.name}`,
     `path_context: ${filePath}`,
+    input.symbol.facets.length > 0 ? `facets: ${input.symbol.facets.join(', ')}` : '',
     input.domainHints.length > 0 ? `domains: ${input.domainHints.join(', ')}` : '',
     input.sideEffects.length > 0 ? `side_effects: ${input.sideEffects.join(', ')}` : '',
   ]

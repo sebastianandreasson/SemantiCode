@@ -536,6 +536,7 @@ function createRustSymbolNode(
     name,
     path: `${fileNode.path}#${name}@${range.start.line}:${range.start.column}`,
     tags: [],
+    facets: [],
     fileId: fileNode.id,
     parentSymbolId,
     language: 'rust',
@@ -1075,6 +1076,7 @@ function withNodeTagsAndLanguage(
     ...fileNode,
     language,
     tags: [...new Set([...fileNode.tags, ...nextTags])],
+    facets: [...new Set(fileNode.facets)],
   }
 }
 

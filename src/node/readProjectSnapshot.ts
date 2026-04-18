@@ -93,6 +93,8 @@ async function readProjectSnapshotFresh(
     nodes: state.nodes,
     edges: state.edges,
     tags: DEFAULT_PROJECT_TAGS,
+    facetDefinitions: [],
+    detectedPlugins: [],
   }
 
   return enrichProjectSnapshot(snapshot, options)
@@ -161,6 +163,7 @@ async function walkDirectory(
         name: entry.name,
         path: relativePath,
         tags: [],
+        facets: [],
         parentId,
         childIds: children,
         depth,
@@ -204,6 +207,7 @@ async function readProjectFile(
     name: basename(absolutePath),
     path: relativePath,
     tags: [],
+    facets: [],
     parentId,
     extension: extname(absolutePath).slice(1),
     size: fileStat.size,

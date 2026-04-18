@@ -61,6 +61,10 @@ export function buildSemanticSymbolText(
     lines.push(`visibility: ${symbol.visibility}`)
   }
 
+  if (symbol.facets.length > 0) {
+    lines.push(`facets: ${symbol.facets.join(', ')}`)
+  }
+
   if (symbol.signature) {
     lines.push(`signature: ${symbol.signature}`)
   }

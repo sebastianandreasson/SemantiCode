@@ -156,7 +156,7 @@ describe('analyzeWorkspaceArtifactSync', () => {
 
 function createSnapshot(content: string): ProjectSnapshot {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     rootDir: '/tmp/repo',
     generatedAt: '2026-04-16T00:00:00.000Z',
     totalFiles: 1,
@@ -173,6 +173,7 @@ function createSnapshot(content: string): ProjectSnapshot {
         size: content.length,
         content,
         tags: [],
+        facets: [],
         parentId: null,
       },
       'symbol:alpha': {
@@ -182,6 +183,7 @@ function createSnapshot(content: string): ProjectSnapshot {
         path: 'alpha',
         name: 'alpha',
         tags: [],
+        facets: [],
         symbolKind: 'function',
         language: 'typescript',
         visibility: 'public',
@@ -199,6 +201,7 @@ function createSnapshot(content: string): ProjectSnapshot {
         path: 'beta',
         name: 'beta',
         tags: [],
+        facets: [],
         symbolKind: 'function',
         language: 'typescript',
         visibility: 'public',
@@ -212,5 +215,7 @@ function createSnapshot(content: string): ProjectSnapshot {
     },
     edges: [],
     tags: [],
+    facetDefinitions: [],
+    detectedPlugins: [],
   }
 }

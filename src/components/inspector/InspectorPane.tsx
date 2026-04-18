@@ -24,7 +24,9 @@ import {
   type LayoutGroup,
   type LayoutDraft,
   type PreprocessedWorkspaceContext,
+  type ProjectFacetDefinition,
   type ProjectNode,
+  type ProjectPluginDetection,
   type SourceRange,
   type SymbolNode,
   type WorkspaceProfile,
@@ -46,7 +48,9 @@ interface InspectorPaneProps {
   activeDraft: LayoutDraft | null
   compareOverlayActive: boolean
   desktopHostAvailable: boolean
+  detectedPlugins: ProjectPluginDetection[]
   draftActionError?: string | null
+  facetDefinitions: ProjectFacetDefinition[]
   graphSummary: GraphSummary
   header: {
     eyebrow: string
@@ -94,7 +98,9 @@ export function InspectorPane({
   activeDraft,
   compareOverlayActive,
   desktopHostAvailable,
+  detectedPlugins,
   draftActionError = null,
+  facetDefinitions,
   graphSummary,
   header,
   inspectorBodyRef,
@@ -260,9 +266,89 @@ export function InspectorPane({
         {selectedNodeTelemetry ? (
           <TelemetrySummaryCard telemetry={selectedNodeTelemetry} />
         ) : null}
+        <PluginSemanticsCard
+          detectedPlugins={detectedPlugins}
+          facetDefinitions={facetDefinitions}
+          selectedFile={selectedFile}
+          selectedNode={selectedNode}
+          selectedSymbol={selectedSymbol}
+        />
       </div>
     </aside>
   )
+}
+
+function PluginSemanticsCard({
+  detectedPlugins,
+  facetDefinitions,
+  selectedFile,
+  selectedNode,
+  selectedSymbol,
+}: {
+  detectedPlugins: ProjectPluginDetection[]
+  facetDefinitions: ProjectFacetDefinition[]
+  selectedFile: CodebaseFile | null
+  selectedNode: ProjectNode | null
+  selectedSymbol: SymbolNode | null
+}) {
+  const inspectableNode = selectedSymbol ?? selectedFile ?? selectedNode
+
+  if (!inspectableNode) {
+    return null
+  }
+
+  const scopePath =
+    selectedSymbol?.path.split('#')[0] ??
+    selectedFile?.path ??
+    selectedNode?.path ??
+    ''
+  const facetLabelById = new Map(
+    facetDefinitions.map((facetDefinition) => [facetDefinition.id, facetDefinition.label]),
+  )
+  const matchingPluginDetections = detectedPlugins.filter((detection) =>
+    isPathWithinScope(scopePath, detection.scopeRoot),
+  )
+
+  if (inspectableNode.facets.length === 0 && matchingPluginDetections.length === 0) {
+    return null
+  }
+
+  return (
+    <section className="cbv-telemetry-summary">
+      <p className="cbv-eyebrow">Project semantics</p>
+      {inspectableNode.facets.length > 0 ? (
+        <div className="cbv-purpose-summary-tags">
+          {inspectableNode.facets.map((facetId) => (
+            <span className="cbv-purpose-summary-tag" key={facetId}>
+              {facetLabelById.get(facetId) ?? formatFacetLabel(facetId)}
+            </span>
+          ))}
+        </div>
+      ) : null}
+      {matchingPluginDetections.length > 0 ? (
+        <div className="cbv-telemetry-summary-row">
+          <strong>{matchingPluginDetections.map((detection) => detection.displayName).join(', ')}</strong>
+          <span>
+            {matchingPluginDetections.map((detection) => detection.scopeRoot || '.').join(', ')}
+          </span>
+        </div>
+      ) : null}
+    </section>
+  )
+}
+
+function isPathWithinScope(path: string, scopeRoot: string) {
+  return scopeRoot === '' || path === scopeRoot || path.startsWith(`${scopeRoot}/`)
+}
+
+function formatFacetLabel(facetId: string) {
+  const [, rawLabel = facetId] = facetId.split(':')
+
+  return rawLabel
+    .split(/[-_]/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ')
 }
 
 function TelemetrySummaryCard({

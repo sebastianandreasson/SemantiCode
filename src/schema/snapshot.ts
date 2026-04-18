@@ -1,6 +1,11 @@
 import type { LanguageAdapter } from './analysis'
+import type {
+  ProjectFacetDefinition,
+  ProjectPlugin,
+  ProjectPluginDetection,
+} from './projectPlugin'
 
-export const PROJECT_SNAPSHOT_SCHEMA_VERSION = 1 as const
+export const PROJECT_SNAPSHOT_SCHEMA_VERSION = 2 as const
 
 export type SnapshotSchemaVersion = typeof PROJECT_SNAPSHOT_SCHEMA_VERSION
 
@@ -67,6 +72,7 @@ interface BaseProjectNode {
   name: string
   path: string
   tags: NodeTagId[]
+  facets: string[]
 }
 
 export interface DirectoryNode extends BaseProjectNode {
@@ -111,6 +117,8 @@ export interface ProjectSnapshot {
   nodes: Record<string, ProjectNode>
   edges: GraphEdge[]
   tags: NodeTag[]
+  facetDefinitions: ProjectFacetDefinition[]
+  detectedPlugins: ProjectPluginDetection[]
 }
 
 export interface ReadProjectSnapshotOptions {
@@ -124,6 +132,7 @@ export interface ReadProjectSnapshotOptions {
   analyzeSymbols?: boolean
   analyzeCalls?: boolean
   adapters?: LanguageAdapter[]
+  projectPlugins?: ProjectPlugin[]
 }
 
 export const DEFAULT_PROJECT_TAGS: NodeTag[] = [

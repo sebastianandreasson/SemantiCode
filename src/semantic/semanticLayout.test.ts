@@ -84,7 +84,7 @@ function createSnapshot(): ProjectSnapshot {
   ].join('\n')
 
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     rootDir: '/tmp/repo',
     generatedAt: '2026-04-16T00:00:00.000Z',
     totalFiles: 1,
@@ -101,6 +101,7 @@ function createSnapshot(): ProjectSnapshot {
         size: content.length,
         content,
         tags: [],
+        facets: [],
         parentId: null,
       },
       'symbol:alpha': {
@@ -110,6 +111,7 @@ function createSnapshot(): ProjectSnapshot {
         path: 'alpha',
         name: 'alpha',
         tags: [],
+        facets: [],
         symbolKind: 'function',
         language: 'typescript',
         visibility: 'public',
@@ -127,6 +129,7 @@ function createSnapshot(): ProjectSnapshot {
         path: 'beta',
         name: 'beta',
         tags: [],
+        facets: [],
         symbolKind: 'function',
         language: 'typescript',
         visibility: 'public',
@@ -140,5 +143,7 @@ function createSnapshot(): ProjectSnapshot {
     },
     edges: [],
     tags: [],
+    facetDefinitions: [],
+    detectedPlugins: [],
   }
 }

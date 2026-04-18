@@ -3,10 +3,11 @@ import { dirname, join, resolve } from 'node:path'
 
 import type { ProjectSnapshot, ReadProjectSnapshotOptions } from '../types'
 import { getGitWorkspaceStatus } from './gitWorkspaceSync'
+import { getBuiltInProjectPluginCacheSignatures } from './project-plugins'
 
 const SNAPSHOT_CACHE_DIRECTORY = '.semanticode/cache'
 const SNAPSHOT_CACHE_FILE = 'project-snapshot.json'
-const SNAPSHOT_CACHE_VERSION = 1
+const SNAPSHOT_CACHE_VERSION = 3
 
 interface PersistedProjectSnapshotCache {
   version: number
@@ -104,7 +105,7 @@ export async function writeCachedProjectSnapshot(input: {
 }
 
 function canUseProjectSnapshotCache(options: ReadProjectSnapshotOptions) {
-  return !options.adapters?.length
+  return !options.adapters?.length && !options.projectPlugins?.length
 }
 
 function getProjectSnapshotOptionsKey(options: ReadProjectSnapshotOptions) {
@@ -117,6 +118,7 @@ function getProjectSnapshotOptionsKey(options: ReadProjectSnapshotOptions) {
     maxDepth: options.maxDepth ?? 12,
     maxFileSize: options.maxFileSize ?? 100_000,
     maxFiles: options.maxFiles ?? 2_000,
+    projectPlugins: getBuiltInProjectPluginCacheSignatures(),
   })
 }
 

@@ -2960,6 +2960,8 @@ export function Semanticode({
                 compareOverlayActive={compareOverlayActive}
                 desktopHostAvailable={isDesktopHost}
                 draftActionError={draftActionError}
+                detectedPlugins={snapshot?.detectedPlugins ?? []}
+                facetDefinitions={snapshot?.facetDefinitions ?? []}
                 graphSummary={graphSummary}
                 header={inspectorHeader}
                 inspectorBodyRef={inspectorBodyRef}
@@ -4286,7 +4288,7 @@ function buildFlowNode(
         subtitle: getSymbolSubtitle(node, snapshot),
         kind: node.symbolKind,
         kindClass: getSymbolKindClass(node.symbolKind),
-        tags: node.tags.slice(0, 3),
+        tags: getNodeBadgeLabels(node, snapshot),
         clusterSize,
         clusterExpanded:
           clusterSize > 0 && cluster ? expandedClusterIds.has(cluster.id) : undefined,
@@ -4372,7 +4374,7 @@ function buildFlowNode(
       title: node.name,
       subtitle: getNodeSubtitle(node),
       kind: node.kind,
-      tags: node.tags.slice(0, 3),
+      tags: getNodeBadgeLabels(node, snapshot),
       container: Boolean(
         (filesystemContainerLayout || layoutGroupContainer) && node.kind === 'directory',
       ),
@@ -5403,6 +5405,31 @@ function getNodeSubtitle(node: ProjectNode) {
   }
 
   return node.symbolKind
+}
+
+function getNodeBadgeLabels(
+  node: ProjectNode,
+  snapshot: CodebaseSnapshot,
+) {
+  const tagLabelById = new Map(snapshot.tags.map((tag) => [tag.id, tag.label]))
+  const facetLabelById = new Map(
+    snapshot.facetDefinitions.map((facetDefinition) => [facetDefinition.id, facetDefinition.label]),
+  )
+  const facetLabels = node.facets
+    .map((facetId) => facetLabelById.get(facetId) ?? formatFacetLabel(facetId))
+  const tagLabels = node.tags.map((tagId) => tagLabelById.get(tagId) ?? tagId)
+
+  return [...facetLabels, ...tagLabels].slice(0, 3)
+}
+
+function formatFacetLabel(facetId: string) {
+  const [, rawLabel = facetId] = facetId.split(':')
+
+  return rawLabel
+    .split(/[-_]/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ')
 }
 
 function getDefaultNodeWidth(node: ProjectNode) {

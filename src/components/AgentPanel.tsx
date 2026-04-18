@@ -1491,13 +1491,23 @@ function buildScopeContextLines(context: AgentScopeContext) {
   if (context.symbol) {
     contextLines.push(`Selected symbol: ${context.symbol.path}`)
     contextLines.push(`Selected symbol kind: ${context.symbol.symbolKind}`)
+    if (context.symbol.facets.length > 0) {
+      contextLines.push(`Selected symbol facets: ${context.symbol.facets.join(', ')}`)
+    }
 
     if (context.symbol.range) {
       contextLines.push(`Selected symbol range: lines ${formatRange(context.symbol.range)}`)
     }
+  } else if (context.file) {
+    if (context.file.facets.length > 0) {
+      contextLines.push(`Selected file facets: ${context.file.facets.join(', ')}`)
+    }
   } else if (context.node) {
     contextLines.push(`Selected node: ${context.node.path}`)
     contextLines.push(`Selected node kind: ${context.node.kind}`)
+    if (context.node.facets.length > 0) {
+      contextLines.push(`Selected node facets: ${context.node.facets.join(', ')}`)
+    }
   }
 
   return contextLines

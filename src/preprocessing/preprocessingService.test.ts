@@ -73,7 +73,7 @@ function createSnapshot(input: {
   content: string
 }): ProjectSnapshot {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     rootDir: '/tmp/example-workspace',
     generatedAt: input.generatedAt,
     totalFiles: 1,
@@ -90,6 +90,7 @@ function createSnapshot(input: {
         size: input.content.length,
         content: input.content,
         tags: [],
+        facets: [],
         parentId: null,
       },
       'symbol:alpha': {
@@ -99,6 +100,7 @@ function createSnapshot(input: {
         path: 'alpha',
         name: 'alpha',
         tags: [],
+        facets: [],
         symbolKind: 'function',
         language: 'typescript',
         visibility: 'public',
@@ -116,6 +118,7 @@ function createSnapshot(input: {
         path: 'beta',
         name: 'beta',
         tags: [],
+        facets: [],
         symbolKind: 'function',
         language: 'typescript',
         visibility: 'public',
@@ -129,5 +132,7 @@ function createSnapshot(input: {
     },
     edges: [],
     tags: [],
+    facetDefinitions: [],
+    detectedPlugins: [],
   }
 }

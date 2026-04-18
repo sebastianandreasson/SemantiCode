@@ -8,7 +8,7 @@ import {
 import type { LayoutDraft, LayoutSpec, ProjectSnapshot } from '../types'
 
 const snapshot: ProjectSnapshot = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   rootDir: '/tmp/repo',
   generatedAt: '2026-04-16T00:00:00.000Z',
   totalFiles: 1,
@@ -21,6 +21,7 @@ const snapshot: ProjectSnapshot = {
       name: 'src',
       path: 'src',
       tags: [],
+      facets: [],
       parentId: null,
       childIds: ['file:feature'],
       depth: 0,
@@ -31,6 +32,7 @@ const snapshot: ProjectSnapshot = {
       name: 'feature.ts',
       path: 'src/feature.ts',
       tags: [],
+      facets: [],
       parentId: 'dir:src',
       extension: '.ts',
       size: 120,
@@ -43,6 +45,7 @@ const snapshot: ProjectSnapshot = {
       name: 'FeatureEntry',
       path: 'src/feature.ts:FeatureEntry',
       tags: [],
+      facets: [],
       fileId: 'file:feature',
       parentSymbolId: null,
       language: 'typescript',
@@ -54,6 +57,7 @@ const snapshot: ProjectSnapshot = {
       name: 'FeatureHelper',
       path: 'src/feature.ts:FeatureHelper',
       tags: [],
+      facets: [],
       fileId: 'file:feature',
       parentSymbolId: null,
       language: 'typescript',
@@ -65,6 +69,7 @@ const snapshot: ProjectSnapshot = {
       name: 'MissingSymbol',
       path: 'src/feature.ts:MissingSymbol',
       tags: [],
+      facets: [],
       fileId: 'file:feature',
       parentSymbolId: null,
       language: 'typescript',
@@ -73,6 +78,8 @@ const snapshot: ProjectSnapshot = {
   },
   edges: [],
   tags: [],
+  facetDefinitions: [],
+  detectedPlugins: [],
 }
 
 const semanticLayout: LayoutSpec = {

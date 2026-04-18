@@ -112,6 +112,7 @@ export function buildLayoutPlannerContext(
     entryFileIds: [...snapshot.entryFileIds],
     visibleNodeIds,
     availableTags: snapshot.tags.map((tag) => ({ ...tag })),
+    availableFacets: snapshot.facetDefinitions.map((facetDefinition) => ({ ...facetDefinition })),
     existingLayouts: normalizedExistingLayouts.map(summarizeLayout),
     baseLayout: baseLayout ? expandExistingLayout(baseLayout) : null,
     prompt: options.prompt,
@@ -514,6 +515,7 @@ function createPlannerNodeRef(node: ProjectNode): PlannerNodeRef {
       kind: node.kind,
       path: node.path,
       tags: [...node.tags],
+      facets: [...node.facets],
       size: node.size,
     }
   }
@@ -526,6 +528,7 @@ function createPlannerNodeRef(node: ProjectNode): PlannerNodeRef {
       fileId: node.fileId,
       symbolKind: node.symbolKind,
       tags: [...node.tags],
+      facets: [...node.facets],
       range: node.range,
     }
   }
@@ -535,6 +538,7 @@ function createPlannerNodeRef(node: ProjectNode): PlannerNodeRef {
     kind: node.kind,
     path: node.path,
     tags: [...node.tags],
+    facets: [...node.facets],
   }
 }
 

@@ -323,6 +323,107 @@ describe('agentFollowModel', () => {
     )
   })
 
+  it('follows an alternating edit sequence across files without getting stuck', () => {
+    const snapshot = createSnapshot()
+    let state = reduceFollowState([
+      { type: 'FOLLOW_TOGGLED', enabled: true, nowMs: 7_000 },
+      { type: 'VIEW_MODE_CHANGED', mode: 'symbols', nowMs: 7_010, viewMode: 'symbols' },
+      {
+        type: 'SNAPSHOT_CONTEXT_UPDATED',
+        nowMs: 7_020,
+        snapshot,
+        visibleNodeIds: ['symbol:createPRNG', 'symbol:getSpawnCell'],
+      },
+    ])
+
+    state = applyDirtyEditStep(
+      state,
+      {
+        liveChangedFiles: ['debug_brute.js'],
+        nowMs: 7_100,
+        signals: [
+          createDirtySignal({
+            changedAtMs: 1_000,
+            fingerprint: 'debug:1',
+            path: 'debug_brute.js',
+          }),
+        ],
+      },
+    )
+    expect(state.currentInspectorCommand?.target.path).toBe('debug_brute.js')
+    expect(state.currentInspectorCommand?.target.primaryNodeId).toBe('symbol:createPRNG')
+    state = acknowledgeCurrentEditCommands(state, 7_120)
+
+    state = applyDirtyEditStep(
+      state,
+      {
+        liveChangedFiles: ['debug_brute.js', 'game.js'],
+        nowMs: 7_200,
+        signals: [
+          createDirtySignal({
+            changedAtMs: 2_000,
+            fingerprint: 'game:1',
+            path: 'game.js',
+          }),
+          createDirtySignal({
+            changedAtMs: 1_000,
+            fingerprint: 'debug:1',
+            path: 'debug_brute.js',
+          }),
+        ],
+      },
+    )
+    expect(state.currentInspectorCommand?.target.path).toBe('game.js')
+    expect(state.currentInspectorCommand?.target.primaryNodeId).toBe('symbol:getSpawnCell')
+    state = acknowledgeCurrentEditCommands(state, 7_220)
+
+    state = applyDirtyEditStep(
+      state,
+      {
+        liveChangedFiles: ['debug_brute.js', 'game.js'],
+        nowMs: 7_300,
+        signals: [
+          createDirtySignal({
+            changedAtMs: 3_000,
+            fingerprint: 'debug:2',
+            path: 'debug_brute.js',
+          }),
+          createDirtySignal({
+            changedAtMs: 2_000,
+            fingerprint: 'game:1',
+            path: 'game.js',
+          }),
+        ],
+      },
+    )
+    expect(state.currentInspectorCommand?.target.path).toBe('debug_brute.js')
+    expect(state.currentInspectorCommand?.target.eventKey).toBe('dirty:debug_brute.js:debug:2')
+    state = acknowledgeCurrentEditCommands(state, 7_320)
+
+    state = applyDirtyEditStep(
+      state,
+      {
+        liveChangedFiles: ['debug_brute.js', 'game.js'],
+        nowMs: 7_400,
+        signals: [
+          createDirtySignal({
+            changedAtMs: 4_000,
+            fingerprint: 'game:2',
+            path: 'game.js',
+          }),
+          createDirtySignal({
+            changedAtMs: 3_000,
+            fingerprint: 'debug:2',
+            path: 'debug_brute.js',
+          }),
+        ],
+      },
+    )
+    expect(state.currentInspectorCommand?.target.path).toBe('game.js')
+    expect(state.currentInspectorCommand?.target.eventKey).toBe('dirty:game.js:game:2')
+    expect(state.pendingDirtyPaths[0]).toBe('game.js')
+  })
+
   it('suppresses lower-priority activity follow while the edit camera lock is active', () => {
     const snapshot = createSnapshot()
     const editState = reduceFollowState([
@@ -445,6 +546,89 @@ function createTelemetryEvent(
   }
 }
 
+function createDirtySignal(input: {
+  changedAtMs: number
+  fingerprint: string
+  path: string
+}) {
+  return {
+    changedAt: new Date(input.changedAtMs).toISOString(),
+    changedAtMs: input.changedAtMs,
+    fingerprint: input.fingerprint,
+    path: input.path,
+  }
+}
+
+function applyDirtyEditStep(
+  state: ReturnType<typeof createInitialFollowControllerState>,
+  input: {
+    liveChangedFiles: string[]
+    nowMs: number
+    signals: ReturnType<typeof createDirtySignal>[]
+  },
+) {
+  return reduceFollowState(
+    [
+      {
+        type: 'DIRTY_FILES_UPDATED',
+        liveChangedFiles: input.liveChangedFiles,
+        nowMs: input.nowMs,
+      },
+      {
+        type: 'DIRTY_FILE_SIGNALS_UPDATED',
+        nowMs: input.nowMs + 1,
+        signals: input.signals,
+      },
+    ],
+    state,
+  )
+}
+
+function acknowledgeCurrentEditCommands(
+  state: ReturnType<typeof createInitialFollowControllerState>,
+  nowMs: number,
+) {
+  const actions: Parameters<typeof followControllerReducer>[1][] = []
+
+  if (state.currentCameraCommand) {
+    actions.push({
+      type: 'COMMAND_ACKNOWLEDGED',
+      commandId: state.currentCameraCommand.id,
+      commandType: 'camera',
+      intent: state.currentCameraCommand.target.intent,
+      nowMs,
+    })
+  }
+
+  if (state.currentInspectorCommand) {
+    actions.push({
+      type: 'COMMAND_ACKNOWLEDGED',
+      commandId: state.currentInspectorCommand.id,
+      commandType: 'inspector',
+      nowMs: nowMs + 1,
+      pendingPath: state.currentInspectorCommand.pendingPath,
+    })
+  }
+
+  if (state.currentRefreshCommand) {
+    actions.push(
+      {
+        type: 'COMMAND_ACKNOWLEDGED',
+        commandId: state.currentRefreshCommand.id,
+        commandType: 'refresh',
+        nowMs: nowMs + 2,
+      },
+      {
+        type: 'REFRESH_STATUS_CHANGED',
+        nowMs: nowMs + 3,
+        status: 'idle',
+      },
+    )
+  }
+
+  return reduceFollowState(actions, state)
+}
+
 function createSnapshot(input?: {
   includeDebugAnonSymbol?: boolean
   includeDebugNamedSymbol?: boolean
@@ -460,6 +644,7 @@ function createSnapshot(input?: {
       name: 'debug_brute.js',
       path: 'debug_brute.js',
       tags: [],
+      facets: [],
       parentId: null,
       language: 'javascript',
       extension: '.js',
@@ -472,6 +657,7 @@ function createSnapshot(input?: {
       name: 'game.js',
       path: 'game.js',
       tags: [],
+      facets: [],
       parentId: null,
       language: 'javascript',
       extension: '.js',
@@ -487,6 +673,7 @@ function createSnapshot(input?: {
       name: 'anon',
       path: 'debug_brute.js#anon@2:19',
       tags: [],
+      facets: [],
       fileId: 'file:debug',
       parentSymbolId: null,
       language: 'javascript',
@@ -505,6 +692,7 @@ function createSnapshot(input?: {
       name: 'createPRNG',
       path: 'debug_brute.js#createPRNG',
       tags: [],
+      facets: [],
       fileId: 'file:debug',
       parentSymbolId: null,
       language: 'javascript',
@@ -523,6 +711,7 @@ function createSnapshot(input?: {
       name: 'getSpawnCell',
       path: 'game.js#getSpawnCell',
       tags: [],
+      facets: [],
       fileId: 'file:game',
       parentSymbolId: null,
       language: 'javascript',
@@ -535,7 +724,7 @@ function createSnapshot(input?: {
   }
 
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     rootDir: '/tmp/workspace',
     generatedAt: '2026-04-18T10:00:00.000Z',
     totalFiles: 2,
@@ -544,5 +733,7 @@ function createSnapshot(input?: {
     nodes,
     edges: [],
     tags: [],
+    facetDefinitions: [],
+    detectedPlugins: [],
   }
 }

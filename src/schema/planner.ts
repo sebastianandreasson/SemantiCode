@@ -14,6 +14,7 @@ import type {
   SourceRange,
   SymbolKind,
 } from './snapshot'
+import type { ProjectFacetDefinition } from './projectPlugin'
 
 export type PlannerCoordinateSpace = 'absolute_canvas'
 export type LayoutDraftSource = 'agent'
@@ -55,6 +56,7 @@ export interface PlannerNodeRef {
   fileId?: string
   symbolKind?: SymbolKind
   tags: string[]
+  facets: string[]
   size?: number
   range?: SourceRange
 }
@@ -98,6 +100,7 @@ export interface LayoutPlannerContext {
   entryFileIds: string[]
   visibleNodeIds: string[]
   availableTags: NodeTag[]
+  availableFacets: ProjectFacetDefinition[]
   existingLayouts: PlannerExistingLayoutSummary[]
   baseLayout: PlannerExistingLayout | null
   prompt: string

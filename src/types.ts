@@ -30,6 +30,15 @@ export type {
   LanguageAdapterResult,
 } from './schema/analysis'
 export type {
+  AnalysisFact,
+  ProjectFacetDefinition,
+  ProjectPlugin,
+  ProjectPluginDetectInput,
+  ProjectPluginDetection,
+  ProjectPluginInput,
+  ProjectPluginResult,
+} from './schema/projectPlugin'
+export type {
   CodebaseDirectory,
   CodebaseEntry,
   CodebaseEntryKind,

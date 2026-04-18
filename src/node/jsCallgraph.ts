@@ -164,6 +164,7 @@ function ensureSymbolNode(
     name: endpoint.label,
     path: `${fileNode.path}#${endpoint.label}@${row}:${column}`,
     tags: [],
+    facets: [],
     fileId: fileNode.id,
     parentSymbolId: null,
     symbolKind: endpoint.label === 'global' ? 'module' : 'unknown',
