@@ -69,7 +69,6 @@ import { CodebaseAnnotationNode } from './CodebaseAnnotationNode'
 import { CodebaseCanvasNode } from './CodebaseCanvasNode'
 import { CodebaseSymbolNode } from './CodebaseSymbolNode'
 import { getInspectorHeaderSummary } from './inspector/inspectorUtils'
-import { AutonomousRunsPanel } from './runs/AutonomousRunsPanel'
 import { SemanticodeErrorBoundary } from './SemanticodeErrorBoundary'
 import type { ThemeMode } from './settings/GeneralSettingsPanel'
 import {
@@ -372,7 +371,6 @@ export function Semanticode({
 }: SemanticodeProps) {
   const storedUiPreferences = useMemo(() => readStoredUiPreferences(), [])
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [runsPanelOpen, setRunsPanelOpen] = useState(false)
   const [workspaceSyncOpen, setWorkspaceSyncOpen] = useState(false)
   const [agentDrawerOpen, setAgentDrawerOpen] = useState(false)
   const [agentDrawerTab, setAgentDrawerTab] = useState<'chat' | 'agents' | 'layout'>(
@@ -451,7 +449,7 @@ export function Semanticode({
   const [liveChangedFiles, setLiveChangedFiles] = useState<string[]>([])
   const [followDirtyFileSignals, setFollowDirtyFileSignals] = useState<DirtyFileEditSignal[]>([])
   const hasRunningAutonomousRun = autonomousRuns.some((run) => run.status === 'running')
-  const runsSurfaceOpen = runsPanelOpen || (agentDrawerOpen && agentDrawerTab === 'agents')
+  const runsSurfaceOpen = agentDrawerOpen && agentDrawerTab === 'agents'
   const currentSnapshot = useVisualizerStore((state) => state.snapshot)
   const draftLayouts = useVisualizerStore((state) => state.draftLayouts)
   const activeDraftId = useVisualizerStore((state) => state.activeDraftId)
@@ -3086,14 +3084,14 @@ export function Semanticode({
               symbol: selectedSymbol,
               symbols: selectedSymbols,
             }}
-            layoutSuggestionError={layoutSuggestionError}
-            layoutSuggestionPending={layoutSuggestionPending}
-            layoutSuggestionText={layoutSuggestionText}
+            layoutDraftError={layoutSuggestionError}
+            layoutDraftPending={layoutSuggestionPending}
+            layoutDraftPrompt={layoutSuggestionText}
             onAdoptInspectorContextAsWorkingSet={adoptSelectionAsWorkingSet}
             onChangeTab={setAgentDrawerTab}
             onClearWorkingSet={clearWorkingSet}
-            onLayoutSuggestionChange={handleLayoutSuggestionChange}
-            onLayoutSuggestionSubmit={handleLayoutSuggestionSubmit}
+            onLayoutDraftPromptChange={handleLayoutSuggestionChange}
+            onLayoutDraftSubmit={handleLayoutSuggestionSubmit}
             onOpenSettings={() => setSettingsOpen(true)}
             onRunSettled={onAgentRunSettled}
             onSelectRun={handleSelectRun}
@@ -3160,26 +3158,6 @@ export function Semanticode({
             onClose={() => setWorkspaceSyncOpen(false)}
             onRebuildSummaries={onStartPreprocessing}
             status={workspaceSyncStatus}
-          />
-        ) : null}
-        {runsPanelOpen ? (
-          <AutonomousRunsPanel
-            activeRunId={activeRunId}
-            detectedTaskFile={detectedTaskFile}
-            errorMessage={runActionError}
-            onClose={() => setRunsPanelOpen(false)}
-            onSelectRun={handleSelectRun}
-            onStartRun={() => {
-              void handleStartAutonomousRun()
-            }}
-            onStopRun={(runId) => {
-              void handleStopAutonomousRun(runId)
-            }}
-            pending={runActionPending}
-            selectedRunDetail={selectedRunDetail}
-            selectedRunId={selectedRunId}
-            timeline={selectedRunTimeline}
-            runs={autonomousRuns}
           />
         ) : null}
       </section>

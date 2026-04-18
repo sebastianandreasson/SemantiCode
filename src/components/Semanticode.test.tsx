@@ -236,15 +236,21 @@ describe('Semanticode semantic compare overlay', () => {
     )
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Compare in Semantic View' })).not.toBeNull()
+      expect(screen.getByRole('button', { name: /tools/i })).not.toBeNull()
     })
 
     expect(screen.getByText('React Component')).not.toBeNull()
 
-    await user.click(screen.getByRole('button', { name: 'Compare in Semantic View' }))
+    await user.click(screen.getByRole('button', { name: /tools/i }))
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Comparing in Semantic View' })).not.toBeNull()
+      expect(screen.getByRole('button', { name: 'Compare semantic view' })).not.toBeNull()
+    })
+
+    await user.click(screen.getByRole('button', { name: 'Compare semantic view' }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Comparing semantic view' })).not.toBeNull()
     })
 
     const entryNode = screen

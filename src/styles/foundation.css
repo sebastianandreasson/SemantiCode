@@ -1,0 +1,48 @@
+/* Shared controls, typography helpers, modal primitives, and cross-surface utility classes. */
+
+
+
+.cbv-eyebrow {
+  margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.72rem;
+  color: var(--app-muted);
+}
+
+.cbv-empty {
+  padding: 2rem 1.25rem;
+}
+
+.cbv-empty h2,
+.cbv-empty p {
+  margin: 0;
+}
+
+.cbv-empty p {
+  margin-top: 0.6rem;
+  color: var(--app-muted);
+}
+
+.demo-page {
+  padding: 0;
+}
+
+body.is-desktop-host .demo-page {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+.cbv-eyebrow {
+  color: var(--app-text-faint);
+  font-family: var(--cbv-font-mono);
+  font-size: 0.59375rem;
+  letter-spacing: 0.14em;
+}
+
+.cbv-agent-thread {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 0.5rem;
+  min-height: 0;
+}
+

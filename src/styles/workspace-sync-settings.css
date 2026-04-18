@@ -1,0 +1,489 @@
+/* Workspace sync modal, settings modal, workspace remove modal, and related status cards. */
+
+
+
+.cbv-toolbar-button,
+.cbv-draft-actions button,
+.cbv-preprocessing-action {
+  min-height: 2.4rem;
+}
+
+.cbv-toolbar-button.is-secondary,
+.cbv-draft-actions button.is-danger,
+.cbv-preprocessing-action.is-secondary {
+  background: var(--app-surface-soft-2);
+}
+
+.cbv-modal {
+  border-radius: var(--cbv-radius-xl);
+  background: var(--app-surface-strong);
+}
+
+.cbv-modal-header {
+  border-bottom: 1px solid var(--app-border);
+}
+
+.cbv-preprocessing-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
+  width: fit-content;
+  padding: 0.22rem 0.5rem;
+  border: 1px solid var(--app-border);
+  border-radius: 999px;
+  background: var(--app-surface-soft);
+  color: var(--app-muted);
+  font-size: 0.73rem;
+}
+
+.cbv-preprocessing-status-block {
+  display: grid;
+  gap: 0.28rem;
+  min-width: 0;
+}
+
+.cbv-preprocessing-inline {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.cbv-preprocessing-status-dot {
+  width: 0.52rem;
+  height: 0.52rem;
+  border-radius: 999px;
+  background: var(--app-muted);
+  flex: 0 0 auto;
+}
+
+.cbv-preprocessing-status.is-building .cbv-preprocessing-status-dot,
+.cbv-preprocessing-status.is-stale .cbv-preprocessing-status-dot {
+  background: var(--app-warning);
+}
+
+.cbv-preprocessing-status.is-ready .cbv-preprocessing-status-dot {
+  background: var(--app-success);
+}
+
+.cbv-preprocessing-status.is-error .cbv-preprocessing-status-dot {
+  background: var(--app-danger);
+}
+
+.cbv-preprocessing-action {
+  width: fit-content;
+  border: 1px solid var(--app-border);
+  border-radius: 0.72rem;
+  background: var(--app-inverse-surface);
+  color: var(--app-inverse-text);
+  padding: 0.28rem 0.56rem;
+  font-size: 0.74rem;
+  cursor: pointer;
+}
+
+.cbv-preprocessing-action.is-secondary {
+  background: var(--app-surface-soft-2);
+  color: var(--app-text);
+}
+
+.cbv-preprocessing-action:disabled {
+  opacity: 0.7;
+  cursor: wait;
+}
+
+.cbv-preprocessing-error {
+  margin: 0;
+  max-width: min(28rem, 42vw);
+  color: var(--app-danger);
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
+.cbv-preprocessing-current {
+  margin: 0;
+  max-width: min(28rem, 42vw);
+  color: var(--app-muted);
+  font-size: 0.72rem;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cbv-render-error {
+  display: grid;
+  gap: 0.7rem;
+  align-content: start;
+  max-width: 36rem;
+  margin: 2rem;
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--app-border);
+  border-radius: 1rem;
+  background: var(--app-surface);
+  color: var(--app-text);
+  box-shadow: 0 18px 40px color-mix(in srgb, var(--app-shadow) 35%, transparent);
+}
+
+.cbv-render-error p,
+.cbv-render-error strong {
+  margin: 0;
+}
+
+.cbv-sync-summary {
+  margin: 0;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--app-muted);
+  font-size: 0.72rem;
+  line-height: 1.35;
+  text-align: left;
+}
+
+.cbv-sync-summary.is-outdated {
+  color: var(--app-warning);
+}
+
+.cbv-sync-summary {
+  cursor: pointer;
+}
+
+.cbv-sync-summary:hover {
+  text-decoration: underline;
+}
+
+.cbv-preprocessing-progress {
+  width: min(14rem, 28vw);
+  height: 0.34rem;
+  border-radius: 999px;
+  background: var(--app-surface-soft-3);
+  overflow: hidden;
+}
+
+.cbv-preprocessing-progress-bar {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--app-warning) 88%, white) 0%, var(--app-warning) 100%);
+  transition: width 140ms ease;
+}
+
+.cbv-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  background: var(--app-backdrop);
+  backdrop-filter: blur(4px);
+}
+
+.cbv-modal {
+  width: min(52rem, calc(100vw - 3rem));
+  max-height: min(88vh, 58rem);
+  overflow: auto;
+  border: 1px solid var(--app-border);
+  border-radius: 1rem;
+  background: var(--app-surface-strong);
+  box-shadow: var(--app-shadow);
+}
+
+.cbv-sync-modal {
+  width: min(58rem, calc(100vw - 3rem));
+}
+
+.cbv-sync-modal-body {
+  display: grid;
+  gap: 1rem;
+  padding: 1rem 1.25rem 1.25rem;
+}
+
+.cbv-sync-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.cbv-sync-card {
+  display: grid;
+  gap: 0.6rem;
+  padding: 1rem;
+  border: 1px solid var(--app-border);
+  border-radius: 1rem;
+  background: var(--app-surface-soft);
+}
+
+.cbv-sync-card p,
+.cbv-sync-card strong {
+  margin: 0;
+}
+
+.cbv-sync-card.is-outdated {
+  border-color: color-mix(in srgb, var(--app-warning) 36%, var(--app-border));
+  background: color-mix(in srgb, var(--app-warning-soft) 68%, var(--app-surface-soft));
+}
+
+.cbv-sync-card.is-missing {
+  border-color: var(--app-border);
+  background: var(--app-surface-soft-2);
+}
+
+.cbv-sync-layout-list {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.cbv-sync-layout-item {
+  display: grid;
+  gap: 0.4rem;
+  padding: 0.85rem 0.95rem;
+  border-radius: 0.9rem;
+  background: var(--app-surface-soft-2);
+  border: 1px solid var(--app-border);
+}
+
+.cbv-sync-layout-item p,
+.cbv-sync-layout-item strong,
+.cbv-sync-layout-item span {
+  margin: 0;
+}
+
+.cbv-sync-layout-item-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.8rem;
+  align-items: center;
+}
+
+.cbv-sync-layout-item-header span {
+  color: var(--app-muted);
+  font-size: 0.78rem;
+}
+
+.cbv-sync-code-list {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0;
+  padding-left: 1rem;
+  color: var(--app-muted);
+  font-size: 0.82rem;
+}
+
+.cbv-sync-code-list code {
+  white-space: break-spaces;
+  word-break: break-word;
+  color: var(--app-text);
+}
+
+.cbv-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--app-border);
+}
+
+.cbv-general-settings {
+  display: grid;
+  gap: 1rem;
+  padding: 1rem 1.25rem 1.25rem;
+}
+
+.cbv-settings-section {
+  display: grid;
+  gap: 0.8rem;
+  padding: 1rem;
+  border: 1px solid var(--app-border);
+  border-radius: 1rem;
+  background: var(--app-surface-soft);
+}
+
+.cbv-settings-section-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: start;
+}
+
+.cbv-settings-toggle {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: center;
+}
+
+.cbv-settings-toggle-copy {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.cbv-settings-toggle-copy strong,
+.cbv-settings-toggle-copy span {
+  margin: 0;
+}
+
+.cbv-settings-toggle-copy strong {
+  color: var(--app-text);
+}
+
+.cbv-settings-toggle-copy span {
+  color: var(--app-muted);
+  font-size: 0.85rem;
+}
+
+.cbv-settings-switch {
+  width: 3.2rem;
+  height: 1.95rem;
+  border: 1px solid var(--app-border);
+  border-radius: 999px;
+  background: var(--app-surface-soft-3);
+  padding: 0.16rem;
+  cursor: pointer;
+}
+
+.cbv-settings-switch span {
+  display: block;
+  width: 1.45rem;
+  height: 1.45rem;
+  border-radius: 999px;
+  background: var(--app-inverse-surface);
+  transition: transform 140ms ease;
+}
+
+.cbv-settings-switch.is-active {
+  background: var(--app-accent);
+  border-color: var(--app-accent);
+}
+
+.cbv-settings-switch.is-active span {
+  transform: translateX(1.2rem);
+}
+
+.cbv-workspace-remove-modal {
+  width: min(24rem, calc(100vw - 2rem));
+}
+
+.cbv-workspace-remove-modal-body {
+  display: grid;
+  gap: 0.625rem;
+  padding: 0.75rem;
+}
+
+.cbv-workspace-remove-modal-body p {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--cbv-font-mono);
+  font-size: 0.65625rem;
+  line-height: 1.5;
+  color: var(--app-text-dim);
+}
+
+.cbv-workspace-remove-modal-actions {
+  display: flex;
+  justify-content: end;
+  gap: 0.5rem;
+}
+
+.cbv-modal-backdrop {
+  background: color-mix(in oklch, black 54%, transparent);
+  backdrop-filter: none;
+}
+
+.cbv-modal-header {
+  padding: 0.625rem 0.75rem;
+  background: transparent;
+}
+
+.cbv-modal-header strong,
+.cbv-settings-section-header strong,
+.cbv-sync-card strong,
+.cbv-sync-layout-item strong {
+  font-family: var(--cbv-font-mono);
+  font-size: 0.71875rem;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  text-transform: lowercase;
+}
+
+.cbv-sync-modal {
+  width: min(54rem, calc(100vw - 3rem));
+}
+
+.cbv-sync-modal-body,
+.cbv-general-settings {
+  gap: 0.75rem;
+  padding: 0.75rem;
+}
+
+.cbv-sync-grid {
+  gap: 0.75rem;
+}
+
+.cbv-sync-card,
+.cbv-settings-section {
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border-radius: var(--cbv-radius-lg);
+  background: color-mix(in oklch, var(--app-surface) 88%, var(--app-surface-soft));
+  box-shadow: none;
+}
+
+.cbv-sync-card p,
+.cbv-sync-layout-item p,
+.cbv-settings-toggle-copy span {
+  color: var(--app-text-dim);
+  font-family: var(--cbv-font-mono);
+  font-size: 0.65625rem;
+  line-height: 1.5;
+}
+
+.cbv-sync-layout-list {
+  gap: 0.5rem;
+}
+
+.cbv-sync-layout-item {
+  gap: 0.3rem;
+  padding: 0.625rem 0.75rem;
+  border-radius: var(--cbv-radius-lg);
+  background: color-mix(in oklch, var(--app-surface) 82%, var(--app-surface-soft));
+}
+
+.cbv-sync-layout-item-header span,
+.cbv-sync-code-list,
+.cbv-sync-code-list code {
+  font-family: var(--cbv-font-mono);
+  font-size: 0.625rem;
+  letter-spacing: 0.03em;
+}
+
+.cbv-sync-card-action {
+  justify-self: start;
+  text-transform: lowercase;
+}
+
+.cbv-settings-toggle {
+  align-items: start;
+}
+
+.cbv-settings-toggle-copy strong {
+  font-family: var(--cbv-font-mono);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  text-transform: lowercase;
+}
+
+.cbv-settings-switch {
+  width: 2.6rem;
+  height: 1.5rem;
+  border-radius: 999px;
+}
+
+.cbv-settings-switch span {
+  width: 1rem;
+  height: 1rem;
+}
+

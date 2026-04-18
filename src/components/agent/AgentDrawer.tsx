@@ -33,14 +33,14 @@ interface AgentDrawerProps {
   detectedTaskFile?: string | null
   errorMessage?: string | null
   inspectorContext?: AgentScopeContext
-  layoutSuggestionError?: string | null
-  layoutSuggestionPending?: boolean
-  layoutSuggestionText?: string
+  layoutDraftError?: string | null
+  layoutDraftPending?: boolean
+  layoutDraftPrompt?: string
   onAdoptInspectorContextAsWorkingSet?: () => void
   onChangeTab: (tab: AgentDrawerTab) => void
   onClearWorkingSet?: () => void
-  onLayoutSuggestionChange?: (value: string) => void
-  onLayoutSuggestionSubmit?: () => void
+  onLayoutDraftPromptChange?: (value: string) => void
+  onLayoutDraftSubmit?: () => void
   onOpenSettings?: () => void
   onRunSettled?: () => Promise<void>
   onSelectRun?: (runId: string) => void
@@ -68,14 +68,14 @@ export function AgentDrawer({
   detectedTaskFile = null,
   errorMessage = null,
   inspectorContext,
-  layoutSuggestionError = null,
-  layoutSuggestionPending = false,
-  layoutSuggestionText = '',
+  layoutDraftError = null,
+  layoutDraftPending = false,
+  layoutDraftPrompt = '',
   onAdoptInspectorContextAsWorkingSet,
   onChangeTab,
   onClearWorkingSet,
-  onLayoutSuggestionChange,
-  onLayoutSuggestionSubmit,
+  onLayoutDraftPromptChange,
+  onLayoutDraftSubmit,
   onOpenSettings,
   onRunSettled,
   onSelectRun,
@@ -324,35 +324,35 @@ export function AgentDrawer({
                   </p>
                 </div>
                 <form
-                  className={`cbv-agent-layout-form${layoutSuggestionPending ? ' is-pending' : ''}`}
+                  className={`cbv-agent-layout-form${layoutDraftPending ? ' is-pending' : ''}`}
                   onSubmit={(event) => {
                     event.preventDefault()
-                    onLayoutSuggestionSubmit?.()
+                    onLayoutDraftSubmit?.()
                   }}
                 >
                   <textarea
                     aria-label="Describe a new layout"
-                    disabled={layoutSuggestionPending || !onLayoutSuggestionChange}
-                    onChange={(event) => onLayoutSuggestionChange?.(event.target.value)}
+                    disabled={layoutDraftPending || !onLayoutDraftPromptChange}
+                    onChange={(event) => onLayoutDraftPromptChange?.(event.target.value)}
                     placeholder="Arrange React components around routes and keep backend APIs grouped by feature"
-                    value={layoutSuggestionText}
+                    value={layoutDraftPrompt}
                   />
                   <div className="cbv-agent-layout-actions">
                     <p>
-                      {layoutSuggestionPending
+                      {layoutDraftPending
                         ? 'Generating a new layout draft...'
-                        : layoutSuggestionError ?? 'The generated draft can be accepted or rejected from the scene strip.'}
+                        : layoutDraftError ?? 'The generated draft can be accepted or rejected from the scene strip.'}
                     </p>
                     <button
                       className="cbv-toolbar-button"
                       disabled={
-                        layoutSuggestionPending ||
-                        !layoutSuggestionText.trim() ||
-                        !onLayoutSuggestionSubmit
+                        layoutDraftPending ||
+                        !layoutDraftPrompt.trim() ||
+                        !onLayoutDraftSubmit
                       }
                       type="submit"
                     >
-                      {layoutSuggestionPending ? 'working...' : 'create layout'}
+                      {layoutDraftPending ? 'working...' : 'create layout'}
                     </button>
                   </div>
                 </form>

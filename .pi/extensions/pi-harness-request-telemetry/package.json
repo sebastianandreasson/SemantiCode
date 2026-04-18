@@ -1,0 +1,10 @@
+{
+  "name": "pi-harness-request-telemetry",
+  "private": true,
+  "type": "module",
+  "pi": {
+    "extensions": [
+      "./index.mjs"
+    ]
+  }
+}

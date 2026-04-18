@@ -1,0 +1,263 @@
+/* Consolidated media-query overrides for the redesigned shell surfaces. */
+
+
+
+@media (max-width: 1180px) {
+  .cbv-toolbar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .cbv-toolbar-center,
+  .cbv-toolbar-right {
+    justify-content: start;
+  }
+
+  .cbv-main-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .cbv-workspace-sidebar {
+    width: auto;
+  }
+}
+
+@media (max-width: 1220px) {
+  .cbv-toolbar {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .cbv-toolbar-center,
+  .cbv-toolbar-right {
+    justify-content: start;
+  }
+
+  .cbv-layout-picker {
+    min-width: min(24rem, 100%);
+  }
+}
+
+@media (max-width: 760px) {
+  .cbv-toolbar {
+    padding: 0.55rem 0.65rem;
+  }
+
+  .cbv-toolbar-path {
+    max-width: 100%;
+  }
+
+  .cbv-layout-picker {
+    min-width: 100%;
+  }
+
+  .cbv-preprocessing-progress {
+    width: min(14rem, 100%);
+  }
+}
+
+@media (max-width: 960px) {
+  .cbv-canvas-overlays {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .cbv-canvas-left-tools {
+    max-width: 100%;
+  }
+
+  .cbv-semantic-search-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .cbv-agent-heat-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .cbv-canvas-layer-toggles {
+    max-width: 100%;
+  }
+
+  .cbv-canvas-legend {
+    align-self: end;
+  }
+
+  .cbv-workspace {
+    grid-template-columns: 1fr;
+    overflow: auto;
+  }
+
+  .cbv-workspace-resize-handle {
+    display: none;
+  }
+
+  .cbv-shell {
+    height: 100%;
+  }
+
+  .cbv-sync-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .cbv-runs-layout,
+  .cbv-run-detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .cbv-code-editor .cm-editor {
+    max-height: none;
+  }
+
+  .cbv-agent-activity-button {
+    left: 0.85rem;
+    bottom: 0.85rem;
+  }
+}
+
+@media (max-width: 1100px) {
+  .cbv-agent-strip {
+    grid-template-columns: auto auto minmax(0, 1fr) auto auto;
+  }
+
+  .cbv-agent-strip-trail {
+    display: none;
+  }
+}
+
+@media (max-width: 1460px) {
+  .cbv-toolbar-status {
+    display: none;
+  }
+}
+
+@media (max-width: 1200px) {
+  .cbv-toolbar {
+    grid-template-columns: minmax(0, 1fr) minmax(10rem, 14rem) auto;
+  }
+
+  .cbv-toolbar-path,
+  .cbv-toolbar-shortcut {
+    display: none;
+  }
+}
+
+@media (max-width: 960px) {
+  .cbv-main-layout,
+  .cbv-workspace {
+    display: block;
+  }
+
+  .cbv-workspace-sidebar {
+    flex: none;
+  }
+
+  .cbv-canvas,
+  .cbv-inspector {
+    width: 100%;
+  }
+
+  .cbv-inspector {
+    min-width: 0;
+  }
+
+  .cbv-workspace-resize-handle {
+    display: none;
+  }
+}
+
+@media (max-width: 1180px) {
+  .cbv-draft-strip {
+    flex-wrap: wrap;
+  }
+
+  .cbv-draft-strip-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .cbv-canvas-utility-anchor {
+    width: min(21rem, calc(100% - 1rem));
+  }
+}
+
+@media (max-width: 1480px) {
+  .cbv-toolbar-status {
+    display: inline-flex;
+  }
+
+  .cbv-toolbar-path {
+    display: none;
+  }
+}
+
+@media (max-width: 1320px) {
+  .cbv-toolbar-shortcut {
+    display: none;
+  }
+}
+
+@media (max-width: 1160px) {
+  .cbv-working-set-chip span:last-child {
+    display: none;
+  }
+
+  .cbv-working-set-chip {
+    min-width: 1.25rem;
+    justify-content: center;
+    padding-inline: 0.35rem;
+  }
+}
+
+@media (max-width: 900px) {
+  .cbv-agent-layout-card {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 1040px) {
+  .cbv-sync-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .cbv-sync-modal,
+  .cbv-settings-modal {
+    width: min(100%, calc(100vw - 2rem));
+  }
+}
+
+@media (max-width: 760px) {
+  .cbv-agent-drawer:not(.is-collapsed) .cbv-agent-drawer-body {
+    grid-template-columns: 6.75rem minmax(0, 1fr);
+  }
+
+  .cbv-agent-drawer:not(.is-collapsed) .cbv-agent-drawer-tabs button {
+    min-height: 1.8rem;
+    padding-inline: 0.55rem;
+    font-size: 0.6875rem;
+  }
+
+  .cbv-agent-drawer:not(.is-collapsed) .cbv-agent-drawer-tabs button::after {
+    width: 6.75rem;
+  }
+}
+
+@media (max-width: 1040px) {
+  .cbv-runs-toolbar {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .cbv-runs-task-file {
+    display: none;
+  }
+
+  .cbv-runs-layout,
+  .cbv-run-detail-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .cbv-runs-list {
+    max-height: 8rem;
+    border-right: 0;
+    border-bottom: 1px solid var(--app-border-soft);
+  }
+}
+
