@@ -326,4 +326,35 @@ describe('Semanticode semantic compare overlay', () => {
       expect(document.querySelector('.cbv-node.is-compare-highlighted')).not.toBeNull()
     })
   })
+
+  it('opens the agent context panel with draft actions when a draft layout is active', async () => {
+    const user = userEvent.setup()
+    const onAcceptDraft = vi.fn()
+    const onRejectDraft = vi.fn()
+
+    render(
+      <Semanticode
+        onAcceptDraft={onAcceptDraft}
+        onRejectDraft={onRejectDraft}
+        preprocessedWorkspaceContext={preprocessedWorkspaceContext}
+        preprocessingStatus={preprocessingStatus}
+        snapshot={snapshot}
+        workspaceProfile={workspaceProfile}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'agent' }).className).toContain('is-active')
+    })
+
+    expect(screen.getByText('Draft Layout')).not.toBeNull()
+    expect(screen.getByText('Feature flow')).not.toBeNull()
+    expect(screen.getByText('Feature grouping')).not.toBeNull()
+
+    await user.click(screen.getByRole('button', { name: 'Accept Draft' }))
+    expect(onAcceptDraft).toHaveBeenCalledWith(featureDraft.id)
+
+    await user.click(screen.getByRole('button', { name: 'Reject Draft' }))
+    expect(onRejectDraft).toHaveBeenCalledWith(featureDraft.id)
+  })
 })

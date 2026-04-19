@@ -24,7 +24,6 @@ import { AgentDrawer } from './agent/AgentDrawer'
 import { CanvasViewport } from './canvas/CanvasViewport'
 import { SemanticodeErrorBoundary } from './SemanticodeErrorBoundary'
 import { WorkspaceSidebar } from './shell/WorkspaceSidebar'
-import { DraftActionStrip } from './shell/DraftActionStrip'
 import { WorkspaceSyncModal } from './shell/WorkspaceSyncModal'
 import { WorkspaceToolbar } from './shell/WorkspaceToolbar'
 import {
@@ -158,6 +157,7 @@ export function Semanticode({
   )
   const inspectorBodyRef = useRef<HTMLDivElement | null>(null)
   const selectionAutoOpenInitializedRef = useRef(false)
+  const lastAutoOpenedDraftIdRef = useRef<string | null>(null)
   const effectiveSnapshot = snapshot ?? currentSnapshot
   const {
     agentComposerFocusRequestKey,
@@ -303,6 +303,55 @@ export function Semanticode({
     workspaceSyncStatus,
     workspaceViewResolvedRootDir,
   })
+
+  useEffect(() => {
+    if (!activeDraftId) {
+      lastAutoOpenedDraftIdRef.current = null
+      return
+    }
+
+    if (lastAutoOpenedDraftIdRef.current === activeDraftId) {
+      return
+    }
+
+    lastAutoOpenedDraftIdRef.current = activeDraftId
+    setInspectorOpen(true)
+    setInspectorTab('agent')
+  }, [activeDraftId, setInspectorOpen, setInspectorTab])
+
+  const handleAcceptActiveDraft = useCallback(async () => {
+    if (!activeDraft || !onAcceptDraft) {
+      return
+    }
+
+    try {
+      setDraftActionError(null)
+      await onAcceptDraft(activeDraft.id)
+    } catch (error) {
+      setDraftActionError(
+        error instanceof Error
+          ? error.message
+          : 'Failed to accept draft.',
+      )
+    }
+  }, [activeDraft, onAcceptDraft])
+
+  const handleRejectActiveDraft = useCallback(async () => {
+    if (!activeDraft || !onRejectDraft) {
+      return
+    }
+
+    try {
+      setDraftActionError(null)
+      await onRejectDraft(activeDraft.id)
+    } catch (error) {
+      setDraftActionError(
+        error instanceof Error
+          ? error.message
+          : 'Failed to reject draft.',
+      )
+    }
+  }, [activeDraft, onRejectDraft])
   const {
     clearSemanticSearch,
     handleSemanticSearchModeChange,
@@ -690,46 +739,6 @@ export function Semanticode({
             workspaceName={workspaceName}
             workspaceRootDir={effectiveSnapshot.rootDir}
           />
-          {activeDraft ? (
-            <DraftActionStrip
-              draftLabel={activeDraft.layout?.title ?? activeDraft.id}
-              errorMessage={draftActionError}
-              layoutSyncNote={activeLayoutSyncNote}
-              onAccept={
-                onAcceptDraft
-                  ? async () => {
-                      try {
-                        setDraftActionError(null)
-                        await onAcceptDraft(activeDraft.id)
-                      } catch (error) {
-                        setDraftActionError(
-                          error instanceof Error
-                            ? error.message
-                            : 'Failed to accept draft.',
-                        )
-                      }
-                    }
-                  : undefined
-              }
-              onReject={
-                onRejectDraft
-                  ? async () => {
-                      try {
-                        setDraftActionError(null)
-                        await onRejectDraft(activeDraft.id)
-                      } catch (error) {
-                        setDraftActionError(
-                          error instanceof Error
-                            ? error.message
-                            : 'Failed to reject draft.',
-                        )
-                      }
-                    }
-                  : undefined
-              }
-              pending={layoutActionsPending}
-            />
-          ) : null}
           <div className="cbv-main-layout">
             <WorkspaceSidebar
               canManageProjects={canManageProjects}
@@ -839,12 +848,16 @@ export function Semanticode({
                     inspectorBodyRef={inspectorBodyRef}
                     inspectorTab={inspectorTab}
                     onAdoptInspectorContextAsWorkingSet={adoptSelectionAsWorkingSet}
+                    onAcceptDraft={onAcceptDraft ? handleAcceptActiveDraft : undefined}
                     onClearCompareOverlay={handleClearCompareOverlay}
                     onClearWorkingSet={clearWorkingSet}
                     onClose={() => setInspectorOpen(false)}
                     onOpenAgentDrawer={handleFocusAgentDrawerComposer}
                     onOpenAgentSettings={() => setSettingsOpen(true)}
+                    onRejectDraft={onRejectDraft ? handleRejectActiveDraft : undefined}
                     onSetInspectorTab={setInspectorTab}
+                    layoutActionsPending={layoutActionsPending}
+                    layoutSyncNote={activeLayoutSyncNote}
                     preprocessedWorkspaceContext={preprocessedWorkspaceContext}
                     resolvedCompareOverlay={resolvedCompareOverlay}
                     selectedEdge={selectedEdge}

@@ -341,7 +341,7 @@ export function AgentDrawer({
                     <p>
                       {layoutDraftPending
                         ? 'Generating a new layout draft...'
-                        : layoutDraftError ?? 'The generated draft can be accepted or rejected from the scene strip.'}
+                        : layoutDraftError ?? 'The generated draft opens in the inspector context panel for review.'}
                     </p>
                     <button
                       className="cbv-toolbar-button"

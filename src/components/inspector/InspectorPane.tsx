@@ -63,12 +63,19 @@ interface InspectorPaneProps {
   }
   inspectorBodyRef: RefObject<HTMLDivElement | null>
   inspectorTab: InspectorTab
+  layoutActionsPending?: boolean
+  layoutSyncNote?: {
+    label: string
+    title: string
+  } | null
   onAdoptInspectorContextAsWorkingSet?: () => void
+  onAcceptDraft?: () => void | Promise<void>
   onClearCompareOverlay: () => void
   onClearWorkingSet?: () => void
   onClose: () => void
   onOpenAgentDrawer?: () => void
   onOpenAgentSettings: () => void
+  onRejectDraft?: () => void | Promise<void>
   onSetInspectorTab: (tab: InspectorTab) => void
   preprocessedWorkspaceContext: PreprocessedWorkspaceContext | null
   resolvedCompareOverlay: ResolvedCanvasOverlay | null
@@ -110,12 +117,16 @@ export function InspectorPane({
   header,
   inspectorBodyRef,
   inspectorTab,
+  layoutActionsPending = false,
+  layoutSyncNote = null,
   onAdoptInspectorContextAsWorkingSet,
+  onAcceptDraft,
   onClearCompareOverlay,
   onClearWorkingSet,
   onClose,
   onOpenAgentDrawer,
   onOpenAgentSettings,
+  onRejectDraft,
   onSetInspectorTab,
   preprocessedWorkspaceContext,
   resolvedCompareOverlay,
@@ -187,7 +198,9 @@ export function InspectorPane({
       <div className="cbv-inspector-body" ref={inspectorBodyRef}>
         {inspectorTab === 'agent' ? (
           <AgentContextPane
+            activeDraft={activeDraft}
             desktopHostAvailable={desktopHostAvailable}
+            draftActionError={draftActionError}
             inspectorContext={{
               file: selectedFile,
               files: selectedFiles,
@@ -195,10 +208,14 @@ export function InspectorPane({
               symbol: selectedSymbol,
               symbols: selectedSymbols,
             }}
+            layoutActionsPending={layoutActionsPending}
+            layoutSyncNote={layoutSyncNote}
+            onAcceptDraft={onAcceptDraft}
             onOpenDrawer={onOpenAgentDrawer}
             onOpenSettings={onOpenAgentSettings}
             onAdoptInspectorContextAsWorkingSet={onAdoptInspectorContextAsWorkingSet}
             onClearWorkingSet={onClearWorkingSet}
+            onRejectDraft={onRejectDraft}
             workingSet={workingSet}
             workingSetContext={workingSetContext}
             workspaceProfile={workspaceProfile}

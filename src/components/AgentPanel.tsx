@@ -1,8 +1,22 @@
-import { useEffect, useMemo, useRef, useState, type Dispatch, type RefObject, type SetStateAction } from 'react'
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type Dispatch,
+  type RefObject,
+  type SetStateAction,
+} from 'react'
+import { createPortal } from 'react-dom'
 
 import { DesktopAgentClient, type DesktopAgentBridgeInfo } from '../agent/DesktopAgentClient'
 import type {
   AgentAuthMode,
+  AgentCommandInfo,
+  AgentControlState,
   AgentEvent,
   AgentMessage,
   AgentSessionListItem,
@@ -23,6 +37,11 @@ import type {
 
 const MAX_VISIBLE_CONTEXT_FILES = 6
 const MAX_VISIBLE_PURPOSE_SUMMARIES = 8
+const MODEL_MENU_GAP_PX = 4
+const MODEL_MENU_MARGIN_PX = 8
+const MODEL_MENU_MAX_HEIGHT_PX = 384
+const MODEL_MENU_MIN_WIDTH_PX = 288
+const MODEL_MENU_MIN_COMFORTABLE_HEIGHT_PX = 180
 
 export interface AgentScopeContext {
   file: CodebaseFile | null
@@ -83,6 +102,7 @@ export function AgentPanel({
   const [timeline, setTimeline] = useState<AgentTimelineItem[]>([])
   const [, setSessions] = useState<AgentSessionListItem[]>([])
   const [session, setSession] = useState<AgentSessionSummary | null>(null)
+  const [controls, setControls] = useState<AgentControlState | null>(null)
   const [settings, setSettings] = useState<AgentSettingsState | null>(null)
   const [authModeValue, setAuthModeValue] = useState<AgentAuthMode>('brokered_oauth')
   const [providerValue, setProviderValue] = useState('')
@@ -102,6 +122,7 @@ export function AgentPanel({
   const messageListRef = useRef<HTMLDivElement | null>(null)
   const composerRef = useRef<HTMLTextAreaElement | null>(null)
   const sessionRef = useRef<AgentSessionSummary | null>(null)
+  const controlsRef = useRef<AgentControlState | null>(null)
   const previousRunStateRef = useRef<AgentSessionSummary['runState'] | null>(null)
   const shouldStickToTimelineBottomRef = useRef(true)
   const composerValue =
@@ -113,6 +134,10 @@ export function AgentPanel({
   useEffect(() => {
     sessionRef.current = session
   }, [session])
+
+  useEffect(() => {
+    controlsRef.current = controls
+  }, [controls])
 
   useEffect(() => {
     const previousRunState = previousRunStateRef.current
@@ -189,8 +214,16 @@ export function AgentPanel({
             currentSession.runState === 'disabled' ||
             currentSession.runState === 'error'
           )
+        const sdkSessionShouldStart =
+          nextSettings.authMode === 'api_key' &&
+          (
+            !currentSession ||
+            currentSession.authMode !== 'api_key' ||
+            currentSession.provider !== nextSettings.provider ||
+            currentSession.modelId !== nextSettings.modelId
+          )
 
-        if (brokerJustBecameRunnable) {
+        if (brokerJustBecameRunnable || sdkSessionShouldStart) {
           const nextSession = await agentClient.createSession()
 
           if (cancelled) {
@@ -242,6 +275,24 @@ export function AgentPanel({
       }
     }
 
+    const syncControls = async () => {
+      try {
+        const nextControls = await agentClient.getControls()
+
+        if (cancelled) {
+          return
+        }
+
+        controlsRef.current = nextControls
+        setControls(nextControls)
+      } catch {
+        if (!cancelled) {
+          controlsRef.current = null
+          setControls(null)
+        }
+      }
+    }
+
     const syncAll = async () => {
       await syncSettings()
 
@@ -250,6 +301,12 @@ export function AgentPanel({
       }
 
       await syncHttpState()
+
+      if (cancelled) {
+        return
+      }
+
+      await syncControls()
     }
 
     if (bridgeInfo.hasAgentBridge) {
@@ -259,6 +316,10 @@ export function AgentPanel({
         }
 
         handleAgentEvent(event, sessionRef, setMessages, setTimeline, setSession)
+
+        if (event.type === 'session_created' || event.type === 'session_updated') {
+          void syncControls()
+        }
       })
     }
 
@@ -335,7 +396,24 @@ export function AgentPanel({
 
   const sessionIsInteractive =
     session?.runState === 'ready' || session?.runState === 'running'
+  const sessionControls =
+    controls && (!controls.sessionId || controls.sessionId === session?.id)
+      ? controls
+      : null
   const sessionCapabilities = getSessionCapabilities(session)
+  const commandSuggestions = getCommandSuggestions(composerValue, sessionControls)
+  const terminalModelOptions = getAvailableAgentModelOptions({
+    authMode: authModeValue,
+    controls: sessionControls,
+    provider: providerValue,
+    session,
+    settings,
+  })
+  const selectedModelKey = createAgentModelKey({
+    authMode: session?.authMode ?? authModeValue,
+    id: session?.modelId ?? modelValue,
+    provider: session?.provider ?? providerValue,
+  })
 
   useEffect(() => {
     if (!autoFocusComposer || settingsOnly || !sessionIsInteractive) {
@@ -410,6 +488,80 @@ export function AgentPanel({
     }
   }
 
+  async function switchAgentModel(input: {
+    authMode?: AgentAuthMode
+    modelId: string
+    provider: string
+  }) {
+    const nextSession = await agentClient.setModel(input)
+    let state = await agentClient.getHttpState()
+    let resolvedSession = nextSession ?? state.session
+
+    if (!resolvedSession) {
+      const createdSession = await agentClient.createSession()
+      state = await agentClient.getHttpState()
+      resolvedSession = createdSession ?? state.session
+    }
+
+    const nextControls = await agentClient.getControls().catch(() => null)
+    const nextSettings = await agentClient.getSettings().catch(() => null)
+
+    if (nextControls) {
+      controlsRef.current = nextControls
+      setControls(nextControls)
+    }
+
+    if (nextSettings) {
+      setSettings(nextSettings)
+      setAuthModeValue(nextSettings.authMode)
+      setModelValue(nextSettings.modelId)
+      setProviderValue(nextSettings.provider)
+    } else {
+      if (input.authMode) {
+        setAuthModeValue(input.authMode)
+      }
+      setModelValue(input.modelId)
+      setProviderValue(input.provider)
+    }
+
+    setSession(resolvedSession)
+    setMessages(state.messages)
+    setTimeline(state.timeline ?? [])
+    appendLocalLifecycle(
+      'model changed',
+      formatAgentModelOption({
+        authMode: input.authMode ?? nextSettings?.authMode ?? 'api_key',
+        id: input.modelId,
+        provider: input.provider,
+      }),
+      'completed',
+    )
+  }
+
+  async function handleTerminalModelChange(nextModelKey: string) {
+    if (!nextModelKey || nextModelKey === selectedModelKey || pending) {
+      return
+    }
+
+    const nextModel = parseAgentModelKey(nextModelKey)
+
+    if (!nextModel) {
+      return
+    }
+
+    try {
+      setPending(true)
+      setErrorMessage(null)
+      await switchAgentModel(nextModel)
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : 'Failed to switch the agent model.',
+      )
+    } finally {
+      setPending(false)
+    }
+  }
+
   function handleTimelineScroll() {
     const listElement = messageListRef.current
 
@@ -428,6 +580,14 @@ export function AgentPanel({
     const [commandName, ...commandArgs] = command.slice(1).trim().split(/\s+/)
     const commandValue = commandArgs.join(' ').trim()
     const capabilities = getSessionCapabilities(sessionRef.current)
+    const controlState = controlsRef.current
+    const sdkCommand = controlState?.commands.find(
+      (entry) => entry.name === commandName && entry.source !== 'semanticode',
+    )
+
+    if (sdkCommand && !isSemanticodeLocalCommand(commandName)) {
+      return false
+    }
 
     if (commandName === 'new') {
       if (!capabilities.newSession) {
@@ -437,7 +597,12 @@ export function AgentPanel({
 
       const nextSession = await agentClient.newSession()
       const state = await agentClient.getHttpState()
+      const nextControls = await agentClient.getControls().catch(() => null)
 
+      if (nextControls) {
+        controlsRef.current = nextControls
+        setControls(nextControls)
+      }
       setSession(nextSession ?? state.session)
       setMessages(state.messages)
       setTimeline(state.timeline ?? [])
@@ -470,7 +635,12 @@ export function AgentPanel({
 
       const nextSession = await agentClient.resumeSession(latestSession.path)
       const state = await agentClient.getHttpState()
+      const nextControls = await agentClient.getControls().catch(() => null)
 
+      if (nextControls) {
+        controlsRef.current = nextControls
+        setControls(nextControls)
+      }
       setSession(nextSession ?? state.session)
       setMessages(state.messages)
       setTimeline(state.timeline ?? [])
@@ -491,45 +661,46 @@ export function AgentPanel({
     }
 
     if (commandName === 'model') {
+      const availableModels = getAvailableAgentModelOptions({
+        authMode: authModeValue,
+        controls: controlState,
+        provider: providerValue,
+        session,
+        settings,
+      })
+
       if (!commandValue) {
         appendLocalLifecycle(
           'model',
-          session ? `${session.provider}/${session.modelId}` : 'No active session.',
+          session
+            ? [
+                `${session.provider}/${session.modelId}`,
+                availableModels.length > 1
+                  ? `available: ${availableModels.map(formatAgentModelOption).join(', ')}`
+                  : '',
+              ].filter(Boolean).join(' · ')
+            : 'No active session.',
           'completed',
         )
         return true
       }
 
-      if (!settings) {
-        appendLocalLifecycle('model failed', 'Agent settings are not loaded yet.', 'error')
-        return true
-      }
+      const modelSelection = resolveAgentModelSelection(commandValue, {
+        availableModels,
+        provider: providerValue,
+        session,
+      })
 
-      const availableModels = getSelectableModels(settings, authModeValue, providerValue)
-
-      if (!availableModels.some((model) => model.id === commandValue)) {
+      if (!modelSelection) {
         appendLocalLifecycle(
           'model failed',
-          `Unknown model ${commandValue}. Available: ${availableModels.map((model) => model.id).join(', ')}`,
+          `Unknown model ${commandValue}. Available: ${availableModels.map(formatAgentModelOption).join(', ')}`,
           'error',
         )
         return true
       }
 
-      const nextSettings = await agentClient.saveSettings({
-        authMode: authModeValue,
-        provider: providerValue,
-        modelId: commandValue,
-      })
-      const nextSession = await agentClient.createSession()
-      const state = await agentClient.getHttpState()
-
-      setSettings(nextSettings)
-      setModelValue(nextSettings.modelId)
-      setSession(nextSession ?? state.session)
-      setMessages(state.messages)
-      setTimeline(state.timeline ?? [])
-      appendLocalLifecycle('model changed', `${providerValue}/${commandValue}`, 'completed')
+      await switchAgentModel(modelSelection)
       return true
     }
 
@@ -540,9 +711,13 @@ export function AgentPanel({
       }
 
       if (!commandValue) {
+        const availableLevels = controlState?.availableThinkingLevels ?? []
         appendLocalLifecycle(
           'thinking',
-          `Current: ${session?.thinkingLevel ?? 'medium'}`,
+          [
+            `Current: ${session?.thinkingLevel ?? 'medium'}`,
+            availableLevels.length ? `available: ${availableLevels.join(', ')}` : '',
+          ].filter(Boolean).join(' · '),
           'completed',
         )
         return true
@@ -559,10 +734,63 @@ export function AgentPanel({
 
       const nextSession = await agentClient.setThinkingLevel(commandValue)
       const state = await agentClient.getHttpState()
+      const nextControls = await agentClient.getControls().catch(() => null)
 
+      if (nextControls) {
+        controlsRef.current = nextControls
+        setControls(nextControls)
+      }
       setSession(nextSession ?? state.session)
       setMessages(state.messages)
       setTimeline(state.timeline ?? [])
+      return true
+    }
+
+    if (commandName === 'tools') {
+      if (sessionRef.current?.runtimeKind !== 'pi-sdk') {
+        appendLocalLifecycle('tools unavailable', 'Tool controls are only available for pi SDK sessions.', 'error')
+        return true
+      }
+
+      if (!controlState?.tools.length) {
+        appendLocalLifecycle('tools unavailable', 'No SDK tools are loaded for this session yet.', 'error')
+        return true
+      }
+
+      if (!commandValue) {
+        const activeTools = controlState.activeToolNames.length
+          ? controlState.activeToolNames.join(', ')
+          : 'none'
+        const availableTools = controlState.tools.map((tool) => tool.name).join(', ')
+
+        appendLocalLifecycle(
+          'tools',
+          `active: ${activeTools} · available: ${availableTools}`,
+          'completed',
+        )
+        return true
+      }
+
+      const requestedTools = parseToolCommandValue(commandValue, controlState)
+
+      if (!requestedTools) {
+        appendLocalLifecycle(
+          'tools failed',
+          `Unknown tool selection "${commandValue}". Use all, none, or names from: ${controlState.tools.map((tool) => tool.name).join(', ')}`,
+          'error',
+        )
+        return true
+      }
+
+      const nextControls = await agentClient.setActiveTools(requestedTools)
+
+      controlsRef.current = nextControls
+      setControls(nextControls)
+      appendLocalLifecycle(
+        'tools updated',
+        requestedTools.length ? requestedTools.join(', ') : 'No tools active.',
+        'completed',
+      )
       return true
     }
 
@@ -573,7 +801,12 @@ export function AgentPanel({
       }
 
       const state = await agentClient.compact(commandValue || undefined)
+      const nextControls = await agentClient.getControls().catch(() => null)
 
+      if (nextControls) {
+        controlsRef.current = nextControls
+        setControls(nextControls)
+      }
       setSession(state.session)
       setMessages(state.messages)
       setTimeline(state.timeline ?? [])
@@ -967,11 +1200,30 @@ export function AgentPanel({
   return (
     <div className={`cbv-agent-panel${settingsOnly ? ' is-settings-only' : ''}`}>
       <div className="cbv-agent-meta">
-        <div>
+        <div className="cbv-agent-meta-main">
           <p className="cbv-eyebrow">Session</p>
-          <strong>
-            {session ? `${session.provider}/${session.modelId}` : 'Starting…'}
-          </strong>
+          {session || terminalModelOptions.length > 0 ? (
+            <AgentModelPicker
+              disabled={
+                pending ||
+                settingsPending ||
+                session?.runState === 'running' ||
+                terminalModelOptions.length <= 1
+              }
+              models={terminalModelOptions}
+              onSelect={(modelKey) => {
+                void handleTerminalModelChange(modelKey)
+              }}
+              selectedModelKey={selectedModelKey}
+              title={
+                session?.runState === 'running'
+                  ? 'Model switching is disabled while the agent is running.'
+                  : 'Switch agent model'
+              }
+            />
+          ) : (
+            <strong>Starting…</strong>
+          )}
         </div>
         <div className={`cbv-agent-status is-${session?.runState ?? 'idle'}`}>
           {session?.runState ?? 'idle'}
@@ -1257,7 +1509,6 @@ export function AgentPanel({
       ) : (
       <div className="cbv-agent-terminal">
         <div className="cbv-agent-terminal-bar">
-          <span>model {session.provider}/{session.modelId}</span>
           <span>thinking {session.thinkingLevel ?? 'medium'}</span>
           <span className={`cbv-agent-terminal-state is-${session.runState}`}>
             {session.runState}
@@ -1265,6 +1516,11 @@ export function AgentPanel({
           <span title={session.sessionFile ?? undefined}>
             session {session.sessionName ?? abbreviateId(session.id)}
           </span>
+          {sessionControls?.tools.length ? (
+            <span title={sessionControls.tools.map((tool) => `${tool.active ? 'on' : 'off'} ${tool.name}`).join(' · ')}>
+              tools {sessionControls.activeToolNames.length}/{sessionControls.tools.length}
+            </span>
+          ) : null}
           <span>
             queue s:{session.queue?.steering ?? 0} f:{session.queue?.followUp ?? 0}
           </span>
@@ -1287,6 +1543,9 @@ export function AgentPanel({
             workingSetContext,
             workingSetMatchesInspectorContext,
           })}
+          {commandSuggestions.length > 0 ? (
+            <AgentCommandSuggestions commands={commandSuggestions} />
+          ) : null}
           <textarea
             ref={composerRef}
             onChange={(event) =>
@@ -1304,7 +1563,7 @@ export function AgentPanel({
                 void handleSubmit(session.runState === 'running' ? 'steer' : 'send')
               }
             }}
-            placeholder={buildComposerPlaceholder(session)}
+            placeholder={buildComposerPlaceholder(session, sessionControls)}
             rows={1}
             value={composerValue}
           />
@@ -1434,6 +1693,260 @@ function handleAgentEvent(
       ])
       break
   }
+}
+
+function AgentModelPicker({
+  disabled,
+  models,
+  onSelect,
+  selectedModelKey,
+  title,
+}: {
+  disabled: boolean
+  models: AgentControlState['models']
+  onSelect: (modelKey: string) => void
+  selectedModelKey: string
+  title: string
+}) {
+  const [open, setOpen] = useState(false)
+  const [menuPlacement, setMenuPlacement] = useState<AgentModelMenuPlacement | null>(null)
+  const pickerRef = useRef<HTMLDivElement | null>(null)
+  const menuRef = useRef<HTMLDivElement | null>(null)
+  const menuId = useId()
+  const selectedModel = useMemo(
+    () => models.find((model) => createAgentModelKey(model) === selectedModelKey) ?? null,
+    [models, selectedModelKey],
+  )
+  const modelGroups = useMemo(() => groupAgentModelOptions(models), [models])
+
+  useLayoutEffect(() => {
+    if (!open) {
+      return
+    }
+
+    const updateMenuPlacement = () => {
+      const triggerRect = pickerRef.current?.getBoundingClientRect()
+
+      if (!triggerRect) {
+        return
+      }
+
+      const viewportWidth = window.innerWidth
+      const viewportHeight = window.innerHeight
+      const availableWidth = Math.max(0, viewportWidth - MODEL_MENU_MARGIN_PX * 2)
+      const menuWidth = Math.min(
+        Math.max(triggerRect.width, MODEL_MENU_MIN_WIDTH_PX),
+        availableWidth,
+      )
+      const maxLeft = Math.max(MODEL_MENU_MARGIN_PX, viewportWidth - menuWidth - MODEL_MENU_MARGIN_PX)
+      const left = Math.min(
+        Math.max(MODEL_MENU_MARGIN_PX, triggerRect.left),
+        maxLeft,
+      )
+      const availableBelow = Math.max(
+        0,
+        viewportHeight - triggerRect.bottom - MODEL_MENU_GAP_PX - MODEL_MENU_MARGIN_PX,
+      )
+      const availableAbove = Math.max(
+        0,
+        triggerRect.top - MODEL_MENU_GAP_PX - MODEL_MENU_MARGIN_PX,
+      )
+      const opensBelow =
+        availableBelow >= MODEL_MENU_MIN_COMFORTABLE_HEIGHT_PX ||
+        availableBelow >= availableAbove
+      const availableHeight = opensBelow ? availableBelow : availableAbove
+
+      setMenuPlacement({
+        bottom: opensBelow
+          ? 'auto'
+          : viewportHeight - triggerRect.top + MODEL_MENU_GAP_PX,
+        left,
+        maxHeight: Math.min(MODEL_MENU_MAX_HEIGHT_PX, availableHeight),
+        top: opensBelow ? triggerRect.bottom + MODEL_MENU_GAP_PX : 'auto',
+        width: menuWidth,
+      })
+    }
+
+    updateMenuPlacement()
+
+    window.addEventListener('resize', updateMenuPlacement)
+    window.addEventListener('scroll', updateMenuPlacement, true)
+    window.visualViewport?.addEventListener('resize', updateMenuPlacement)
+    window.visualViewport?.addEventListener('scroll', updateMenuPlacement)
+
+    return () => {
+      window.removeEventListener('resize', updateMenuPlacement)
+      window.removeEventListener('scroll', updateMenuPlacement, true)
+      window.visualViewport?.removeEventListener('resize', updateMenuPlacement)
+      window.visualViewport?.removeEventListener('scroll', updateMenuPlacement)
+    }
+  }, [open])
+
+  useEffect(() => {
+    if (!open) {
+      return
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target as Node
+
+      if (
+        pickerRef.current &&
+        !pickerRef.current.contains(target) &&
+        !menuRef.current?.contains(target)
+      ) {
+        setOpen(false)
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setOpen(false)
+      }
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [open])
+
+  const menuStyle = useMemo<CSSProperties>(() => {
+    if (!menuPlacement) {
+      return {
+        left: -9999,
+        maxHeight: 0,
+        position: 'fixed',
+        top: 0,
+      }
+    }
+
+    return {
+      bottom: menuPlacement.bottom,
+      left: menuPlacement.left,
+      maxHeight: menuPlacement.maxHeight,
+      position: 'fixed',
+      top: menuPlacement.top,
+      width: menuPlacement.width,
+    }
+  }, [menuPlacement])
+
+  const menu = open ? (
+    <div
+      className="cbv-agent-model-menu"
+      id={menuId}
+      ref={menuRef}
+      role="listbox"
+      style={menuStyle}
+    >
+      {modelGroups.map((group) => (
+        <div
+          className="cbv-agent-model-group"
+          key={group.key}
+          role="group"
+        >
+          <div className="cbv-agent-model-group-header">
+            <span>{group.provider}</span>
+            <span>{getAgentRuntimeLabel(group.authMode)}</span>
+          </div>
+          {group.models.map((model) => {
+            const modelKey = createAgentModelKey(model)
+            const selected = modelKey === selectedModelKey
+
+            return (
+              <button
+                aria-selected={selected}
+                className={`cbv-agent-model-option${selected ? ' is-selected' : ''}`}
+                key={modelKey}
+                onClick={() => {
+                  if (!selected) {
+                    onSelect(modelKey)
+                  }
+
+                  setOpen(false)
+                }}
+                role="option"
+                type="button"
+              >
+                <span aria-hidden="true" className="cbv-agent-model-option-dot" />
+                <span className="cbv-agent-model-option-label">{model.id}</span>
+              </button>
+            )
+          })}
+        </div>
+      ))}
+    </div>
+  ) : null
+
+  return (
+    <div
+      className={`cbv-agent-model-picker${open ? ' is-open' : ''}`}
+      ref={pickerRef}
+    >
+      <button
+        aria-controls={open ? menuId : undefined}
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        aria-label="Agent model"
+        className="cbv-agent-model-trigger"
+        disabled={disabled}
+        onClick={() => setOpen((current) => !current)}
+        title={title}
+        type="button"
+      >
+        <span aria-hidden="true" className="cbv-agent-model-trigger-dot" />
+        <span className="cbv-agent-model-trigger-copy">
+          <span className="cbv-agent-model-trigger-model">
+            {selectedModel?.id ?? 'Select model'}
+          </span>
+          {selectedModel ? (
+            <span className="cbv-agent-model-trigger-provider">
+              {selectedModel.provider} · {getAgentRuntimeLabel(selectedModel.authMode)}
+            </span>
+          ) : null}
+        </span>
+        <span aria-hidden="true" className="cbv-agent-model-trigger-caret">
+          ▾
+        </span>
+      </button>
+      {menu && typeof document !== 'undefined' ? createPortal(menu, document.body) : null}
+    </div>
+  )
+}
+
+interface AgentModelMenuPlacement {
+  bottom: number | 'auto'
+  left: number
+  maxHeight: number
+  top: number | 'auto'
+  width: number
+}
+
+function AgentCommandSuggestions({
+  commands,
+}: {
+  commands: AgentCommandInfo[]
+}) {
+  return (
+    <div className="cbv-agent-command-suggestions">
+      {commands.map((command) => (
+        <div
+          className={[
+            'cbv-agent-command-suggestion',
+            `is-${command.source}`,
+            command.enabled ? '' : 'is-disabled',
+          ].filter(Boolean).join(' ')}
+          key={`${command.source}:${command.name}`}
+        >
+          <strong>/{command.name}</strong>
+          <span>{command.description ?? command.source}</span>
+        </div>
+      ))}
+    </div>
+  )
 }
 
 function AgentTerminalTimeline({
@@ -1799,27 +2312,277 @@ function getSessionCapabilities(session: AgentSessionSummary | null) {
   }
 }
 
-function buildComposerPlaceholder(session: AgentSessionSummary | null) {
+function getAvailableAgentModelOptions(input: {
+  authMode: AgentAuthMode
+  controls: AgentControlState | null
+  provider: string
+  session: AgentSessionSummary | null
+  settings: AgentSettingsState | null
+}) {
+  const models = input.controls?.models.length
+    ? input.controls.models
+    : input.settings
+      ? getSelectableModels(input.settings, input.authMode, input.provider)
+        .map((model) => ({
+          authMode: model.authMode ?? input.authMode,
+          id: model.id,
+          provider: input.provider,
+        }))
+      : []
+  const withCurrentModel = input.session
+    ? [
+        {
+          authMode: input.session.authMode,
+          id: input.session.modelId,
+          provider: input.session.provider,
+        },
+        ...models,
+      ]
+    : models
+  const seen = new Set<string>()
+
+  return withCurrentModel.filter((model) => {
+    const key = createAgentModelKey(model)
+
+    if (seen.has(key)) {
+      return false
+    }
+
+    seen.add(key)
+    return true
+  })
+}
+
+function createAgentModelKey(model: AgentControlState['models'][number]) {
+  return `${model.authMode}:${model.provider}/${model.id}`
+}
+
+function groupAgentModelOptions(models: AgentControlState['models']) {
+  const groups: Array<{
+    authMode: AgentAuthMode
+    key: string
+    models: AgentControlState['models']
+    provider: string
+  }> = []
+  const groupByKey = new Map<string, (typeof groups)[number]>()
+
+  for (const model of models) {
+    const key = `${model.authMode}:${model.provider}`
+    let group = groupByKey.get(key)
+
+    if (!group) {
+      group = {
+        authMode: model.authMode,
+        key,
+        models: [],
+        provider: model.provider,
+      }
+      groupByKey.set(key, group)
+      groups.push(group)
+    }
+
+    group.models.push(model)
+  }
+
+  return groups
+}
+
+function parseAgentModelKey(modelKey: string) {
+  const authSeparatorIndex = modelKey.indexOf(':')
+  const authModeValue = authSeparatorIndex > 0
+    ? modelKey.slice(0, authSeparatorIndex)
+    : null
+  const modelPath = authSeparatorIndex > 0
+    ? modelKey.slice(authSeparatorIndex + 1)
+    : modelKey
+  const separatorIndex = modelPath.indexOf('/')
+
+  if (separatorIndex <= 0 || separatorIndex === modelPath.length - 1) {
+    return null
+  }
+
+  const authMode = authModeValue && isAgentAuthMode(authModeValue)
+    ? authModeValue
+    : undefined
+
+  return {
+    authMode,
+    provider: modelPath.slice(0, separatorIndex),
+    modelId: modelPath.slice(separatorIndex + 1),
+  }
+}
+
+function resolveAgentModelSelection(
+  value: string,
+  input: {
+    availableModels: AgentControlState['models']
+    provider: string
+    session: AgentSessionSummary | null
+  },
+) {
+  const parsedModel = value.includes('/')
+    ? parseAgentModelKey(value)
+    : {
+        authMode: input.session?.authMode,
+        modelId: value,
+        provider: input.session?.provider ?? input.provider,
+      }
+
+  if (!parsedModel) {
+    return null
+  }
+
+  const preferredAuthMode = parsedModel.authMode ?? input.session?.authMode
+  const matchingModel = input.availableModels.find(
+    (model) =>
+      model.id === parsedModel.modelId &&
+      model.provider === parsedModel.provider &&
+      (!preferredAuthMode || model.authMode === preferredAuthMode),
+  ) ?? input.availableModels.find(
+    (model) =>
+      model.id === parsedModel.modelId &&
+      model.provider === parsedModel.provider &&
+      (!parsedModel.authMode || model.authMode === parsedModel.authMode),
+  )
+
+  return matchingModel
+    ? {
+        authMode: matchingModel.authMode,
+        modelId: matchingModel.id,
+        provider: matchingModel.provider,
+      }
+    : null
+}
+
+function getAgentRuntimeLabel(authMode: AgentAuthMode) {
+  return authMode === 'brokered_oauth' ? 'Codex OAuth' : 'PI SDK'
+}
+
+function formatAgentModelOption(model: AgentControlState['models'][number]) {
+  return `${model.provider}/${model.id} (${getAgentRuntimeLabel(model.authMode)})`
+}
+
+function isAgentAuthMode(value: string): value is AgentAuthMode {
+  return value === 'api_key' || value === 'brokered_oauth'
+}
+
+function buildComposerPlaceholder(
+  session: AgentSessionSummary | null,
+  controls: AgentControlState | null,
+) {
+  const commands = getVisibleCommandNames(controls)
+
+  if (commands.length > 0) {
+    return `${commands.slice(0, 7).map((command) => `/${command}`).join(' ')} or ask...`
+  }
+
   const capabilities = getSessionCapabilities(session)
-  const commands = ['/model', '/session', '/clear']
+  const fallbackCommands = ['/model', '/session', '/clear']
 
   if (capabilities.newSession) {
-    commands.unshift('/new')
+    fallbackCommands.unshift('/new')
   }
 
-  if (capabilities.resumeSession) {
-    commands.push('/resume')
+  return `${fallbackCommands.join(' ')} or ask...`
+}
+
+function getVisibleCommandNames(controls: AgentControlState | null) {
+  if (!controls) {
+    return []
   }
 
-  if (capabilities.setThinkingLevel) {
-    commands.push('/thinking')
+  return controls.commands
+    .filter((command) => command.available && command.enabled)
+    .sort((left, right) => {
+      if (left.source === 'semanticode' && right.source !== 'semanticode') {
+        return 1
+      }
+
+      if (left.source !== 'semanticode' && right.source === 'semanticode') {
+        return -1
+      }
+
+      return left.name.localeCompare(right.name)
+    })
+    .map((command) => command.name)
+}
+
+function getCommandSuggestions(
+  composerValue: string,
+  controls: AgentControlState | null,
+) {
+  if (!controls) {
+    return []
   }
 
-  if (capabilities.compact) {
-    commands.push('/compact')
+  const trimmed = composerValue.trimStart()
+
+  if (!trimmed.startsWith('/')) {
+    return []
   }
 
-  return `${commands.join(' ')} or ask…`
+  const query = trimmed.slice(1).split(/\s+/)[0].toLowerCase()
+
+  return controls.commands
+    .filter((command) =>
+      command.available &&
+      (query.length === 0 || command.name.toLowerCase().includes(query)),
+    )
+    .sort((left, right) => {
+      if (left.source === 'semanticode' && right.source !== 'semanticode') {
+        return 1
+      }
+
+      if (left.source !== 'semanticode' && right.source === 'semanticode') {
+        return -1
+      }
+
+      return left.name.localeCompare(right.name)
+    })
+    .slice(0, 8)
+}
+
+function isSemanticodeLocalCommand(commandName: string) {
+  return (
+    commandName === 'clear' ||
+    commandName === 'compact' ||
+    commandName === 'model' ||
+    commandName === 'new' ||
+    commandName === 'resume' ||
+    commandName === 'session' ||
+    commandName === 'thinking' ||
+    commandName === 'tools'
+  )
+}
+
+function parseToolCommandValue(
+  commandValue: string,
+  controls: AgentControlState,
+) {
+  const normalized = commandValue.trim().toLowerCase()
+
+  if (normalized === 'all') {
+    return controls.tools.map((tool) => tool.name)
+  }
+
+  if (normalized === 'none' || normalized === 'off') {
+    return []
+  }
+
+  const availableTools = new Set(controls.tools.map((tool) => tool.name))
+  const requestedTools = commandValue
+    .split(/[,\s]+/)
+    .map((toolName) => toolName.trim())
+    .filter(Boolean)
+
+  if (
+    requestedTools.length === 0 ||
+    requestedTools.some((toolName) => !availableTools.has(toolName))
+  ) {
+    return null
+  }
+
+  return [...new Set(requestedTools)]
 }
 
 function getSelectableModels(

@@ -30,7 +30,7 @@
 }
 
 .cbv-toolbar {
-  grid-template-columns: minmax(0, 1.2fr) minmax(18rem, 30rem) auto;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 16rem) minmax(0, auto);
   gap: 0.9rem 1.15rem;
   padding: 0.9rem 1rem;
   background:
@@ -65,7 +65,8 @@
 }
 
 .cbv-layout-picker {
-  min-width: min(24rem, 100%);
+  min-width: 0;
+  max-width: 16rem;
   gap: 0.38rem;
 }
 
@@ -103,7 +104,7 @@
 
 .cbv-toolbar {
   display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(18rem, 30rem) auto;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 16rem) minmax(0, auto);
   justify-content: space-between;
   align-items: center;
   gap: 0.65rem 1rem;
@@ -410,7 +411,7 @@
 
 .cbv-toolbar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(11rem, 18rem) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 16rem) minmax(0, auto);
   align-items: center;
   gap: 0.75rem;
   min-height: 2.75rem;
@@ -516,7 +517,8 @@
 .cbv-layout-picker {
   position: relative;
   min-width: 0;
-  width: min(16rem, 100%);
+  width: 100%;
+  max-width: 16rem;
 }
 
 .cbv-layout-trigger {
@@ -524,6 +526,7 @@
   align-items: center;
   gap: 0.4rem;
   width: 100%;
+  min-width: 0;
   min-height: 1.625rem;
   padding: 0 0.35rem 0 0.45rem;
   border: 1px solid var(--app-border);
@@ -553,6 +556,7 @@
 }
 
 .cbv-layout-trigger-label {
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -754,57 +758,6 @@
 .cbv-workspace-outline {
   gap: 0.125rem;
   padding-right: 0;
-}
-
-.cbv-draft-strip {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem 1rem;
-  min-width: 0;
-  padding: 0.55rem 0.8rem;
-  border: 1px solid var(--app-border);
-  border-radius: var(--cbv-radius-xl);
-  background: var(--app-surface);
-}
-
-.cbv-draft-strip-copy {
-  display: grid;
-  gap: 0.12rem;
-  min-width: 0;
-}
-
-.cbv-draft-strip-copy strong {
-  overflow: hidden;
-  color: var(--app-text);
-  font-family: var(--cbv-font-sans);
-  font-size: 0.78rem;
-  font-weight: 600;
-  letter-spacing: -0.02em;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.cbv-draft-strip-note,
-.cbv-draft-strip-error {
-  overflow: hidden;
-  color: var(--app-text-faint);
-  font-family: var(--cbv-font-mono);
-  font-size: 0.59375rem;
-  letter-spacing: 0.04em;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.cbv-draft-strip-error {
-  color: var(--app-danger);
-}
-
-.cbv-draft-strip-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  flex: 0 0 auto;
 }
 
 .cbv-workspace-outline {

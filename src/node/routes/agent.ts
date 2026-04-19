@@ -10,16 +10,22 @@ import {
   SEMANTICODE_AGENT_AUTH_SESSION_ROUTE,
   SEMANTICODE_AGENT_CANCEL_ROUTE,
   SEMANTICODE_AGENT_COMPACT_ROUTE,
+  SEMANTICODE_AGENT_CONTROLS_ROUTE,
   SEMANTICODE_AGENT_MESSAGE_ROUTE,
+  SEMANTICODE_AGENT_MODEL_ROUTE,
   SEMANTICODE_AGENT_SESSIONS_ROUTE,
   SEMANTICODE_AGENT_SESSION_NEW_ROUTE,
   SEMANTICODE_AGENT_SESSION_RESUME_ROUTE,
   SEMANTICODE_AGENT_SETTINGS_ROUTE,
   SEMANTICODE_AGENT_SESSION_ROUTE,
   SEMANTICODE_AGENT_THINKING_ROUTE,
+  SEMANTICODE_AGENT_TOOLS_ROUTE,
 } from '../../shared/constants'
 import type {
+  AgentActiveToolsRequest,
   AgentCompactionRequest,
+  AgentControlsResponse,
+  AgentModelSelectionRequest,
   AgentResumeSessionRequest,
   AgentBrokerCompleteRequest,
   AgentBrokerSessionResponse,
@@ -147,6 +153,15 @@ export async function handleAgentRoute(
     return true
   }
 
+  if (pathname === SEMANTICODE_AGENT_CONTROLS_ROUTE && method === 'GET') {
+    const result: AgentControlsResponse = {
+      controls: await options.agentRuntime.getWorkspaceControls(options.rootDir),
+    }
+
+    sendJson(response, 200, result)
+    return true
+  }
+
   if (pathname === SEMANTICODE_AGENT_SESSION_NEW_ROUTE && method === 'POST') {
     const session = await options.agentRuntime.startNewWorkspaceSession(options.rootDir)
     const state: AgentStateResponse = {
@@ -205,6 +220,48 @@ export async function handleAgentRoute(
       options.rootDir,
       thinkingLevel,
     )
+    const state: AgentStateResponse = {
+      session,
+      messages: options.agentRuntime.getWorkspaceMessages(options.rootDir),
+      timeline: options.agentRuntime.getWorkspaceTimeline(options.rootDir),
+    }
+
+    sendJson(response, 200, state)
+    return true
+  }
+
+  if (pathname === SEMANTICODE_AGENT_TOOLS_ROUTE && method === 'POST') {
+    const payload = await readJsonBody<AgentActiveToolsRequest>(request)
+
+    if (!payload || !Array.isArray(payload.toolNames)) {
+      sendJson(response, 400, {
+        message: 'A toolNames array is required.',
+      })
+      return true
+    }
+
+    const result: AgentControlsResponse = {
+      controls: await options.agentRuntime.setWorkspaceActiveTools(
+        options.rootDir,
+        payload.toolNames,
+      ),
+    }
+
+    sendJson(response, 200, result)
+    return true
+  }
+
+  if (pathname === SEMANTICODE_AGENT_MODEL_ROUTE && method === 'POST') {
+    const payload = await readJsonBody<AgentModelSelectionRequest>(request)
+
+    if (!payload?.provider?.trim() || !payload?.modelId?.trim()) {
+      sendJson(response, 400, {
+        message: 'A provider and modelId are required.',
+      })
+      return true
+    }
+
+    const session = await options.agentRuntime.setWorkspaceModel(options.rootDir, payload)
     const state: AgentStateResponse = {
       session,
       messages: options.agentRuntime.getWorkspaceMessages(options.rootDir),

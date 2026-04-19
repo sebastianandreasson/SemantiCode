@@ -149,6 +149,7 @@ export function WorkspaceToolbar({
               aria-label="Layout"
               className="cbv-layout-trigger"
               onClick={() => setLayoutMenuOpen((current) => !current)}
+              title={selectedLayoutOption?.label ?? 'Select layout'}
               type="button"
             >
               <span aria-hidden="true" className="cbv-layout-trigger-dot" />
@@ -180,6 +181,7 @@ export function WorkspaceToolbar({
                       setLayoutMenuOpen(false)
                     }}
                     role="option"
+                    title={option.label}
                     type="button"
                   >
                     <span aria-hidden="true" className="cbv-layout-option-dot" />

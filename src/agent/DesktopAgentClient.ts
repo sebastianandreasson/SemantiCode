@@ -1,9 +1,12 @@
 import type {
+  AgentActiveToolsRequest,
   AgentBrokerCallbackResult,
   AgentCompactionRequest,
   AgentBrokerCompleteRequest,
   AgentCodexImportResponse,
   AgentBrokerLoginStartResponse,
+  AgentControlsResponse,
+  AgentModelSelectionRequest,
   AgentPromptRequest,
   AgentResumeSessionRequest,
   AgentSessionListResponse,
@@ -22,13 +25,16 @@ import {
   SEMANTICODE_AGENT_AUTH_SESSION_ROUTE,
   SEMANTICODE_AGENT_CANCEL_ROUTE,
   SEMANTICODE_AGENT_COMPACT_ROUTE,
+  SEMANTICODE_AGENT_CONTROLS_ROUTE,
   SEMANTICODE_AGENT_MESSAGE_ROUTE,
+  SEMANTICODE_AGENT_MODEL_ROUTE,
   SEMANTICODE_AGENT_SESSIONS_ROUTE,
   SEMANTICODE_AGENT_SESSION_NEW_ROUTE,
   SEMANTICODE_AGENT_SESSION_RESUME_ROUTE,
   SEMANTICODE_AGENT_SETTINGS_ROUTE,
   SEMANTICODE_AGENT_SESSION_ROUTE,
   SEMANTICODE_AGENT_THINKING_ROUTE,
+  SEMANTICODE_AGENT_TOOLS_ROUTE,
 } from '../shared/constants'
 
 interface DesktopAgentBridge {
@@ -39,6 +45,7 @@ interface DesktopAgentBridge {
   isDesktop?: boolean
   onEvent?: (listener: (event: AgentEvent) => void) => () => void
   openWorkspaceDialog?: () => Promise<boolean>
+  getControls?: () => Promise<AgentControlsResponse>
   sendMessage?: (
     payload: string | AgentPromptRequest,
   ) => Promise<boolean>
@@ -46,6 +53,8 @@ interface DesktopAgentBridge {
   newSession?: () => Promise<AgentSessionSummary | null>
   resumeSession?: (sessionFile: string) => Promise<AgentSessionSummary | null>
   setThinkingLevel?: (thinkingLevel: NonNullable<AgentSessionSummary['thinkingLevel']>) => Promise<AgentSessionSummary | null>
+  setActiveTools?: (toolNames: string[]) => Promise<AgentControlsResponse>
+  setModel?: (input: AgentModelSelectionRequest) => Promise<AgentSessionSummary | null>
   compact?: (instructions?: string) => Promise<AgentStateResponse>
 }
 
@@ -160,6 +169,27 @@ export class DesktopAgentClient {
     return (await response.json()) as AgentSessionListResponse
   }
 
+  async getControls() {
+    const bridge = this.getBridge()
+
+    if (bridge?.getControls) {
+      return (await bridge.getControls()).controls
+    }
+
+    const response = await fetch(SEMANTICODE_AGENT_CONTROLS_ROUTE, {
+      method: 'GET',
+    })
+
+    if (!response.ok) {
+      throw new Error(await getResponseErrorMessage(
+        response,
+        `Agent controls request failed with status ${response.status}.`,
+      ))
+    }
+
+    return ((await response.json()) as AgentControlsResponse).controls
+  }
+
   async newSession() {
     const bridge = this.getBridge()
 
@@ -183,6 +213,49 @@ export class DesktopAgentClient {
 
     const state = await this.fetchAgentState(SEMANTICODE_AGENT_SESSION_RESUME_ROUTE, {
       body: JSON.stringify({ sessionFile } satisfies AgentResumeSessionRequest),
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      method: 'POST',
+    })
+
+    return state.session
+  }
+
+  async setActiveTools(toolNames: string[]) {
+    const bridge = this.getBridge()
+
+    if (bridge?.setActiveTools) {
+      return (await bridge.setActiveTools(toolNames)).controls
+    }
+
+    const response = await fetch(SEMANTICODE_AGENT_TOOLS_ROUTE, {
+      body: JSON.stringify({ toolNames } satisfies AgentActiveToolsRequest),
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      method: 'POST',
+    })
+
+    if (!response.ok) {
+      throw new Error(await getResponseErrorMessage(
+        response,
+        `Agent tools request failed with status ${response.status}.`,
+      ))
+    }
+
+    return ((await response.json()) as AgentControlsResponse).controls
+  }
+
+  async setModel(input: AgentModelSelectionRequest) {
+    const bridge = this.getBridge()
+
+    if (bridge?.setModel) {
+      return bridge.setModel(input)
+    }
+
+    const state = await this.fetchAgentState(SEMANTICODE_AGENT_MODEL_ROUTE, {
+      body: JSON.stringify(input),
       headers: {
         'Content-Type': 'application/json',
       },

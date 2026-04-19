@@ -22,6 +22,50 @@ export interface AgentCapabilitySet {
   steer: boolean
 }
 
+export type AgentCommandSource = 'extension' | 'prompt' | 'skill' | 'semanticode'
+
+export interface AgentSourceInfo {
+  baseDir?: string
+  origin?: string
+  path?: string
+  scope?: string
+  source?: string
+}
+
+export interface AgentCommandInfo {
+  available: boolean
+  description?: string
+  enabled: boolean
+  name: string
+  source: AgentCommandSource
+  sourceInfo?: AgentSourceInfo
+}
+
+export interface AgentToolControlInfo {
+  active: boolean
+  description?: string
+  name: string
+  sourceInfo?: AgentSourceInfo
+}
+
+export interface AgentModelControlOption {
+  authMode: AgentAuthMode
+  id: string
+  provider: string
+}
+
+export interface AgentControlState {
+  activeToolNames: string[]
+  availableThinkingLevels: NonNullable<AgentSessionSummary['thinkingLevel']>[]
+  commands: AgentCommandInfo[]
+  followUpMode?: 'all' | 'one-at-a-time'
+  models: AgentModelControlOption[]
+  runtimeKind?: AgentRuntimeKind
+  sessionId: string | null
+  steeringMode?: 'all' | 'one-at-a-time'
+  tools: AgentToolControlInfo[]
+}
+
 export type AgentBrokerAuthState = 'unconfigured' | 'signed_out' | 'pending' | 'authenticated'
 
 export interface AgentBrokerSessionSummary {
@@ -152,6 +196,7 @@ export interface AgentPermissionRequest {
 export type AgentSecretStorageKind = 'plaintext' | 'safe_storage'
 
 export interface AgentModelOption {
+  authMode?: AgentAuthMode
   id: string
 }
 

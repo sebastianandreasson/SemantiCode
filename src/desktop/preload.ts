@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
 import type { AgentEvent } from '../schema/agent'
-import type { AgentPromptRequest } from '../schema/api'
+import type { AgentModelSelectionRequest, AgentPromptRequest } from '../schema/api'
 import type { UiPreferences } from '../schema/store'
 
 const initialUiPreferences = ipcRenderer.sendSync(
@@ -27,11 +27,16 @@ contextBridge.exposeInMainWorld('semanticodeDesktop', {
     payload: string | AgentPromptRequest,
   ) => ipcRenderer.invoke('semanticode:agent:send-message', payload),
   listSessions: () => ipcRenderer.invoke('semanticode:agent:list-sessions'),
+  getControls: () => ipcRenderer.invoke('semanticode:agent:get-controls'),
   newSession: () => ipcRenderer.invoke('semanticode:agent:new-session'),
   resumeSession: (sessionFile: string) =>
     ipcRenderer.invoke('semanticode:agent:resume-session', sessionFile),
   setThinkingLevel: (thinkingLevel: string) =>
     ipcRenderer.invoke('semanticode:agent:set-thinking-level', thinkingLevel),
+  setActiveTools: (toolNames: string[]) =>
+    ipcRenderer.invoke('semanticode:agent:set-active-tools', toolNames),
+  setModel: (input: AgentModelSelectionRequest) =>
+    ipcRenderer.invoke('semanticode:agent:set-model', input),
   compact: (instructions?: string) =>
     ipcRenderer.invoke('semanticode:agent:compact', instructions),
   cancel: () => ipcRenderer.invoke('semanticode:agent:cancel'),

@@ -33,7 +33,9 @@
   }
 
   .cbv-layout-picker {
-    min-width: min(24rem, 100%);
+    min-width: 0;
+    width: 100%;
+    max-width: 16rem;
   }
 }
 
@@ -43,7 +45,9 @@
   }
 
   .cbv-layout-picker {
-    min-width: 100%;
+    min-width: 0;
+    width: 100%;
+    max-width: 100%;
   }
 }
 
@@ -148,15 +152,6 @@
 }
 
 @media (max-width: 1180px) {
-  .cbv-draft-strip {
-    flex-wrap: wrap;
-  }
-
-  .cbv-draft-strip-actions {
-    width: 100%;
-    justify-content: flex-start;
-  }
-
   .cbv-canvas-utility-anchor {
     width: min(21rem, calc(100% - 1rem));
   }

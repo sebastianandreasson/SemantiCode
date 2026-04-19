@@ -1,6 +1,8 @@
 import type { ReadProjectSnapshotOptions } from '../../types'
 import type {
   AgentBrokerLoginStartResponse,
+  AgentControlsResponse,
+  AgentModelSelectionRequest,
   AgentPromptRequest,
   AgentBrokerSessionResponse,
   AgentCodexImportResponse,
@@ -33,6 +35,7 @@ export interface AgentRuntimeRequestBridge {
   getBrokerSession: () => Promise<AgentBrokerSessionResponse['brokerSession']>
   importCodexAuthSession: () => Promise<AgentCodexImportResponse>
   ensureWorkspaceSession: (workspaceRootDir: string) => Promise<AgentStateResponse['session']>
+  getWorkspaceControls: (workspaceRootDir: string) => Promise<AgentControlsResponse['controls']>
   getSettings: () => Promise<AgentSettingsResponse['settings']>
   getWorkspaceMessages: (workspaceRootDir: string) => AgentStateResponse['messages']
   getWorkspaceSessionSummary: (workspaceRootDir: string) => AgentStateResponse['session']
@@ -47,6 +50,14 @@ export interface AgentRuntimeRequestBridge {
     mode?: AgentPromptRequest['mode'],
   ) => Promise<void>
   resumeWorkspaceSession: (workspaceRootDir: string, sessionFile: string) => Promise<AgentStateResponse['session']>
+  setWorkspaceActiveTools: (
+    workspaceRootDir: string,
+    toolNames: string[],
+  ) => Promise<AgentControlsResponse['controls']>
+  setWorkspaceModel: (
+    workspaceRootDir: string,
+    input: AgentModelSelectionRequest,
+  ) => Promise<AgentStateResponse['session']>
   setWorkspaceThinkingLevel: (
     workspaceRootDir: string,
     thinkingLevel: NonNullable<NonNullable<AgentStateResponse['session']>['thinkingLevel']>,

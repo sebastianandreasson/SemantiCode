@@ -4,6 +4,12 @@ import { dirname, join } from 'node:path'
 
 import { app, safeStorage } from 'electron'
 import { getModels, getProviders, setApiKey, type KnownProvider } from '@mariozechner/pi-ai'
+import {
+  AuthStorage,
+  getAgentDir,
+  ModelRegistry,
+  type ModelRegistry as PiModelRegistry,
+} from '@mariozechner/pi-coding-agent'
 
 import type {
   AgentAuthMode,
@@ -18,7 +24,7 @@ const DEFAULT_MODEL_ID = 'gpt-4.1-mini'
 const DEFAULT_CODEX_MODEL_ID = 'gpt-5.4'
 const SETTINGS_FILENAME = 'agent-settings.json'
 const APP_SERVER_URL_ENV_NAME = 'SEMANTICODE_PI_APP_SERVER_URL'
-const CODEX_OPENAI_MODELS = [
+export const CODEX_OPENAI_MODELS = [
   'gpt-5.4',
   'gpt-5.2-codex',
   'gpt-5.1-codex-max',
@@ -66,8 +72,9 @@ export class PiAgentSettingsStore {
   async getSettings(): Promise<AgentSettingsState> {
     const persisted = await this.readPersistedSettings()
     const authMode = this.normalizeAuthMode(persisted.authMode)
-    const provider = this.normalizeProvider(persisted.provider)
-    const modelId = this.normalizeModelId(authMode, provider, persisted.modelId)
+    const modelRegistry = this.createPiModelRegistry(persisted)
+    const provider = this.normalizeProvider(persisted.provider, authMode, modelRegistry)
+    const modelId = this.normalizeModelId(authMode, provider, persisted.modelId, modelRegistry)
 
     return {
       authMode,
@@ -83,16 +90,17 @@ export class PiAgentSettingsStore {
       hasOpenAiOAuthClientSecret: Boolean(this.getOpenAiOAuthClientSecret(persisted)),
       canEditOpenAiOAuthConfig: !app.isPackaged,
       storageKind: this.getStorageKind(),
-      availableProviders: this.getAvailableProviders(),
-      availableModelsByProvider: this.getAvailableModelsByProvider(authMode),
+      availableProviders: this.getAvailableProviders(authMode, modelRegistry),
+      availableModelsByProvider: this.getAvailableModelsByProvider(authMode, modelRegistry),
     }
   }
 
   async saveSettings(input: AgentSettingsInput): Promise<AgentSettingsState> {
     const persisted = await this.readPersistedSettings()
+    const modelRegistry = this.createPiModelRegistry(persisted)
     const authMode = this.normalizeAuthMode(input.authMode ?? persisted.authMode)
-    const provider = this.normalizeProvider(input.provider)
-    const modelId = this.normalizeModelId(authMode, provider, input.modelId)
+    const provider = this.normalizeProvider(input.provider, authMode, modelRegistry)
+    const modelId = this.normalizeModelId(authMode, provider, input.modelId, modelRegistry)
     const nextSettings: PersistedSettings = {
       ...persisted,
       authMode,
@@ -387,8 +395,29 @@ export class PiAgentSettingsStore {
     return this.deserializeSecret(secret)
   }
 
-  private getAvailableProviders() {
-    const providers = [...getProviders()]
+  async getStoredApiKeys() {
+    const persisted = await this.readPersistedSettings()
+    const entries = Object.entries(persisted.apiKeys ?? {})
+    const apiKeys: Record<string, string> = {}
+
+    for (const [provider, secret] of entries) {
+      const apiKey = this.deserializeSecret(secret)
+
+      if (apiKey) {
+        apiKeys[provider] = apiKey
+      }
+    }
+
+    return apiKeys
+  }
+
+  private getAvailableProviders(
+    authMode: AgentAuthMode = 'api_key',
+    modelRegistry = this.createPiModelRegistry(),
+  ) {
+    const providers = authMode === 'brokered_oauth'
+      ? [...getProviders()]
+      : [...new Set(modelRegistry.getAll().map((model) => String(model.provider)))]
 
     if (!providers.includes(DEFAULT_PROVIDER)) {
       providers.unshift(DEFAULT_PROVIDER)
@@ -397,28 +426,57 @@ export class PiAgentSettingsStore {
     return providers
   }
 
-  private getAvailableModelsByProvider(authMode: AgentAuthMode) {
+  private getAvailableModelsByProvider(
+    authMode: AgentAuthMode,
+    modelRegistry: PiModelRegistry,
+  ) {
     return Object.fromEntries(
-      this.getAvailableProviders().map((provider) => [
+      this.getAvailableProviders(authMode, modelRegistry).map((provider) => [
         provider,
-        this.getAvailableModelsForProvider(authMode, provider),
+        this.getAvailableModelsForProvider(authMode, provider, modelRegistry),
       ]),
     )
   }
 
-  private getAvailableModelsForProvider(authMode: AgentAuthMode, provider: string) {
+  private getAvailableModelsForProvider(
+    authMode: AgentAuthMode,
+    provider: string,
+    modelRegistry = this.createPiModelRegistry(),
+  ) {
     if (authMode === 'brokered_oauth' && provider === 'openai') {
-      return CODEX_OPENAI_MODELS.map((id) => ({ id }))
+      return CODEX_OPENAI_MODELS.map((id) => ({
+        authMode: 'brokered_oauth' as const,
+        id,
+      }))
     }
 
-    return getModels(provider as KnownProvider).map((model) => ({ id: model.id }))
+    const registryModels = modelRegistry
+      .getAll()
+      .filter((model) => String(model.provider) === provider)
+      .map((model) => ({
+        authMode,
+        id: model.id,
+      }))
+
+    if (registryModels.length > 0) {
+      return registryModels
+    }
+
+    return getModels(provider as KnownProvider).map((model) => ({
+      authMode,
+      id: model.id,
+    }))
   }
 
-  private normalizeProvider(provider: string | undefined) {
-    const availableProviders = this.getAvailableProviders()
+  private normalizeProvider(
+    provider: string | undefined,
+    authMode: AgentAuthMode,
+    modelRegistry: PiModelRegistry,
+  ) {
+    const availableProviders = this.getAvailableProviders(authMode, modelRegistry)
 
     if (provider && availableProviders.some((candidate) => candidate === provider)) {
-      return provider as KnownProvider
+      return provider
     }
 
     return DEFAULT_PROVIDER
@@ -436,8 +494,9 @@ export class PiAgentSettingsStore {
     authMode: AgentAuthMode,
     provider: string,
     modelId: string | undefined,
+    modelRegistry: PiModelRegistry,
   ) {
-    const models = this.getAvailableModelsForProvider(authMode, provider)
+    const models = this.getAvailableModelsForProvider(authMode, provider, modelRegistry)
 
     if (modelId && models.some((model) => model.id === modelId)) {
       return modelId
@@ -448,6 +507,21 @@ export class PiAgentSettingsStore {
     }
 
     return models[0]?.id ?? DEFAULT_MODEL_ID
+  }
+
+  private createPiModelRegistry(persisted?: PersistedSettings) {
+    const agentDir = getAgentDir()
+    const authStorage = AuthStorage.create(join(agentDir, 'auth.json'))
+
+    for (const [provider, secret] of Object.entries(persisted?.apiKeys ?? {})) {
+      const apiKey = this.deserializeSecret(secret)
+
+      if (apiKey) {
+        authStorage.setRuntimeApiKey(provider, apiKey)
+      }
+    }
+
+    return ModelRegistry.create(authStorage, join(agentDir, 'models.json'))
   }
 
   private getStorageKind(): AgentSettingsState['storageKind'] {

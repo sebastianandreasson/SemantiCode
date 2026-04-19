@@ -33,8 +33,16 @@ vi.mock('node:fs/promises', () => ({
 }))
 
 vi.mock('./PiAgentSettingsStore', () => ({
+  CODEX_OPENAI_MODELS: [
+    'gpt-5.4',
+    'gpt-5.4-mini',
+  ],
   PiAgentSettingsStore: class MockPiAgentSettingsStore {
     async applyConfiguredApiKeys() {}
+
+    async getStoredApiKeys() {
+      return {}
+    }
 
     async getOpenAIOAuthClientConfig() {
       return {}
@@ -216,6 +224,30 @@ describe('PiAgentService brokered oauth integration', () => {
       prompt: true,
       resumeSession: false,
       setThinkingLevel: false,
+    })
+    await expect(service.getWorkspaceControls(workspaceRootDir)).resolves.toMatchObject({
+      activeToolNames: [],
+      availableThinkingLevels: [],
+      commands: expect.arrayContaining([
+        expect.objectContaining({
+          name: 'new',
+          source: 'semanticode',
+        }),
+        expect.objectContaining({
+          name: 'model',
+          source: 'semanticode',
+        }),
+      ]),
+      models: expect.arrayContaining([
+        expect.objectContaining({
+          authMode: 'brokered_oauth',
+          id: 'gpt-5.4',
+          provider: 'openai',
+        }),
+      ]),
+      runtimeKind: 'codex-subscription',
+      sessionId: summary.id,
+      tools: [],
     })
 
     await service.promptWorkspaceSession(workspaceRootDir, {

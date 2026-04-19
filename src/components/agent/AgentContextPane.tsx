@@ -2,28 +2,43 @@ import { useEffect, useMemo, useState } from 'react'
 
 import { DesktopAgentClient, type DesktopAgentBridgeInfo } from '../../agent/DesktopAgentClient'
 import type { AgentSessionSummary } from '../../schema/agent'
-import type { WorkingSetState, WorkspaceProfile } from '../../types'
+import type { LayoutDraft, WorkingSetState, WorkspaceProfile } from '../../types'
 import type { AgentScopeContext } from '../AgentPanel'
 
 interface AgentContextPaneProps {
+  activeDraft?: LayoutDraft | null
   desktopHostAvailable?: boolean
+  draftActionError?: string | null
   inspectorContext?: AgentScopeContext
+  layoutActionsPending?: boolean
+  layoutSyncNote?: {
+    label: string
+    title: string
+  } | null
   onAdoptInspectorContextAsWorkingSet?: () => void
+  onAcceptDraft?: () => void | Promise<void>
   onClearWorkingSet?: () => void
   onOpenDrawer?: () => void
   onOpenSettings?: () => void
+  onRejectDraft?: () => void | Promise<void>
   workingSet?: WorkingSetState | null
   workingSetContext?: AgentScopeContext | null
   workspaceProfile?: WorkspaceProfile | null
 }
 
 export function AgentContextPane({
+  activeDraft = null,
   desktopHostAvailable = false,
+  draftActionError = null,
   inspectorContext,
+  layoutActionsPending = false,
+  layoutSyncNote = null,
   onAdoptInspectorContextAsWorkingSet,
+  onAcceptDraft,
   onClearWorkingSet,
   onOpenDrawer,
   onOpenSettings,
+  onRejectDraft,
   workingSet = null,
   workingSetContext = null,
   workspaceProfile = null,
@@ -89,6 +104,52 @@ export function AgentContextPane({
 
   return (
     <div className="cbv-agent-context-pane">
+      {activeDraft ? (
+        <section className="cbv-agent-context-card is-draft">
+          <div className="cbv-agent-context-card-header">
+            <div>
+              <p className="cbv-eyebrow">Draft Layout</p>
+              <strong>{activeDraft.layout?.title ?? activeDraft.id}</strong>
+            </div>
+          </div>
+          <p className="cbv-agent-context-copy">
+            {activeDraft.proposalEnvelope.rationale}
+          </p>
+          {layoutSyncNote ? (
+            <p className="cbv-agent-context-copy" title={layoutSyncNote.title}>
+              {layoutSyncNote.label}
+            </p>
+          ) : null}
+          {activeDraft.proposalEnvelope.warnings[0] ? (
+            <p className="cbv-agent-warning">
+              {activeDraft.proposalEnvelope.warnings[0]}
+            </p>
+          ) : null}
+          {draftActionError ? <p className="cbv-agent-error">{draftActionError}</p> : null}
+          <div className="cbv-agent-context-actions">
+            <button
+              disabled={layoutActionsPending || !onAcceptDraft}
+              onClick={() => {
+                void onAcceptDraft?.()
+              }}
+              type="button"
+            >
+              Accept Draft
+            </button>
+            <button
+              className="is-secondary"
+              disabled={layoutActionsPending || !onRejectDraft}
+              onClick={() => {
+                void onRejectDraft?.()
+              }}
+              type="button"
+            >
+              Reject Draft
+            </button>
+          </div>
+        </section>
+      ) : null}
+
       <section className="cbv-agent-context-card">
         <div className="cbv-agent-context-card-header">
           <div>

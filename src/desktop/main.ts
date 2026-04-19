@@ -20,7 +20,7 @@ import {
   persistUiPreferences,
 } from './uiPreferences'
 import type { UiPreferences } from '../schema/store'
-import type { AgentPromptRequest } from '../schema/api'
+import type { AgentModelSelectionRequest, AgentPromptRequest } from '../schema/api'
 
 let mainWindow: BrowserWindow | null = null
 let serverHandle: StandaloneServerHandle | null = null
@@ -159,6 +159,25 @@ void app.whenReady().then(async () => {
     }
   })
 
+  ipcMain.handle('semanticode:agent:get-controls', async () => {
+    if (!activeWorkspaceRootDir) {
+      return {
+        controls: {
+          activeToolNames: [],
+          availableThinkingLevels: [],
+          commands: [],
+          models: [],
+          sessionId: null,
+          tools: [],
+        },
+      }
+    }
+
+    return {
+      controls: await piAgentService.getWorkspaceControls(activeWorkspaceRootDir),
+    }
+  })
+
   ipcMain.handle('semanticode:agent:new-session', async () => {
     if (!activeWorkspaceRootDir) {
       return null
@@ -181,6 +200,33 @@ void app.whenReady().then(async () => {
     }
 
     return piAgentService.setWorkspaceThinkingLevel(activeWorkspaceRootDir, thinkingLevel)
+  })
+
+  ipcMain.handle('semanticode:agent:set-active-tools', async (_event, toolNames: string[]) => {
+    if (!activeWorkspaceRootDir) {
+      return {
+        controls: {
+          activeToolNames: [],
+          availableThinkingLevels: [],
+          commands: [],
+          models: [],
+          sessionId: null,
+          tools: [],
+        },
+      }
+    }
+
+    return {
+      controls: await piAgentService.setWorkspaceActiveTools(activeWorkspaceRootDir, toolNames),
+    }
+  })
+
+  ipcMain.handle('semanticode:agent:set-model', async (_event, input: AgentModelSelectionRequest) => {
+    if (!activeWorkspaceRootDir) {
+      return null
+    }
+
+    return piAgentService.setWorkspaceModel(activeWorkspaceRootDir, input)
   })
 
   ipcMain.handle('semanticode:agent:compact', async (_event, instructions?: string) => {

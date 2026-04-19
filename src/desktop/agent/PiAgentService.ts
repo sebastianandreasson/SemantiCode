@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { dirname, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { Agent, ProviderTransport, type AgentEvent as PiAgentEvent } from '@mariozechner/pi-agent'
@@ -9,8 +9,8 @@ import {
   getModels,
   type AgentTool,
   type AssistantMessage,
-  type Message,
   type KnownProvider,
+  type Message,
 } from '@mariozechner/pi-ai'
 import {
   AuthStorage,
@@ -31,24 +31,31 @@ import {
   type CreateAgentSessionRuntimeFactory,
   type ExtensionFactory,
   type SessionInfo,
+  type SlashCommandInfo,
+  type ToolInfo,
 } from '@mariozechner/pi-coding-agent'
 
 import type {
   AgentAuthMode,
   AgentBrokerSessionSummary,
+  AgentControlState,
   AgentEvent,
+  AgentModelControlOption,
   AgentMessage,
   AgentSessionListItem,
   AgentSessionSummary,
   AgentSettingsInput,
   AgentSettingsState,
+  AgentSourceInfo,
   AgentTimelineItem,
+  AgentToolControlInfo,
   AgentToolInvocation,
 } from '../../schema/agent'
 import type {
   AgentCodexImportResponse,
   AgentBrokerCallbackResult,
   AgentBrokerLoginStartResponse,
+  AgentModelSelectionRequest,
   AgentPromptRequest,
 } from '../../schema/api'
 import { AgentTelemetryService } from '../../node/telemetryService'
@@ -58,7 +65,7 @@ import {
   registerLayoutQuerySession,
 } from '../../node/layoutQueryRegistry'
 import { listLayoutDrafts, listSavedLayouts } from '../../planner'
-import { PiAgentSettingsStore } from './PiAgentSettingsStore'
+import { CODEX_OPENAI_MODELS, PiAgentSettingsStore } from './PiAgentSettingsStore'
 import { CodexCliTransport, createCodexCliModel } from '../agent-runtime/CodexCliTransport'
 import { OpenAICodexProvider } from '../providers/openai-codex/provider'
 import type {
@@ -86,6 +93,8 @@ const DEFAULT_PI_MODEL_ID = 'gpt-4.1-mini'
 const BOOT_PROMPT_ENV_NAME = 'SEMANTICODE_PI_BOOT_PROMPT'
 const PI_PROVIDER_ENV_NAME = 'SEMANTICODE_PI_PROVIDER'
 const PI_MODEL_ENV_NAME = 'SEMANTICODE_PI_MODEL'
+
+type PiRegistryModel = ReturnType<ModelRegistry['getAll']>[number]
 
 interface BaseAgentSessionRecord {
   activeAssistantMessageId: string | null
@@ -174,15 +183,32 @@ export class PiAgentService {
     await this.settingsStore.applyConfiguredApiKeys()
     const settings = await this.getSettings()
     const provider = resolveProvider(settings)
+    const sdkAuthStorage =
+      settings.authMode === 'api_key'
+        ? await this.createSdkAuthStorage()
+        : undefined
+    const sdkModelRegistry =
+      sdkAuthStorage
+        ? ModelRegistry.create(sdkAuthStorage, join(getAgentDir(), 'models.json'))
+        : undefined
+    const sdkModel =
+      sdkModelRegistry
+        ? resolveSdkModel(sdkModelRegistry, provider, settings.modelId)
+        : null
     const hasProviderApiKey =
-      settings.authMode === 'api_key' ? Boolean(getApiKey(provider)) : false
+      settings.authMode === 'api_key' && sdkModel && sdkModelRegistry
+        ? sdkModelRegistry.hasConfiguredAuth(sdkModel)
+        : false
     const bootPrompt = process.env[BOOT_PROMPT_ENV_NAME]?.trim() ?? ''
     const sessionTransport = resolveTransportMode(settings.authMode)
-    const disabledReason = resolveDisabledReason(settings.authMode, provider, settings)
+    const disabledReason =
+      settings.authMode === 'api_key'
+        ? resolveSdkDisabledReason(provider, settings.modelId, sdkModel, sdkModelRegistry)
+        : resolveDisabledReason(settings.authMode, provider, settings)
     const resolvedModelId =
       settings.authMode === 'brokered_oauth'
         ? settings.modelId
-        : resolveModel(provider, settings.modelId).id
+        : sdkModel?.id ?? settings.modelId
     const runtimeKind = resolveRuntimeKind(settings.authMode)
     const capabilities = resolveCapabilities(settings.authMode, disabledReason)
     const summary: AgentSessionSummary = {
@@ -205,6 +231,8 @@ export class PiAgentService {
     const record =
       settings.authMode === 'api_key' && !disabledReason
         ? await this.createSdkSessionRecord({
+            authStorage: sdkAuthStorage,
+            modelRegistry: sdkModelRegistry,
             provider,
             settings,
             summary,
@@ -293,9 +321,37 @@ export class PiAgentService {
     return this.sessionsByWorkspaceRootDir.get(workspaceRootDir)?.timeline ?? []
   }
 
+  async getWorkspaceControls(workspaceRootDir: string): Promise<AgentControlState> {
+    const record = this.sessionsByWorkspaceRootDir.get(workspaceRootDir)
+
+    if (!record) {
+      return {
+        ...createEmptyAgentControlState(),
+        models: await this.createUnifiedModelControlOptions(null),
+      }
+    }
+
+    return this.createControlState(
+      record,
+      await this.createUnifiedModelControlOptions(record),
+    )
+  }
+
+  private async createSdkAuthStorage() {
+    const agentDir = getAgentDir()
+    const authStorage = AuthStorage.create(join(agentDir, 'auth.json'))
+    const storedApiKeys = await this.settingsStore.getStoredApiKeys()
+
+    for (const [provider, apiKey] of Object.entries(storedApiKeys)) {
+      authStorage.setRuntimeApiKey(provider, apiKey)
+    }
+
+    return authStorage
+  }
+
   private createLegacySessionRecord(input: {
     disabledReason?: string
-    provider: KnownProvider
+    provider: string
     settings: AgentSettingsState
     summary: AgentSessionSummary
     workspaceRootDir: string
@@ -312,7 +368,7 @@ export class PiAgentService {
     const model =
       input.settings.authMode === 'brokered_oauth'
         ? createCodexCliModel(input.settings.modelId)
-        : resolveModel(input.provider, input.settings.modelId)
+        : resolveLegacyProviderModel(input.provider, input.settings.modelId)
     const agent = new Agent({
       initialState: {
         model,
@@ -349,39 +405,34 @@ export class PiAgentService {
   }
 
   private async createSdkSessionRecord(input: {
-    provider: KnownProvider
+    authStorage?: AuthStorage
+    modelRegistry?: ModelRegistry
+    provider: string
     sessionManager?: SessionManager
     settings: AgentSettingsState
     summary: AgentSessionSummary
     workspaceRootDir: string
   }): Promise<PiSdkAgentSessionRecord> {
-    const authStorage = AuthStorage.inMemory()
-    const storedApiKey = await this.settingsStore.getStoredApiKey(input.provider)
+    const agentDir = getAgentDir()
+    const authStorage = input.authStorage ?? await this.createSdkAuthStorage()
+    const modelRegistry =
+      input.modelRegistry ?? ModelRegistry.create(authStorage, join(agentDir, 'models.json'))
+    const initialModel = resolveSdkModel(modelRegistry, input.provider, input.settings.modelId)
 
-    if (storedApiKey) {
-      authStorage.setRuntimeApiKey(input.provider, storedApiKey)
-    }
-
-    const modelRegistry = ModelRegistry.inMemory(authStorage)
-    const model =
-      modelRegistry.find(input.provider, input.settings.modelId) ??
-      modelRegistry.getAll().find((candidate) => candidate.provider === input.provider)
-
-    if (!model) {
+    if (!initialModel) {
       throw new Error(`No pi SDK model is available for provider "${input.provider}".`)
     }
 
     const pendingContextQueue: string[] = []
     const settingsManager = SettingsManager.inMemory({
-      defaultModel: model.id,
-      defaultProvider: String(model.provider),
+      defaultModel: initialModel.id,
+      defaultProvider: String(initialModel.provider),
       defaultThinkingLevel: 'medium',
       retry: {
         enabled: true,
       },
     })
     const sessionManager = input.sessionManager ?? SessionManager.continueRecent(input.workspaceRootDir)
-    const agentDir = getAgentDir()
     const createRuntime: CreateAgentSessionRuntimeFactory = async ({
       cwd,
       sessionManager,
@@ -399,6 +450,11 @@ export class PiAgentService {
         },
         settingsManager,
       })
+      const model = resolveSdkModel(services.modelRegistry, input.provider, input.settings.modelId)
+
+      if (!model) {
+        throw new Error(`No pi SDK model is available for provider "${input.provider}".`)
+      }
 
       return {
         ...(await createAgentSessionFromServices({
@@ -441,8 +497,8 @@ export class PiAgentService {
       summary: {
         ...input.summary,
         capabilities: PI_SDK_AGENT_CAPABILITIES,
-        modelId: model.id,
-        provider: String(model.provider),
+        modelId: session.model?.id ?? initialModel.id,
+        provider: String(session.model?.provider ?? initialModel.provider),
         queue: {
           followUp: 0,
           steering: 0,
@@ -782,7 +838,7 @@ export class PiAgentService {
     const model =
       settings.authMode === 'brokered_oauth'
         ? createCodexCliModel(settings.modelId)
-        : resolveModel(provider, settings.modelId)
+        : resolveLegacyProviderModel(provider, settings.modelId)
     const agent = new Agent({
       initialState: {
         model,
@@ -892,6 +948,185 @@ export class PiAgentService {
       }),
     )
     return true
+  }
+
+  async setWorkspaceActiveTools(
+    workspaceRootDir: string,
+    toolNames: string[],
+  ): Promise<AgentControlState> {
+    let record = this.sessionsByWorkspaceRootDir.get(workspaceRootDir)
+
+    if (!record) {
+      await this.ensureWorkspaceSession(workspaceRootDir)
+      record = this.sessionsByWorkspaceRootDir.get(workspaceRootDir)
+    }
+
+    if (!record) {
+      throw new Error('No workspace agent session exists for the active repository.')
+    }
+
+    if (record.kind !== 'sdk') {
+      const message = 'Tool controls are only available for pi SDK sessions.'
+
+      this.addTimelineItem(
+        record,
+        createLifecycleTimelineItem({
+          detail: message,
+          event: 'error',
+          label: 'tools failed',
+          status: 'error',
+        }),
+      )
+      throw new Error(message)
+    }
+
+    const availableToolNames = new Set(record.session.getAllTools().map((tool) => tool.name))
+    const normalizedToolNames = [...new Set(
+      toolNames
+        .map((toolName) => toolName.trim())
+        .filter((toolName) => availableToolNames.has(toolName)),
+    )]
+
+    record.session.setActiveToolsByName(normalizedToolNames)
+    record.summary = updateSessionSummary(record.summary, {})
+    this.emit({
+      session: record.summary,
+      type: 'session_updated',
+    })
+    this.addTimelineItem(
+      record,
+      createLifecycleTimelineItem({
+        detail: normalizedToolNames.length
+          ? normalizedToolNames.join(', ')
+          : 'No tools active.',
+        event: 'session_updated',
+        label: 'tools updated',
+        status: 'completed',
+      }),
+    )
+
+    return this.createControlState(
+      record,
+      await this.createUnifiedModelControlOptions(record),
+    )
+  }
+
+  async setWorkspaceModel(
+    workspaceRootDir: string,
+    input: AgentModelSelectionRequest,
+  ) {
+    const record = this.sessionsByWorkspaceRootDir.get(workspaceRootDir)
+
+    if (!record) {
+      const settings = await this.getSettings()
+      const targetAuthMode = resolveModelSelectionAuthMode(input, settings.authMode)
+
+      if (targetAuthMode === 'brokered_oauth') {
+        if (input.provider !== 'openai' || !isCodexOpenAIModel(input.modelId)) {
+          throw new Error(`Codex subscription mode does not support ${input.provider}/${input.modelId}.`)
+        }
+      }
+
+      await this.saveSettings({
+        authMode: targetAuthMode,
+        modelId: input.modelId,
+        provider: input.provider,
+      })
+
+      return this.ensureWorkspaceSession(workspaceRootDir)
+    }
+
+    const targetAuthMode = resolveModelSelectionAuthMode(input, record.summary.authMode)
+
+    if (targetAuthMode === 'brokered_oauth') {
+      if (input.provider !== 'openai' || !isCodexOpenAIModel(input.modelId)) {
+        throw new Error(`Codex subscription mode does not support ${input.provider}/${input.modelId}.`)
+      }
+
+      await this.saveSettings({
+        authMode: 'brokered_oauth',
+        modelId: input.modelId,
+        provider: 'openai',
+      })
+
+      return this.ensureWorkspaceSession(workspaceRootDir)
+    }
+
+    if (record.kind !== 'sdk') {
+      await this.saveSettings({
+        authMode: 'api_key',
+        modelId: input.modelId,
+        provider: input.provider,
+      })
+
+      return this.ensureWorkspaceSession(workspaceRootDir)
+    }
+
+    let model =
+      record.session.modelRegistry.find(input.provider, input.modelId) ??
+      record.session.modelRegistry
+        .getAvailable()
+        .find(
+          (candidate) =>
+            candidate.id === input.modelId &&
+            String(candidate.provider) === input.provider,
+        )
+
+    if (!model) {
+      record.session.modelRegistry.refresh()
+      model =
+        record.session.modelRegistry.find(input.provider, input.modelId) ??
+        record.session.modelRegistry
+          .getAvailable()
+          .find(
+            (candidate) =>
+              candidate.id === input.modelId &&
+              String(candidate.provider) === input.provider,
+          )
+    }
+
+    if (!model) {
+      throw new Error(`Model not found: ${input.provider}/${input.modelId}`)
+    }
+
+    if (!record.session.modelRegistry.hasConfiguredAuth(model)) {
+      throw new Error(`No configured PI SDK auth found for ${input.provider}/${input.modelId}.`)
+    }
+
+    await record.session.setModel(model)
+    await this.settingsStore.saveSettings({
+      authMode: 'api_key',
+      modelId: model.id,
+      provider: String(model.provider),
+    })
+    record.summary = updateSessionSummary(
+      {
+        ...record.summary,
+        authMode: 'api_key',
+        modelId: model.id,
+        provider: String(model.provider),
+        thinkingLevel: record.session.thinkingLevel,
+      },
+      {
+        lastError: undefined,
+        runState: resolveSessionReadyState(record.summary),
+      },
+    )
+    this.emit({
+      session: record.summary,
+      type: 'session_updated',
+    })
+    this.addTimelineItem(
+      record,
+      createLifecycleTimelineItem({
+        detail: `${record.summary.provider}/${record.summary.modelId}`,
+        event: 'session_updated',
+        label: 'model changed',
+        status: 'completed',
+      }),
+    )
+
+    return record.summary
   }
 
   async setWorkspaceThinkingLevel(
@@ -1139,13 +1374,30 @@ export class PiAgentService {
     await this.settingsStore.applyConfiguredApiKeys()
     const settings = await this.getSettings()
     const provider = resolveProvider(settings)
+    const sdkAuthStorage =
+      settings.authMode === 'api_key'
+        ? await this.createSdkAuthStorage()
+        : undefined
+    const sdkModelRegistry =
+      sdkAuthStorage
+        ? ModelRegistry.create(sdkAuthStorage, join(getAgentDir(), 'models.json'))
+        : undefined
+    const sdkModel =
+      sdkModelRegistry
+        ? resolveSdkModel(sdkModelRegistry, provider, settings.modelId)
+        : null
     const hasProviderApiKey =
-      settings.authMode === 'api_key' ? Boolean(getApiKey(provider)) : false
-    const disabledReason = resolveDisabledReason(settings.authMode, provider, settings)
+      settings.authMode === 'api_key' && sdkModel && sdkModelRegistry
+        ? sdkModelRegistry.hasConfiguredAuth(sdkModel)
+        : false
+    const disabledReason =
+      settings.authMode === 'api_key'
+        ? resolveSdkDisabledReason(provider, settings.modelId, sdkModel, sdkModelRegistry)
+        : resolveDisabledReason(settings.authMode, provider, settings)
     const resolvedModelId =
       settings.authMode === 'brokered_oauth'
         ? settings.modelId
-        : resolveModel(provider, settings.modelId).id
+        : sdkModel?.id ?? settings.modelId
     const capabilities = resolveCapabilities(settings.authMode, disabledReason)
 
     if (disabledReason) {
@@ -1174,6 +1426,8 @@ export class PiAgentService {
 
     if (settings.authMode === 'api_key') {
       return this.createSdkSessionRecord({
+        authStorage: sdkAuthStorage,
+        modelRegistry: sdkModelRegistry,
         provider,
         sessionManager,
         settings,
@@ -1192,12 +1446,12 @@ export class PiAgentService {
 
   private async runNativeLayoutSuggestion(input: {
     input: LayoutSuggestionPayload
-    provider: KnownProvider
+    provider: string
     querySession: ReturnType<typeof registerLayoutQuerySession>
     settings: AgentSettingsState
     workspaceRootDir: string
   }) {
-    const model = resolveModel(input.provider, input.settings.modelId)
+    const model = resolveLegacyProviderModel(input.provider, input.settings.modelId)
     const agent = new Agent({
       initialState: {
         model,
@@ -1284,9 +1538,9 @@ export class PiAgentService {
     })
   }
 
-  private createTransport(provider: KnownProvider) {
+  private createTransport(provider: string) {
     return new ProviderTransport({
-      getApiKey: () => getApiKey(provider),
+      getApiKey: () => getApiKey(provider as KnownProvider),
     })
   }
 
@@ -1513,6 +1767,72 @@ export class PiAgentService {
       this.handleSdkAgentEvent(record.summary.id, record.workspaceRootDir, event)
     })
     this.emitTimelineSnapshot(record)
+  }
+
+  private async createUnifiedModelControlOptions(
+    record: AgentSessionRecord | null,
+  ): Promise<AgentModelControlOption[]> {
+    const models: AgentModelControlOption[] = CODEX_OPENAI_MODELS.map((id) => ({
+      authMode: 'brokered_oauth',
+      id,
+      provider: 'openai',
+    }))
+    const modelRegistry = record?.kind === 'sdk'
+      ? record.session.modelRegistry
+      : ModelRegistry.create(
+        await this.createSdkAuthStorage(),
+        join(getAgentDir(), 'models.json'),
+      )
+
+    modelRegistry.refresh()
+
+    models.push(...modelRegistry.getAvailable().map((model) => createModelControlOption(
+      model,
+      'api_key',
+    )))
+
+    return dedupeModelControlOptions(models)
+  }
+
+  private createControlState(
+    record: AgentSessionRecord,
+    models: AgentModelControlOption[],
+  ): AgentControlState {
+    if (record.kind !== 'sdk') {
+      return {
+        activeToolNames: [],
+        availableThinkingLevels: [],
+        commands: createSemanticodeControlCommands(record.summary),
+        models,
+        runtimeKind: record.summary.runtimeKind,
+        sessionId: record.summary.id,
+        tools: [],
+      }
+    }
+
+    const activeToolNames = record.session.getActiveToolNames()
+    const activeToolNameSet = new Set(activeToolNames)
+    const sdkCommands = getSdkSlashCommands(record)
+      .filter((command) => !isReservedSemanticodeControlName(command.name))
+    const semanticodeCommands = createSemanticodeControlCommands(record.summary)
+
+    return {
+      activeToolNames,
+      availableThinkingLevels: record.session.getAvailableThinkingLevels()
+        .filter(isAgentThinkingLevel),
+      commands: [
+        ...sdkCommands,
+        ...semanticodeCommands,
+      ].sort((left, right) => left.name.localeCompare(right.name)),
+      followUpMode: record.session.followUpMode,
+      models,
+      runtimeKind: record.summary.runtimeKind,
+      sessionId: record.summary.id,
+      steeringMode: record.session.steeringMode,
+      tools: record.session.getAllTools()
+        .map((tool) => createToolControlInfo(tool, activeToolNameSet))
+        .sort((left, right) => left.name.localeCompare(right.name)),
+    }
   }
 
   private emitNormalizedMessage(
@@ -2029,14 +2349,14 @@ function upsertNormalizedMessage(messages: AgentMessage[], nextMessage: AgentMes
   )
 }
 
-function resolveProvider(settings?: AgentSettingsState): KnownProvider {
+function resolveProvider(settings?: AgentSettingsState): string {
   const envProvider = process.env[PI_PROVIDER_ENV_NAME]?.trim()
 
   if (!envProvider) {
-    return (settings?.provider ?? DEFAULT_PI_PROVIDER) as KnownProvider
+    return settings?.provider ?? DEFAULT_PI_PROVIDER
   }
 
-  return envProvider as KnownProvider
+  return envProvider
 }
 
 function createDisabledTransport() {
@@ -2102,6 +2422,279 @@ function createSemanticodeContextExtension(
   }
 }
 
+function createEmptyAgentControlState(): AgentControlState {
+  return {
+    activeToolNames: [],
+    availableThinkingLevels: [],
+    commands: [],
+    models: [],
+    sessionId: null,
+    tools: [],
+  }
+}
+
+function createSemanticodeControlCommands(
+  summary: AgentSessionSummary,
+): AgentControlState['commands'] {
+  const capabilities = summary.capabilities ?? DISABLED_AGENT_CAPABILITIES
+  const commands: AgentControlState['commands'] = [
+    createSemanticodeControlCommand({
+      description: 'Show the active session.',
+      enabled: summary.runState !== 'disabled',
+      name: 'session',
+    }),
+    createSemanticodeControlCommand({
+      description: 'Show or change the active model.',
+      enabled: summary.runState !== 'disabled',
+      name: 'model',
+    }),
+    createSemanticodeControlCommand({
+      description: 'Clear the visible pane transcript.',
+      enabled: true,
+      name: 'clear',
+    }),
+  ]
+
+  if (capabilities.newSession) {
+    commands.push(createSemanticodeControlCommand({
+      description: 'Start a fresh workspace session.',
+      enabled: true,
+      name: 'new',
+    }))
+  }
+
+  if (capabilities.resumeSession) {
+    commands.push(createSemanticodeControlCommand({
+      description: 'Resume a saved PI session.',
+      enabled: true,
+      name: 'resume',
+    }))
+  }
+
+  if (capabilities.setThinkingLevel) {
+    commands.push(createSemanticodeControlCommand({
+      description: 'Show or change the SDK thinking level.',
+      enabled: true,
+      name: 'thinking',
+    }))
+  }
+
+  if (capabilities.compact) {
+    commands.push(createSemanticodeControlCommand({
+      description: 'Run SDK conversation compaction.',
+      enabled: true,
+      name: 'compact',
+    }))
+  }
+
+  if (summary.runtimeKind === 'pi-sdk') {
+    commands.push(createSemanticodeControlCommand({
+      description: 'Show or change SDK active tools.',
+      enabled: true,
+      name: 'tools',
+    }))
+  }
+
+  return commands.sort((left, right) => left.name.localeCompare(right.name))
+}
+
+function createSemanticodeControlCommand(input: {
+  description: string
+  enabled: boolean
+  name: string
+}): AgentControlState['commands'][number] {
+  return {
+    available: true,
+    description: input.description,
+    enabled: input.enabled,
+    name: input.name,
+    source: 'semanticode',
+  }
+}
+
+function isReservedSemanticodeControlName(commandName: string) {
+  return (
+    commandName === 'clear' ||
+    commandName === 'compact' ||
+    commandName === 'model' ||
+    commandName === 'new' ||
+    commandName === 'resume' ||
+    commandName === 'session' ||
+    commandName === 'thinking' ||
+    commandName === 'tools'
+  )
+}
+
+function getSdkSlashCommands(record: PiSdkAgentSessionRecord): AgentControlState['commands'] {
+  const commands: AgentControlState['commands'] = []
+
+  for (const command of record.session.extensionRunner?.getRegisteredCommands() ?? []) {
+    commands.push(createSdkSlashCommand({
+      description: command.description,
+      name: command.invocationName,
+      source: 'extension',
+      sourceInfo: command.sourceInfo,
+    }))
+  }
+
+  for (const template of record.session.promptTemplates) {
+    commands.push(createSdkSlashCommand({
+      description: template.description,
+      name: template.name,
+      source: 'prompt',
+      sourceInfo: template.sourceInfo,
+    }))
+  }
+
+  for (const skill of record.session.resourceLoader.getSkills().skills) {
+    commands.push(createSdkSlashCommand({
+      description: skill.description,
+      name: `skill:${skill.name}`,
+      source: 'skill',
+      sourceInfo: skill.sourceInfo,
+    }))
+  }
+
+  return dedupeAgentCommands(commands)
+}
+
+function createSdkSlashCommand(
+  input: SlashCommandInfo,
+): AgentControlState['commands'][number] {
+  return {
+    available: true,
+    description: input.description,
+    enabled: true,
+    name: input.name,
+    source: input.source,
+    sourceInfo: normalizeAgentSourceInfo(input.sourceInfo),
+  }
+}
+
+function dedupeAgentCommands(
+  commands: AgentControlState['commands'],
+): AgentControlState['commands'] {
+  const seen = new Set<string>()
+  const deduped: AgentControlState['commands'] = []
+
+  for (const command of commands) {
+    const key = `${command.source}:${command.name}`
+
+    if (seen.has(key)) {
+      continue
+    }
+
+    seen.add(key)
+    deduped.push(command)
+  }
+
+  return deduped
+}
+
+function createToolControlInfo(
+  tool: ToolInfo,
+  activeToolNames: Set<string>,
+): AgentToolControlInfo {
+  return {
+    active: activeToolNames.has(tool.name),
+    description: tool.description,
+    name: tool.name,
+    sourceInfo: normalizeAgentSourceInfo(tool.sourceInfo),
+  }
+}
+
+function createModelControlOption(
+  model: { id: string; provider: unknown },
+  authMode: AgentAuthMode,
+): AgentModelControlOption {
+  return {
+    authMode,
+    id: model.id,
+    provider: String(model.provider),
+  }
+}
+
+function dedupeModelControlOptions(
+  models: AgentModelControlOption[],
+): AgentModelControlOption[] {
+  const seen = new Set<string>()
+  const deduped: AgentModelControlOption[] = []
+
+  for (const model of models) {
+    const key = `${model.authMode}:${model.provider}/${model.id}`
+
+    if (seen.has(key)) {
+      continue
+    }
+
+    seen.add(key)
+    deduped.push(model)
+  }
+
+  return deduped.sort((left, right) => {
+    const leftRuntimeRank = left.authMode === 'brokered_oauth' ? 0 : 1
+    const rightRuntimeRank = right.authMode === 'brokered_oauth' ? 0 : 1
+
+    if (leftRuntimeRank !== rightRuntimeRank) {
+      return leftRuntimeRank - rightRuntimeRank
+    }
+
+    return `${left.provider}/${left.id}`.localeCompare(`${right.provider}/${right.id}`)
+  })
+}
+
+function resolveModelSelectionAuthMode(
+  input: AgentModelSelectionRequest,
+  currentAuthMode: AgentAuthMode,
+): AgentAuthMode {
+  if (input.authMode) {
+    return input.authMode
+  }
+
+  if (
+    currentAuthMode === 'brokered_oauth' &&
+    input.provider === 'openai' &&
+    isCodexOpenAIModel(input.modelId)
+  ) {
+    return 'brokered_oauth'
+  }
+
+  return 'api_key'
+}
+
+function isCodexOpenAIModel(modelId: string) {
+  return (CODEX_OPENAI_MODELS as readonly string[]).includes(modelId)
+}
+
+function isAgentThinkingLevel(
+  value: string,
+): value is NonNullable<AgentSessionSummary['thinkingLevel']> {
+  return (
+    value === 'off' ||
+    value === 'minimal' ||
+    value === 'low' ||
+    value === 'medium' ||
+    value === 'high' ||
+    value === 'xhigh'
+  )
+}
+
+function normalizeAgentSourceInfo(sourceInfo: unknown): AgentSourceInfo | undefined {
+  if (!sourceInfo || typeof sourceInfo !== 'object') {
+    return undefined
+  }
+
+  const info = sourceInfo as Record<string, unknown>
+
+  return {
+    baseDir: typeof info.baseDir === 'string' ? info.baseDir : undefined,
+    origin: typeof info.origin === 'string' ? info.origin : undefined,
+    path: typeof info.path === 'string' ? info.path : undefined,
+    scope: typeof info.scope === 'string' ? info.scope : undefined,
+    source: typeof info.source === 'string' ? info.source : undefined,
+  }
+}
+
 function resolveRuntimeKind(authMode: AgentAuthMode): AgentSessionSummary['runtimeKind'] {
   return authMode === 'brokered_oauth' ? 'codex-subscription' : 'pi-sdk'
 }
@@ -2133,7 +2726,7 @@ function resolveSessionReadyState(summary: AgentSessionSummary): AgentSessionSum
 
 function resolveDisabledReason(
   authMode: AgentAuthMode,
-  provider: KnownProvider,
+  provider: string,
   settings: AgentSettingsState,
 ) {
   if (authMode === 'brokered_oauth') {
@@ -2152,11 +2745,61 @@ function resolveDisabledReason(
     return 'OpenAI Codex sign-in is in progress.'
   }
 
-  if (!getApiKey(provider)) {
+  if (!getApiKey(provider as KnownProvider)) {
     return `No API key found for provider "${provider}".`
   }
 
   return undefined
+}
+
+function resolveSdkDisabledReason(
+  provider: string,
+  preferredModelId: string | undefined,
+  model: PiRegistryModel | null,
+  modelRegistry: ModelRegistry | undefined,
+) {
+  if (!model || !modelRegistry) {
+    return preferredModelId
+      ? `No pi SDK model "${provider}/${preferredModelId}" was found.`
+      : `No pi SDK model is available for provider "${provider}".`
+  }
+
+  if (!modelRegistry.hasConfiguredAuth(model)) {
+    return `No API key found for provider "${provider}".`
+  }
+
+  return undefined
+}
+
+function resolveSdkModel(
+  modelRegistry: ModelRegistry,
+  provider: string,
+  preferredModelId?: string,
+): PiRegistryModel | null {
+  const envModelId = process.env[PI_MODEL_ENV_NAME]?.trim()
+  const desiredModelId = envModelId || preferredModelId
+
+  if (desiredModelId) {
+    const exactModel = modelRegistry.find(provider, desiredModelId)
+
+    if (exactModel) {
+      return exactModel
+    }
+  }
+
+  return (
+    modelRegistry.getAvailable().find((candidate) => String(candidate.provider) === provider) ??
+    modelRegistry.getAll().find((candidate) => String(candidate.provider) === provider) ??
+    null
+  )
+}
+
+function resolveLegacyProviderModel(provider: string, preferredModelId?: string) {
+  try {
+    return resolveModel(provider as KnownProvider, preferredModelId)
+  } catch {
+    return resolveModel(DEFAULT_PI_PROVIDER as KnownProvider, DEFAULT_PI_MODEL_ID)
+  }
 }
 
 function resolveModel(provider: KnownProvider, preferredModelId?: string) {

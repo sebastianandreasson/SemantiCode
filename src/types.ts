@@ -12,9 +12,13 @@ export type {
   AgentBrokerAuthState,
   AgentBrokerSessionSummary,
   AgentCapabilitySet,
+  AgentCommandInfo,
+  AgentCommandSource,
+  AgentControlState,
   AgentEvent,
   AgentMessage,
   AgentMessageBlock,
+  AgentModelControlOption,
   AgentModelOption,
   AgentPermissionRequest,
   AgentRunState,
@@ -24,7 +28,9 @@ export type {
   AgentSecretStorageKind,
   AgentSettingsInput,
   AgentSettingsState,
+  AgentSourceInfo,
   AgentTimelineItem,
+  AgentToolControlInfo,
   AgentToolInvocation,
 } from './schema/agent'
 export type {
@@ -95,10 +101,13 @@ export type {
 } from './schema/layout'
 export type {
   AgentBrokerCompleteRequest,
+  AgentActiveToolsRequest,
   AgentCodexImportResponse,
   AgentBrokerCallbackResult,
   AgentCompactionRequest,
+  AgentControlsResponse,
   AgentBrokerLoginStartResponse,
+  AgentModelSelectionRequest,
   AgentBrokerSessionResponse,
   AgentResumeSessionRequest,
   AgentSessionListResponse,

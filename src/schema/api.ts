@@ -19,7 +19,9 @@ import type {
   AutonomousRunTimelinePoint,
 } from './autonomous'
 import type {
+  AgentAuthMode,
   AgentBrokerSessionSummary,
+  AgentControlState,
   AgentMessage,
   AgentSessionListItem,
   AgentSessionSummary,
@@ -182,6 +184,20 @@ export interface AgentStateResponse {
   session: AgentSessionSummary | null
   messages: AgentMessage[]
   timeline: AgentTimelineItem[]
+}
+
+export interface AgentControlsResponse {
+  controls: AgentControlState
+}
+
+export interface AgentActiveToolsRequest {
+  toolNames: string[]
+}
+
+export interface AgentModelSelectionRequest {
+  authMode?: AgentAuthMode
+  modelId: string
+  provider: string
 }
 
 export interface AgentPromptRequest {
