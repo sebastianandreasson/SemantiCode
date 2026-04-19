@@ -53,12 +53,6 @@ export default function App() {
     activeDraftId,
     draftLayouts,
     rootDir: snapshot?.rootDir ?? null,
-    onLayoutStateLoaded: ({ layouts, draftLayouts }) => {
-      startTransition(() => {
-        setLayouts(layouts)
-        setDraftLayouts(draftLayouts)
-      })
-    },
     onAcceptApplied: (layoutId) => {
       startTransition(() => {
         setActiveDraftId(null)

@@ -13,6 +13,8 @@ import type {
   GroupPrototypeCacheResponse,
   GroupPrototypeCacheUpdateRequest,
   LayoutStateResponse,
+  LayoutSuggestionPayload,
+  LayoutSuggestionResponse,
   PreprocessedWorkspaceContext,
   PreprocessingEmbeddingResponse,
   PreprocessingContextResponse,
@@ -37,6 +39,7 @@ import {
   buildSemanticodeRunTimelineRoute,
   SEMANTICODE_FILE_DIFF_ROUTE,
   SEMANTICODE_LAYOUTS_ROUTE,
+  SEMANTICODE_LAYOUT_SUGGEST_ROUTE,
   SEMANTICODE_GROUP_PROTOTYPES_ROUTE,
   SEMANTICODE_PREPROCESSING_EMBEDDINGS_ROUTE,
   SEMANTICODE_PREPROCESSING_ROUTE,
@@ -160,6 +163,25 @@ export async function mutateDraft(
   }
 
   return (await response.json()) as DraftMutationResponse
+}
+
+export async function postLayoutSuggestion(payload: LayoutSuggestionPayload) {
+  const response = await fetch(SEMANTICODE_LAYOUT_SUGGEST_ROUTE, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  })
+
+  if (!response.ok) {
+    throw new Error(await getResponseErrorMessage(
+      response,
+      `Layout suggestion request failed with status ${response.status}.`,
+    ))
+  }
+
+  return (await response.json()) as LayoutSuggestionResponse
 }
 
 export async function fetchPersistedPreprocessedWorkspaceContext() {

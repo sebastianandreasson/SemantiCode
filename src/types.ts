@@ -126,6 +126,8 @@ export type {
   LayoutStateResponse,
   LayoutSummary,
   SemanticLayoutResponse,
+  LayoutSuggestionPayload,
+  LayoutSuggestionResponse,
   SnapshotResponse,
   TelemetryActivityResponse,
   TelemetryHeatmapRequest,
@@ -134,6 +136,21 @@ export type {
   WorkspaceHistoryResponse,
   WorkspaceSyncStatusResponse,
 } from './schema/api'
+export type {
+  HybridLayoutAnchor,
+  HybridLayoutGroup,
+  HybridLayoutLane,
+  HybridLayoutProposal,
+  LayoutArrangementMode,
+  LayoutArrangementSortKey,
+  LayoutArrangementSpacing,
+  LayoutQueryEdgeRef,
+  LayoutQueryNodeRef,
+  LayoutQueryStats,
+  LayoutSelector,
+  LayoutSuggestionExecutionPath,
+  LayoutSuggestionRequest,
+} from './schema/layoutSuggestion'
 export type {
   LayoutDraft,
   LayoutDraftSource,

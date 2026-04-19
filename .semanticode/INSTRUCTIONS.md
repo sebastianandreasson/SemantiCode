@@ -16,11 +16,13 @@ Your job is to turn a natural-language layout request into a saved draft layout 
 - Accepted layouts directory: `.semanticode/layouts/`
 - This instruction file: `.semanticode/INSTRUCTIONS.md`
 - Local Semanticode repo: `/Users/sebastianandreasson/Documents/code/personal`
+- Query-first layout helper: `node "/Users/sebastianandreasson/Documents/code/personal/bin/semanticode.js" layout-helper --root "/Users/sebastianandreasson/Documents/code/personal/codebase-visualizer"`
 
 ## Preferred Workflow
 
 Use the local Semanticode APIs instead of inventing your own file format.
 Do not rely on package-name resolution from the target repository; import from the exact local module paths below.
+For custom layouts, prefer the query-first layout helper or the app-provided HTTP helper endpoint over reading full Semanticode snapshots.
 
 1. Read a fresh snapshot of the repository.
 2. Build a planner context for the requested prompt.

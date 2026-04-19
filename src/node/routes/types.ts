@@ -10,6 +10,8 @@ import type {
   AgentSettingsResponse,
   AgentSettingsUpdateRequest,
   AgentStateResponse,
+  LayoutSuggestionPayload,
+  LayoutSuggestionResponse,
   AgentHeatSample,
   TelemetryActivityEvent,
   TelemetryMode,
@@ -43,6 +45,13 @@ export interface AgentRuntimeRequestBridge {
       task?: string
     },
   ) => Promise<void>
+  suggestLayout: (
+    workspaceRootDir: string,
+    input: LayoutSuggestionPayload,
+    options: {
+      helperBaseUrl: string
+    },
+  ) => Promise<LayoutSuggestionResponse>
   runOneOffPrompt: (
     workspaceRootDir: string,
     input: {

@@ -1,10 +1,13 @@
 import { randomUUID } from 'node:crypto'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { Agent, ProviderTransport, type AgentEvent as PiAgentEvent } from '@mariozechner/pi-agent'
 import {
   getApiKey,
   getModel,
   getModels,
+  type AgentTool,
   type AssistantMessage,
   type Message,
   type KnownProvider,
@@ -26,9 +29,19 @@ import type {
   AgentBrokerLoginStartResponse,
 } from '../../schema/api'
 import { AgentTelemetryService } from '../../node/telemetryService'
+import { readProjectSnapshot } from '../../node/readProjectSnapshot'
+import {
+  disposeLayoutQuerySession,
+  registerLayoutQuerySession,
+} from '../../node/layoutQueryRegistry'
+import { listLayoutDrafts, listSavedLayouts } from '../../planner'
 import { PiAgentSettingsStore } from './PiAgentSettingsStore'
 import { CodexCliTransport, createCodexCliModel } from '../agent-runtime/CodexCliTransport'
 import { OpenAICodexProvider } from '../providers/openai-codex/provider'
+import type {
+  LayoutSuggestionPayload,
+  LayoutSuggestionResponse,
+} from '../../schema/api'
 
 const DEFAULT_PI_PROVIDER = 'openai'
 const DEFAULT_PI_MODEL_ID = 'gpt-4.1-mini'
@@ -387,6 +400,84 @@ export class PiAgentService {
     }
   }
 
+  async suggestLayout(
+    workspaceRootDir: string,
+    input: LayoutSuggestionPayload,
+    options: {
+      helperBaseUrl: string
+    },
+  ): Promise<LayoutSuggestionResponse> {
+    await this.telemetryService?.ensureWorkspaceTelemetry(workspaceRootDir).catch(() => undefined)
+    await this.settingsStore.applyConfiguredApiKeys()
+    const settings = await this.getSettings()
+    const provider = resolveProvider(settings)
+    const disabledReason = resolveDisabledReason(settings.authMode, provider, settings)
+
+    if (disabledReason) {
+      throw new Error(disabledReason)
+    }
+
+    const executionPath =
+      settings.authMode === 'brokered_oauth' ? 'codex_cli_bridge' : 'native_tools'
+    const snapshot = await readProjectSnapshot({
+      analyzeCalls: true,
+      analyzeImports: true,
+      analyzeSymbols: true,
+      rootDir: workspaceRootDir,
+    })
+    const [existingLayouts, existingDrafts] = await Promise.all([
+      listSavedLayouts(workspaceRootDir),
+      listLayoutDrafts(workspaceRootDir),
+    ])
+    const existingDraftIds = new Set(existingDrafts.map((draft) => draft.id))
+    const querySession = registerLayoutQuerySession({
+      baseLayoutId: input.baseLayoutId,
+      executionPath,
+      existingLayouts,
+      nodeScope: input.nodeScope ?? 'symbols',
+      prompt: input.prompt,
+      rootDir: workspaceRootDir,
+      snapshot,
+      visibleNodeIds: input.visibleNodeIds,
+    })
+
+    try {
+      if (executionPath === 'native_tools') {
+        await this.runNativeLayoutSuggestion({
+          input,
+          provider,
+          querySession,
+          settings,
+          workspaceRootDir,
+        })
+      } else {
+        await this.runCodexLayoutSuggestion({
+          helperBaseUrl: options.helperBaseUrl,
+          input,
+          querySession,
+          workspaceRootDir,
+        })
+      }
+
+      const createdDraft =
+        querySession.getCreatedDraft() ??
+        (await findNewLayoutDraft(workspaceRootDir, existingDraftIds))
+
+      if (!createdDraft) {
+        throw new Error(
+          'The layout planner finished without creating a layout draft. Try a narrower layout request.',
+        )
+      }
+
+      return {
+        draft: createdDraft,
+        queryStats: querySession.getStats(),
+      }
+    } finally {
+      disposeLayoutQuerySession(querySession.id)
+    }
+  }
+
   async runOneOffPrompt(
     workspaceRootDir: string,
     input: {
@@ -516,6 +607,100 @@ export class PiAgentService {
 
     record.agent.abort()
     return true
+  }
+
+  private async runNativeLayoutSuggestion(input: {
+    input: LayoutSuggestionPayload
+    provider: KnownProvider
+    querySession: ReturnType<typeof registerLayoutQuerySession>
+    settings: AgentSettingsState
+    workspaceRootDir: string
+  }) {
+    const model = resolveModel(input.provider, input.settings.modelId)
+    const agent = new Agent({
+      initialState: {
+        model,
+        systemPrompt: buildLayoutSuggestionSystemPrompt(),
+        thinkingLevel: 'medium',
+        tools: createLayoutQueryTools(input.querySession),
+      },
+      transport: this.createTransport(input.provider),
+    })
+    const startedAt = new Date().toISOString()
+    const toolInvocationById = new Map<string, AgentToolInvocation>()
+    const unsubscribe = agent.subscribe((event) => {
+      if (event.type === 'tool_execution_start') {
+        toolInvocationById.set(event.toolCallId, {
+          args: event.args,
+          startedAt: new Date().toISOString(),
+          toolCallId: event.toolCallId,
+          toolName: event.toolName,
+        })
+      }
+
+      if (event.type === 'tool_execution_end') {
+        const existingInvocation = toolInvocationById.get(event.toolCallId)
+
+        if (existingInvocation) {
+          toolInvocationById.set(event.toolCallId, {
+            ...existingInvocation,
+            endedAt: new Date().toISOString(),
+            isError: event.isError,
+          })
+        }
+      }
+    })
+
+    try {
+      await agent.prompt(buildLayoutSuggestionUserPrompt(input.input))
+      await agent.waitForIdle().catch(() => undefined)
+    } finally {
+      await this.telemetryService?.recordInteractivePrompt({
+        finishedAt: new Date().toISOString(),
+        kind: 'layout_suggestion',
+        message: input.input.prompt,
+        modelId: model.id,
+        promptSequence: 1,
+        provider: input.provider,
+        rootDir: input.workspaceRootDir,
+        scope: {
+          task: input.input.prompt,
+        },
+        sessionId: `layout-suggestion:${randomUUID()}`,
+        startedAt,
+        toolInvocations: [...toolInvocationById.values()],
+      }).catch((error) => {
+        this.logger.warn(
+          `[semanticode][telemetry] Failed to write layout suggestion telemetry: ${error instanceof Error ? error.message : error}`,
+        )
+      })
+      unsubscribe()
+      agent.abort()
+      await agent.waitForIdle().catch(() => undefined)
+    }
+  }
+
+  private async runCodexLayoutSuggestion(input: {
+    helperBaseUrl: string
+    input: LayoutSuggestionPayload
+    querySession: ReturnType<typeof registerLayoutQuerySession>
+    workspaceRootDir: string
+  }) {
+    const helperUrl = `${input.helperBaseUrl}/${encodeURIComponent(input.querySession.id)}`
+    const helperCommand = buildLayoutHelperCommand(input.workspaceRootDir)
+
+    await this.runOneOffPrompt(input.workspaceRootDir, {
+      message: buildCodexLayoutSuggestionPrompt({
+        helperCommand,
+        helperUrl,
+        input: input.input,
+      }),
+      systemPrompt: buildWorkspaceSystemPrompt(input.workspaceRootDir),
+      telemetry: {
+        kind: 'layout_suggestion',
+        task: input.input.prompt,
+      },
+    })
   }
 
   private createTransport(provider: KnownProvider) {
@@ -719,6 +904,173 @@ function collectNewToolInvocations(
   return [...toolInvocationById.values()].filter(
     (invocation) => !existingToolCallIds.has(invocation.toolCallId),
   )
+}
+
+function createLayoutQueryTools(
+  querySession: ReturnType<typeof registerLayoutQuerySession>,
+): AgentTool[] {
+  return [
+    createLayoutQueryTool(
+      'getWorkspaceSummary',
+      'Get compact workspace counts, available facets/tags, top directories, and existing layout summaries.',
+      querySession,
+    ),
+    createLayoutQueryTool(
+      'findNodes',
+      'Find compact node references using filters like kind, symbolKind, facet, tag, pathPrefix, pathContains, nameContains, nameRegex, LOC range, degree range, and limit.',
+      querySession,
+    ),
+    createLayoutQueryTool(
+      'getNodes',
+      'Get compact node references for explicit nodeIds.',
+      querySession,
+    ),
+    createLayoutQueryTool(
+      'getNeighborhood',
+      'Expand a bounded graph neighborhood from seedNodeIds using optional edgeKinds, direction, depth, and limit.',
+      querySession,
+    ),
+    createLayoutQueryTool(
+      'summarizeScope',
+      'Summarize nodes matched by a selector and return counts plus representative nodes.',
+      querySession,
+    ),
+    createLayoutQueryTool(
+      'previewHybridLayout',
+      'Validate a hybrid layout proposal without saving it.',
+      querySession,
+    ),
+    createLayoutQueryTool(
+      'createLayoutDraft',
+      'Create and save the final draft from a hybrid layout proposal. This must be called to complete layout generation.',
+      querySession,
+    ),
+  ]
+}
+
+function createLayoutQueryTool(
+  operation: string,
+  description: string,
+  querySession: ReturnType<typeof registerLayoutQuerySession>,
+): AgentTool {
+  return {
+    description,
+    label: operation,
+    name: operation,
+    parameters: {
+      additionalProperties: true,
+      properties: {
+        args: {
+          additionalProperties: true,
+          type: 'object',
+        },
+        proposal: {
+          additionalProperties: true,
+          type: 'object',
+        },
+      },
+      type: 'object',
+    } as never,
+    execute: async (_toolCallId, params) => {
+      const result = await querySession.execute({
+        args: params && typeof params === 'object' && 'args' in params
+          ? (params.args as Record<string, unknown>)
+          : (params as Record<string, unknown>),
+        operation: operation as never,
+      })
+
+      return {
+        content: [
+          {
+            text: JSON.stringify(result),
+            type: 'text',
+          },
+        ],
+        details: result,
+      }
+    },
+  }
+}
+
+function buildLayoutSuggestionSystemPrompt() {
+  return [
+    'You are Semanticode layout planner.',
+    'Create a custom codebase layout by querying compact graph data first.',
+    'Do not ask for or dump the full snapshot.',
+    'Use getWorkspaceSummary first, then focused findNodes/summarizeScope/getNeighborhood calls.',
+    'When ready, call createLayoutDraft with a HybridLayoutProposal. The draft tool call is the final artifact.',
+    'Prefer selectors over explicit node ids when the structure can be described generically.',
+    'Use explicit anchors only for a few important nodes. Semanticode fills missing coordinates locally.',
+    'Default nodeScope is symbols unless the user clearly asks for files or mixed file/symbol views.',
+  ].join('\n')
+}
+
+function buildLayoutSuggestionUserPrompt(input: LayoutSuggestionPayload) {
+  return [
+    'Create a Semanticode layout draft for this request:',
+    input.prompt,
+    '',
+    `Requested node scope: ${input.nodeScope ?? 'symbols'}`,
+    input.baseLayoutId ? `Base layout id: ${input.baseLayoutId}` : 'No base layout id was selected.',
+    input.visibleNodeIds?.length
+      ? `The user currently has ${input.visibleNodeIds.length} visible nodes in scope.`
+      : 'No explicit visible-node subset was provided.',
+    '',
+    'Use the query tools and finish by calling createLayoutDraft.',
+  ].join('\n')
+}
+
+function buildCodexLayoutSuggestionPrompt(input: {
+  helperCommand: string
+  helperUrl: string
+  input: LayoutSuggestionPayload
+}) {
+  return [
+    'Create a Semanticode layout draft for the active repository.',
+    '',
+    'Do not read or dump the full Semanticode snapshot. Use the query-first helper instead.',
+    '',
+    'Preferred helper endpoint:',
+    input.helperUrl,
+    '',
+    'Call it with curl like:',
+    `curl -sS -X POST ${JSON.stringify(input.helperUrl)} -H 'Content-Type: application/json' -d '{"operation":"getWorkspaceSummary","args":{}}'`,
+    '',
+    'Fallback CLI helper if the HTTP endpoint is unavailable:',
+    input.helperCommand,
+    '',
+    'The helper operations are: getWorkspaceSummary, findNodes, getNodes, getNeighborhood, summarizeScope, previewHybridLayout, createLayoutDraft.',
+    'You must finish by calling createLayoutDraft with a HybridLayoutProposal. Do not create draft files manually.',
+    '',
+    'Layout request:',
+    input.input.prompt,
+    '',
+    `Requested node scope: ${input.input.nodeScope ?? 'symbols'}`,
+    input.input.baseLayoutId
+      ? `Base layout id: ${input.input.baseLayoutId}`
+      : 'No base layout id was selected.',
+  ].join('\n')
+}
+
+function buildLayoutHelperCommand(rootDir: string) {
+  const currentDir = dirname(fileURLToPath(import.meta.url))
+  const packageRoot = currentDir.endsWith('/dist/desktop')
+    ? resolve(currentDir, '../..')
+    : resolve(currentDir, '../../..')
+  const cliEntryPath = resolve(packageRoot, 'bin/semanticode.js')
+
+  return `node ${JSON.stringify(cliEntryPath)} layout-helper --root ${JSON.stringify(rootDir)}`
+}
+
+async function findNewLayoutDraft(rootDir: string, existingDraftIds: Set<string>) {
+  const drafts = await listLayoutDrafts(rootDir)
+
+  return drafts.find(
+    (draft) =>
+      draft.status === 'draft' &&
+      Boolean(draft.layout) &&
+      !existingDraftIds.has(draft.id),
+  ) ?? null
 }
 
 function upsertNormalizedMessage(messages: AgentMessage[], nextMessage: AgentMessage) {

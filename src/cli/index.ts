@@ -6,6 +6,9 @@ import {
   DEFAULT_STANDALONE_PORT,
   startStandaloneServer,
 } from '../hosts/standaloneServer'
+import { readProjectSnapshot } from '../node/readProjectSnapshot'
+import { createLayoutQuerySession } from '../planner/layoutQuery'
+import { listSavedLayouts } from '../planner'
 
 const DEFAULT_HOST = DEFAULT_STANDALONE_HOST
 const DEFAULT_PORT = DEFAULT_STANDALONE_PORT
@@ -19,6 +22,11 @@ export async function runCli(options: RunCliOptions = {}) {
 
   if (parsedArguments.help) {
     printHelp()
+    return
+  }
+
+  if (parsedArguments.command === 'layout-helper') {
+    await runLayoutHelper(parsedArguments)
     return
   }
 
@@ -48,6 +56,7 @@ export async function runCli(options: RunCliOptions = {}) {
 }
 
 interface ParsedArguments {
+  command: 'serve' | 'layout-helper'
   help: boolean
   host: string
   port: number
@@ -55,13 +64,21 @@ interface ParsedArguments {
 }
 
 function parseArguments(args: string[]): ParsedArguments {
+  let command: ParsedArguments['command'] = 'serve'
   let help = false
   let host = DEFAULT_HOST
   let port = DEFAULT_PORT
   let rootDir: string | null = null
 
-  for (let index = 0; index < args.length; index += 1) {
-    const argument = args[index]
+  const remainingArgs = [...args]
+
+  if (remainingArgs[0] === 'layout-helper') {
+    command = 'layout-helper'
+    remainingArgs.shift()
+  }
+
+  for (let index = 0; index < remainingArgs.length; index += 1) {
+    const argument = remainingArgs[index]
 
     if (argument === '--help' || argument === '-h') {
       help = true
@@ -69,16 +86,22 @@ function parseArguments(args: string[]): ParsedArguments {
     }
 
     if (argument === '--host') {
-      host = args[index + 1] ?? host
+      host = remainingArgs[index + 1] ?? host
+      index += 1
+      continue
+    }
+
+    if (argument === '--root') {
+      rootDir = remainingArgs[index + 1] ?? rootDir
       index += 1
       continue
     }
 
     if (argument === '--port' || argument === '-p') {
-      const nextValue = Number(args[index + 1])
+      const nextValue = Number(remainingArgs[index + 1])
 
       if (!Number.isFinite(nextValue)) {
-        throw new Error(`Invalid port value: ${args[index + 1] ?? ''}`)
+        throw new Error(`Invalid port value: ${remainingArgs[index + 1] ?? ''}`)
       }
 
       port = nextValue
@@ -94,6 +117,7 @@ function parseArguments(args: string[]): ParsedArguments {
   }
 
   return {
+    command,
     help,
     host,
     port,
@@ -101,10 +125,64 @@ function parseArguments(args: string[]): ParsedArguments {
   }
 }
 
+async function runLayoutHelper(parsedArguments: ParsedArguments) {
+  const rootDir = resolve(parsedArguments.rootDir ?? process.cwd())
+  const payload = JSON.parse(await readStdin()) as {
+    args?: Record<string, unknown>
+    operation?: string
+  }
+
+  if (!payload.operation) {
+    throw new Error('layout-helper requires a JSON payload with an operation.')
+  }
+
+  const [snapshot, existingLayouts] = await Promise.all([
+    readProjectSnapshot({
+      analyzeCalls: true,
+      analyzeImports: true,
+      analyzeSymbols: true,
+      rootDir,
+    }),
+    listSavedLayouts(rootDir),
+  ])
+  const session = createLayoutQuerySession('layout-helper', {
+    executionPath: 'codex_cli_bridge',
+    existingLayouts,
+    nodeScope: 'symbols',
+    prompt: 'CLI layout helper request',
+    rootDir,
+    snapshot,
+  })
+  const result = await session.execute({
+    args: payload.args,
+    operation: payload.operation as never,
+  })
+
+  process.stdout.write(JSON.stringify({
+    ...result,
+    queryStats: session.getStats(),
+  }, null, 2))
+  process.stdout.write('\n')
+}
+
+function readStdin() {
+  return new Promise<string>((resolvePromise, rejectPromise) => {
+    let input = ''
+
+    process.stdin.setEncoding('utf8')
+    process.stdin.on('data', (chunk) => {
+      input += chunk
+    })
+    process.stdin.on('end', () => resolvePromise(input))
+    process.stdin.on('error', rejectPromise)
+  })
+}
+
 function printHelp() {
   process.stdout.write(
     [
       'Usage: semanticode [path] [--port 3210] [--host 127.0.0.1]',
+      '       semanticode layout-helper --root <path>',
       '',
       'Starts a local web app that visualizes the target repository.',
     ].join('\n') + '\n',

@@ -1,10 +1,8 @@
 import { useState } from 'react'
 
 import {
-  fetchAgentState,
-  fetchLayoutState,
   mutateDraft,
-  postAgentMessage,
+  postLayoutSuggestion,
 } from './apiClient'
 import type { LayoutDraft, LayoutSpec } from '../types'
 
@@ -12,10 +10,6 @@ interface UseLayoutDraftControllerInput {
   activeDraftId: string | null
   draftLayouts: LayoutDraft[]
   rootDir: string | null
-  onLayoutStateLoaded: (state: {
-    layouts: LayoutSpec[]
-    draftLayouts: LayoutDraft[]
-  }) => void
   onAcceptApplied: (layoutId: string | null) => void
   onRejectApplied: (draftId: string) => void
   onSuggestionApplied: (draftId: string) => void
@@ -51,22 +45,13 @@ export function useLayoutDraftController(
     setLayoutSuggestionPending(true)
     setLayoutSuggestionError(null)
 
-    const existingDraftIds = new Set(input.draftLayouts.map((draft) => draft.id))
-
     try {
-      await postAgentMessage(
-        buildLayoutSuggestionPrompt(input.rootDir, trimmedBrief),
-        {
-          kind: 'layout_suggestion',
-          task: trimmedBrief,
-        },
-      )
-
-      const nextDraft = await waitForSuggestedLayoutDraft({
-        existingDraftIds,
-        onLayoutStateLoaded: input.onLayoutStateLoaded,
+      const result = await postLayoutSuggestion({
+        prompt: trimmedBrief,
       })
+      const nextDraft = result.draft
 
+      await input.refreshLayoutState()
       input.onSuggestionApplied(nextDraft.id)
       input.onError(null)
     } catch (error) {
@@ -126,85 +111,4 @@ export function useLayoutDraftController(
     handleRejectDraft,
     handleSuggestLayout,
   }
-}
-
-async function waitForSuggestedLayoutDraft(input: {
-  existingDraftIds: Set<string>
-  onLayoutStateLoaded: (state: {
-    layouts: LayoutSpec[]
-    draftLayouts: LayoutDraft[]
-  }) => void
-}) {
-  const timeoutAt = Date.now() + 180_000
-  let lastLayoutStateFingerprint: string | null = null
-
-  while (Date.now() < timeoutAt) {
-    const [layoutState, agentState] = await Promise.all([
-      fetchLayoutState(),
-      fetchAgentState(),
-    ])
-
-    const nextLayoutStateFingerprint = getLayoutStateFingerprint(layoutState)
-
-    if (lastLayoutStateFingerprint !== nextLayoutStateFingerprint) {
-      lastLayoutStateFingerprint = nextLayoutStateFingerprint
-      input.onLayoutStateLoaded({
-        layouts: layoutState.layouts,
-        draftLayouts: layoutState.draftLayouts,
-      })
-    }
-
-    const nextDraft = layoutState.draftLayouts.find(
-      (draft) =>
-        draft.status === 'draft' &&
-        Boolean(draft.layout) &&
-        !input.existingDraftIds.has(draft.id),
-    )
-
-    if (nextDraft) {
-      return nextDraft
-    }
-
-    if (agentState.session?.runState === 'error') {
-      throw new Error(
-        agentState.session.lastError ?? 'The agent failed before saving a layout draft.',
-      )
-    }
-
-    await delay(1500)
-  }
-
-  throw new Error('Timed out waiting for a new layout draft.')
-}
-
-function buildLayoutSuggestionPrompt(rootDir: string, layoutBrief: string) {
-  const instructionsPath = `${rootDir}/.semanticode/INSTRUCTIONS.md`
-
-  return [
-    `Look up "${instructionsPath}" and follow it to construct a new Semanticode layout draft for this repository.`,
-    'Use the following layout brief:',
-    layoutBrief,
-    'Save the result as a draft layout so it appears in Semanticode.',
-    'Do not answer with prose in chat. Do the work and stop after the draft has been saved.',
-  ].join('\n\n')
-}
-
-function delay(milliseconds: number) {
-  return new Promise<void>((resolve) => {
-    window.setTimeout(resolve, milliseconds)
-  })
-}
-
-function getLayoutStateFingerprint(input: {
-  layouts: LayoutSpec[]
-  draftLayouts: LayoutDraft[]
-}) {
-  return [
-    input.layouts
-      .map((layout) => `${layout.id}:${layout.updatedAt ?? ''}`)
-      .join('|'),
-    input.draftLayouts
-      .map((draft) => `${draft.id}:${draft.status}:${draft.updatedAt}`)
-      .join('|'),
-  ].join('::')
 }
