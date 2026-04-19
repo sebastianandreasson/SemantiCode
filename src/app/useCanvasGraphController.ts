@@ -318,14 +318,24 @@ export function useCanvasGraphController({
 
   useEffect(() => {
     if (!presentedFlowModel) {
-      setNodes([])
-      setEdges([])
+      if (nodes.length > 0) {
+        setNodes([])
+      }
+
+      if (edges.length > 0) {
+        setEdges([])
+      }
       return
     }
 
-    setNodes(presentedFlowModel.nodes)
-    setEdges(presentedFlowModel.edges)
-  }, [presentedFlowModel, setEdges, setNodes])
+    if (!areFlowNodesEquivalent(nodes, presentedFlowModel.nodes)) {
+      setNodes(presentedFlowModel.nodes)
+    }
+
+    if (!areFlowEdgesEquivalent(edges, presentedFlowModel.edges)) {
+      setEdges(presentedFlowModel.edges)
+    }
+  }, [edges, nodes, presentedFlowModel, setEdges, setNodes])
 
   const visibleNodeCount = useMemo(
     () =>
@@ -725,4 +735,112 @@ function getFlowModelViewportZoomBucket(zoom: number) {
   }
 
   return 3.5
+}
+
+function areFlowNodesEquivalent(left: Node[], right: Node[]) {
+  if (left === right) {
+    return true
+  }
+
+  if (left.length !== right.length) {
+    return false
+  }
+
+  return left.every((leftNode, index) => {
+    const rightNode = right[index]
+
+    return Boolean(
+      rightNode &&
+        leftNode.id === rightNode.id &&
+        leftNode.type === rightNode.type &&
+        leftNode.parentId === rightNode.parentId &&
+        leftNode.selected === rightNode.selected &&
+        leftNode.hidden === rightNode.hidden &&
+        leftNode.draggable === rightNode.draggable &&
+        leftNode.extent === rightNode.extent &&
+        leftNode.height === rightNode.height &&
+        leftNode.sourcePosition === rightNode.sourcePosition &&
+        leftNode.targetPosition === rightNode.targetPosition &&
+        leftNode.width === rightNode.width &&
+        areShallowRecordsEquivalent(leftNode.position, rightNode.position) &&
+        areShallowRecordsEquivalent(leftNode.data, rightNode.data) &&
+        areShallowRecordsEquivalent(leftNode.style, rightNode.style),
+    )
+  })
+}
+
+function areFlowEdgesEquivalent(left: Edge[], right: Edge[]) {
+  if (left === right) {
+    return true
+  }
+
+  if (left.length !== right.length) {
+    return false
+  }
+
+  return left.every((leftEdge, index) => {
+    const rightEdge = right[index]
+
+    return Boolean(
+      rightEdge &&
+        leftEdge.id === rightEdge.id &&
+        leftEdge.type === rightEdge.type &&
+        leftEdge.source === rightEdge.source &&
+        leftEdge.target === rightEdge.target &&
+        leftEdge.selected === rightEdge.selected &&
+        leftEdge.hidden === rightEdge.hidden &&
+        leftEdge.animated === rightEdge.animated &&
+        leftEdge.label === rightEdge.label &&
+        leftEdge.sourceHandle === rightEdge.sourceHandle &&
+        leftEdge.targetHandle === rightEdge.targetHandle &&
+        areShallowRecordsEquivalent(leftEdge.data, rightEdge.data) &&
+        areShallowRecordsEquivalent(leftEdge.markerStart, rightEdge.markerStart) &&
+        areShallowRecordsEquivalent(leftEdge.style, rightEdge.style) &&
+        areShallowRecordsEquivalent(leftEdge.markerEnd, rightEdge.markerEnd),
+    )
+  })
+}
+
+function areShallowRecordsEquivalent(left: unknown, right: unknown) {
+  if (Object.is(left, right)) {
+    return true
+  }
+
+  if (
+    !left ||
+    !right ||
+    typeof left !== 'object' ||
+    typeof right !== 'object'
+  ) {
+    return false
+  }
+
+  const leftRecord = left as Record<string, unknown>
+  const rightRecord = right as Record<string, unknown>
+  const leftKeys = Object.keys(leftRecord)
+  const rightKeys = Object.keys(rightRecord)
+
+  if (leftKeys.length !== rightKeys.length) {
+    return false
+  }
+
+  return leftKeys.every((key) =>
+    areShallowValuesEquivalent(leftRecord[key], rightRecord[key]),
+  )
+}
+
+function areShallowValuesEquivalent(left: unknown, right: unknown) {
+  if (Object.is(left, right)) {
+    return true
+  }
+
+  if (!Array.isArray(left) || !Array.isArray(right)) {
+    return false
+  }
+
+  if (left.length !== right.length) {
+    return false
+  }
+
+  return left.every((item, index) => Object.is(item, right[index]))
 }

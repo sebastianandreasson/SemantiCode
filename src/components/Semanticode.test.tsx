@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { Semanticode } from './Semanticode'
+import { UI_PREFERENCES_STORAGE_KEY } from '../app/themeBootstrap'
 import { visualizerStore } from '../store/visualizerStore'
 import type {
   LayoutDraft,
@@ -128,7 +129,7 @@ const semanticLayout = {
   title: 'Semantic symbols',
   strategy: 'semantic' as const,
   nodeScope: 'symbols' as const,
-  description: 'Experimental symbol layout based on semantic embeddings.',
+  description: 'Resolved semantic symbol layout with semantic-spacing-v2.',
   placements: {
     'symbol:entry': { nodeId: 'symbol:entry', x: 24, y: 24 },
     'symbol:helper': { nodeId: 'symbol:helper', x: 180, y: 24 },
@@ -258,6 +259,20 @@ describe('Semanticode semantic compare overlay', () => {
         toJSON: () => ({}),
       }) as DOMRect
 
+    window.localStorage.setItem(
+      UI_PREFERENCES_STORAGE_KEY,
+      JSON.stringify({
+        inspectorOpen: false,
+        projectsSidebarOpen: true,
+        viewMode: 'symbols',
+        workspaceStateByRootDir: {
+          [snapshot.rootDir]: {
+            activeDraftId: featureDraft.id,
+          },
+        },
+      }),
+    )
+
     act(() => {
       visualizerStore.getState().reset()
       visualizerStore.getState().setDraftLayouts([featureDraft])
@@ -267,6 +282,7 @@ describe('Semanticode semantic compare overlay', () => {
   })
 
   afterEach(() => {
+    window.localStorage.removeItem(UI_PREFERENCES_STORAGE_KEY)
     vi.unstubAllGlobals()
   })
 

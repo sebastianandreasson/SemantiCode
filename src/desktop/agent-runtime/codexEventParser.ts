@@ -39,6 +39,8 @@ export type CodexLineAction =
     }
   | {
       kind: 'tool_call_end'
+      isError?: boolean
+      result?: unknown
       toolCallId: string
     }
 
@@ -180,6 +182,8 @@ function extractResponseItemActions(payload: Record<string, unknown>): CodexLine
       ? [
           {
             kind: 'tool_call_end',
+            isError: Boolean(payload.is_error ?? payload.isError ?? payload.error),
+            result: extractToolResultPayload(payload),
             toolCallId,
           },
         ]
@@ -187,6 +191,26 @@ function extractResponseItemActions(payload: Record<string, unknown>): CodexLine
   }
 
   return []
+}
+
+function extractToolResultPayload(payload: Record<string, unknown>) {
+  if ('output' in payload) {
+    return payload.output
+  }
+
+  if ('content' in payload) {
+    return payload.content
+  }
+
+  if ('result' in payload) {
+    return payload.result
+  }
+
+  if ('error' in payload) {
+    return payload.error
+  }
+
+  return undefined
 }
 
 function extractCompletedItemActions(item: Record<string, unknown>): CodexLineAction[] {

@@ -33,6 +33,7 @@ export default defineConfig({
       external: [
         '@mariozechner/pi-agent',
         '@mariozechner/pi-ai',
+        '@mariozechner/pi-coding-agent',
         '@persper/js-callgraph',
         'ignore',
         'react',

@@ -1,12 +1,15 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type Dispatch, type RefObject, type SetStateAction } from 'react'
 
 import { DesktopAgentClient, type DesktopAgentBridgeInfo } from '../agent/DesktopAgentClient'
 import type {
   AgentAuthMode,
   AgentEvent,
   AgentMessage,
+  AgentSessionListItem,
   AgentSessionSummary,
   AgentSettingsState,
+  AgentTimelineItem,
+  AgentToolInvocation,
 } from '../schema/agent'
 import type {
   CodebaseFile,
@@ -78,6 +81,8 @@ export function AgentPanel({
     value: '',
   })
   const [messages, setMessages] = useState<AgentMessage[]>([])
+  const [timeline, setTimeline] = useState<AgentTimelineItem[]>([])
+  const [, setSessions] = useState<AgentSessionListItem[]>([])
   const [session, setSession] = useState<AgentSessionSummary | null>(null)
   const [settings, setSettings] = useState<AgentSettingsState | null>(null)
   const [authModeValue, setAuthModeValue] = useState<AgentAuthMode>('brokered_oauth')
@@ -103,6 +108,10 @@ export function AgentPanel({
     promptSeed && promptSeed.id !== composerState.seedId
       ? promptSeed.value
       : composerState.value
+  const displayTimeline = useMemo(
+    () => timeline.length > 0 ? timeline : createTimelineFromMessages(messages),
+    [messages, timeline],
+  )
 
   useEffect(() => {
     sessionRef.current = session
@@ -195,6 +204,7 @@ export function AgentPanel({
 
           setSession(nextState.session)
           setMessages(nextState.messages)
+          setTimeline(nextState.timeline ?? [])
         }
       } catch (error) {
         if (cancelled) {
@@ -217,6 +227,7 @@ export function AgentPanel({
 
         setSession(state.session)
         setMessages(state.messages)
+        setTimeline(state.timeline ?? [])
       } catch (error) {
         if (cancelled) {
           return
@@ -244,7 +255,7 @@ export function AgentPanel({
           return
         }
 
-        handleAgentEvent(event, setMessages, setSession)
+        handleAgentEvent(event, setMessages, setTimeline, setSession)
       })
     }
 
@@ -289,7 +300,7 @@ export function AgentPanel({
     }
 
     messageListRef.current.scrollTop = messageListRef.current.scrollHeight
-  }, [messages])
+  }, [displayTimeline])
 
   useEffect(() => {
     if (!promptSeed) {
@@ -328,7 +339,7 @@ export function AgentPanel({
     }, 0)
   }, [autoFocusComposer, sessionIsInteractive, settingsOnly])
 
-  async function handleSubmit() {
+  async function handleSubmit(mode: 'send' | 'steer' | 'follow_up' = 'send') {
     const nextPrompt = composerValue.trim()
 
     if (!nextPrompt || pending) {
@@ -338,6 +349,15 @@ export function AgentPanel({
     try {
       setPending(true)
       setErrorMessage(null)
+
+      if (await handleLocalCommand(nextPrompt)) {
+        setComposerState({
+          seedId: promptSeed?.id ?? composerState.seedId,
+          value: '',
+        })
+        return
+      }
+
       await persistSettingsDraftIfNeeded()
       const ok = await agentClient.sendMessage(
         {
@@ -353,6 +373,7 @@ export function AgentPanel({
             workingSetContext,
             inspectorContext,
           ),
+          mode,
         },
       )
 
@@ -371,6 +392,154 @@ export function AgentPanel({
     } finally {
       setPending(false)
     }
+  }
+
+  async function handleLocalCommand(command: string) {
+    if (!command.startsWith('/')) {
+      return false
+    }
+
+    const [commandName, ...commandArgs] = command.slice(1).trim().split(/\s+/)
+    const commandValue = commandArgs.join(' ').trim()
+
+    if (commandName === 'new') {
+      const nextSession = await agentClient.newSession()
+      const state = await agentClient.getHttpState()
+
+      setSession(nextSession ?? state.session)
+      setMessages(state.messages)
+      setTimeline(state.timeline ?? [])
+      return true
+    }
+
+    if (commandName === 'resume') {
+      const result = await agentClient.listSessions()
+      const latestSession = commandValue
+        ? result.sessions.find((entry) => entry.path === commandValue || entry.id === commandValue)
+        : result.sessions[0]
+
+      setSessions(result.sessions)
+
+      if (!latestSession) {
+        appendLocalLifecycle(
+          'resume failed',
+          commandValue
+            ? `No pi session matched ${commandValue}.`
+            : 'No previous pi session was found for this workspace.',
+          'error',
+        )
+        return true
+      }
+
+      const nextSession = await agentClient.resumeSession(latestSession.path)
+      const state = await agentClient.getHttpState()
+
+      setSession(nextSession ?? state.session)
+      setMessages(state.messages)
+      setTimeline(state.timeline ?? [])
+      return true
+    }
+
+    if (commandName === 'session') {
+      const result = await agentClient.listSessions()
+      setSessions(result.sessions)
+      appendLocalLifecycle(
+        'session',
+        session?.sessionFile
+          ? `${session.sessionName ?? session.id} · ${session.sessionFile} · ${result.sessions.length} saved`
+          : `${session?.id ?? 'none'} · ${result.sessions.length} saved`,
+        'completed',
+      )
+      return true
+    }
+
+    if (commandName === 'model') {
+      if (!commandValue) {
+        appendLocalLifecycle(
+          'model',
+          session ? `${session.provider}/${session.modelId}` : 'No active session.',
+          'completed',
+        )
+        return true
+      }
+
+      if (!settings) {
+        appendLocalLifecycle('model failed', 'Agent settings are not loaded yet.', 'error')
+        return true
+      }
+
+      const availableModels = getSelectableModels(settings, authModeValue, providerValue)
+
+      if (!availableModels.some((model) => model.id === commandValue)) {
+        appendLocalLifecycle(
+          'model failed',
+          `Unknown model ${commandValue}. Available: ${availableModels.map((model) => model.id).join(', ')}`,
+          'error',
+        )
+        return true
+      }
+
+      const nextSettings = await agentClient.saveSettings({
+        authMode: authModeValue,
+        provider: providerValue,
+        modelId: commandValue,
+      })
+      const nextSession = await agentClient.createSession()
+      const state = await agentClient.getHttpState()
+
+      setSettings(nextSettings)
+      setModelValue(nextSettings.modelId)
+      setSession(nextSession ?? state.session)
+      setMessages(state.messages)
+      setTimeline(state.timeline ?? [])
+      appendLocalLifecycle('model changed', `${providerValue}/${commandValue}`, 'completed')
+      return true
+    }
+
+    if (commandName === 'thinking') {
+      if (!commandValue) {
+        appendLocalLifecycle(
+          'thinking',
+          `Current: ${session?.thinkingLevel ?? 'medium'}`,
+          'completed',
+        )
+        return true
+      }
+
+      if (!isAgentThinkingLevel(commandValue)) {
+        appendLocalLifecycle(
+          'thinking failed',
+          `Unknown level ${commandValue}. Use off, minimal, low, medium, high, or xhigh.`,
+          'error',
+        )
+        return true
+      }
+
+      const nextSession = await agentClient.setThinkingLevel(commandValue)
+      const state = await agentClient.getHttpState()
+
+      setSession(nextSession ?? state.session)
+      setMessages(state.messages)
+      setTimeline(state.timeline ?? [])
+      return true
+    }
+
+    if (commandName === 'compact') {
+      const state = await agentClient.compact(commandValue || undefined)
+
+      setSession(state.session)
+      setMessages(state.messages)
+      setTimeline(state.timeline ?? [])
+      return true
+    }
+
+    if (commandName === 'clear') {
+      setTimeline([])
+      setMessages([])
+      return true
+    }
+
+    return false
   }
 
   async function persistSettingsDraftIfNeeded() {
@@ -422,6 +591,27 @@ export function AgentPanel({
     }
   }
 
+  function appendLocalLifecycle(
+    label: string,
+    detail?: string,
+    status: Extract<AgentTimelineItem, { type: 'lifecycle' }>['status'] = 'completed',
+  ) {
+    const createdAt = new Date().toISOString()
+
+    setTimeline((current) => [
+      ...current,
+      {
+        createdAt,
+        detail,
+        event: status === 'error' ? 'error' : 'session_updated',
+        id: `agent-timeline:local:${Date.now()}:${Math.random().toString(36).slice(2)}`,
+        label,
+        status,
+        type: 'lifecycle',
+      },
+    ])
+  }
+
   async function handleSaveSettings() {
     if (!providerValue || !modelValue) {
       setErrorMessage('Select both a provider and a model before saving.')
@@ -461,6 +651,7 @@ export function AgentPanel({
       const state = await agentClient.getHttpState()
       setSession(state.session)
       setMessages(state.messages)
+      setTimeline(state.timeline ?? [])
     } catch (error) {
       setErrorMessage(
         error instanceof Error ? error.message : 'Failed to save the agent settings.',
@@ -494,6 +685,7 @@ export function AgentPanel({
       const state = await agentClient.getHttpState()
       setSession(state.session)
       setMessages(state.messages)
+      setTimeline(state.timeline ?? [])
     } catch (error) {
       setErrorMessage(
         error instanceof Error ? error.message : 'Failed to clear the stored API key.',
@@ -592,6 +784,7 @@ export function AgentPanel({
       const state = await agentClient.getHttpState()
       setSession(state.session)
       setMessages(state.messages)
+      setTimeline(state.timeline ?? [])
     } catch (error) {
       setErrorMessage(
         error instanceof Error ? error.message : 'Failed to sign out from OpenAI OAuth.',
@@ -618,6 +811,7 @@ export function AgentPanel({
       const state = await agentClient.getHttpState()
       setSession(state.session)
       setMessages(state.messages)
+      setTimeline(state.timeline ?? [])
       setOauthStatusMessage(result.message)
       setOauthLoginUrl(null)
     } catch (error) {
@@ -656,6 +850,7 @@ export function AgentPanel({
       const state = await agentClient.getHttpState()
       setSession(state.session)
       setMessages(state.messages)
+      setTimeline(state.timeline ?? [])
     } catch (error) {
       setErrorMessage(
         error instanceof Error ? error.message : 'Failed to clear the OpenAI OAuth override.',
@@ -690,6 +885,7 @@ export function AgentPanel({
       const state = await agentClient.getHttpState()
       setSession(state.session)
       setMessages(state.messages)
+      setTimeline(state.timeline ?? [])
       setOauthStatusMessage(result.message)
       setOauthLoginUrl(null)
     } catch (error) {
@@ -1010,83 +1206,34 @@ export function AgentPanel({
           ) : null}
         </div>
       ) : (
-      <div className="cbv-agent-thread">
-        <div className="cbv-agent-messages" ref={messageListRef}>
-          {messages.length ? (
-            messages.map((message) => (
-              <article
-                className={`cbv-agent-message is-${message.role}`}
-                key={message.id}
-              >
-                <header>
-                  <strong>{message.role}</strong>
-                  {message.isStreaming ? <span>streaming</span> : null}
-                </header>
-                <div className="cbv-agent-message-body">
-                  {message.blocks.length ? (
-                    message.blocks.map((block, index) => (
-                      <p key={`${message.id}:${block.kind}:${index}`}>{block.text || ' '}</p>
-                    ))
-                  ) : (
-                    <p>{message.role === 'assistant' ? '…' : ''}</p>
-                  )}
-                </div>
-              </article>
-            ))
-          ) : (
-            <div className="cbv-empty">
-              <h2>No agent messages yet</h2>
-              <p>Send a prompt to the embedded PI runtime from here.</p>
-            </div>
-          )}
+      <div className="cbv-agent-terminal">
+        <div className="cbv-agent-terminal-bar">
+          <span>model {session.provider}/{session.modelId}</span>
+          <span>thinking {session.thinkingLevel ?? 'medium'}</span>
+          <span className={`cbv-agent-terminal-state is-${session.runState}`}>
+            {session.runState}
+          </span>
+          <span title={session.sessionFile ?? undefined}>
+            session {session.sessionName ?? abbreviateId(session.id)}
+          </span>
+          <span>
+            queue s:{session.queue?.steering ?? 0} f:{session.queue?.followUp ?? 0}
+          </span>
         </div>
 
-        <div className="cbv-agent-composer">
-          {hasWorkingSetContext ? (
-            <div className="cbv-agent-context">
-              <p className="cbv-eyebrow">Pinned working set</p>
-              <strong>
-                {describeScopeContextTitle(workingSetContext)}
-              </strong>
-              <p>
-                Agent requests will start from this working set and only leave it when blocked.
-                {workingSet?.source === 'selection' ? ' Pinned from selection.' : ''}
-              </p>
-              {renderScopeContextList(workingSetContext)}
-              {renderScopeContextOverflow(workingSetContext)}
-              <div className="cbv-agent-context-actions">
-                {hasInspectorContext && !workingSetMatchesInspectorContext && onAdoptInspectorContextAsWorkingSet ? (
-                  <button onClick={onAdoptInspectorContextAsWorkingSet} type="button">
-                    Replace with current selection
-                  </button>
-                ) : null}
-                {onClearWorkingSet ? (
-                  <button className="is-secondary" onClick={onClearWorkingSet} type="button">
-                    Clear working set
-                  </button>
-                ) : null}
-              </div>
-            </div>
-          ) : hasInspectorContext ? (
-            <div className="cbv-agent-context">
-              <p className="cbv-eyebrow">Current inspector target</p>
-              <strong>
-                {describeScopeContextTitle(inspectorContext)}
-              </strong>
-              <p>
-                {describeInspectorContext(inspectorContext)}
-              </p>
-              {renderScopeContextList(inspectorContext)}
-              {renderScopeContextOverflow(inspectorContext)}
-              {onAdoptInspectorContextAsWorkingSet ? (
-                <div className="cbv-agent-context-actions">
-                  <button onClick={onAdoptInspectorContextAsWorkingSet} type="button">
-                    Use as working set
-                  </button>
-                </div>
-              ) : null}
-            </div>
-          ) : null}
+        <AgentTerminalTimeline items={displayTimeline} listRef={messageListRef} />
+
+        <div className="cbv-agent-composer is-terminal">
+          {renderTerminalContextRows({
+            hasInspectorContext,
+            hasWorkingSetContext,
+            inspectorContext,
+            onAdoptInspectorContextAsWorkingSet,
+            onClearWorkingSet,
+            workingSet,
+            workingSetContext,
+            workingSetMatchesInspectorContext,
+          })}
           <textarea
             ref={composerRef}
             onChange={(event) =>
@@ -1096,19 +1243,22 @@ export function AgentPanel({
               })
             }
             onKeyDown={(event) => {
-              if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+              if (
+                event.key === 'Enter' &&
+                (event.metaKey || event.ctrlKey || !event.shiftKey)
+              ) {
                 event.preventDefault()
-                void handleSubmit()
+                void handleSubmit(session.runState === 'running' ? 'steer' : 'send')
               }
             }}
-            placeholder="Ask about this repository or request a change…"
-            rows={4}
+            placeholder="/new /resume /model /thinking /session /compact /clear or ask…"
+            rows={1}
             value={composerValue}
           />
           <div className="cbv-agent-actions">
             <button
               className="is-secondary"
-              disabled={session?.runState !== 'running'}
+              disabled={session.runState !== 'running'}
               onClick={() => {
                 void handleCancel()
               }}
@@ -1116,21 +1266,47 @@ export function AgentPanel({
             >
               Cancel
             </button>
-            <button
-              disabled={
-                pending ||
-                composerValue.trim().length === 0 ||
-                session?.runState === 'disabled' ||
-                session?.runState === 'initializing'
-              }
-              title={sendDisabledReason ?? undefined}
-              onClick={() => {
-                void handleSubmit()
-              }}
-              type="button"
-            >
-              Send
-            </button>
+            {session.runState === 'running' ? (
+              <>
+                <button
+                  disabled={pending || composerValue.trim().length === 0}
+                  onClick={() => {
+                    void handleSubmit('steer')
+                  }}
+                  title={sendDisabledReason ?? undefined}
+                  type="button"
+                >
+                  Steer
+                </button>
+                <button
+                  className="is-secondary"
+                  disabled={pending || composerValue.trim().length === 0}
+                  onClick={() => {
+                    void handleSubmit('follow_up')
+                  }}
+                  title={sendDisabledReason ?? undefined}
+                  type="button"
+                >
+                  Follow-Up
+                </button>
+              </>
+            ) : (
+              <button
+                disabled={
+                  pending ||
+                  composerValue.trim().length === 0 ||
+                  session.runState === 'disabled' ||
+                  session.runState === 'initializing'
+                }
+                title={sendDisabledReason ?? undefined}
+                onClick={() => {
+                  void handleSubmit('send')
+                }}
+                type="button"
+              >
+                Send
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -1141,8 +1317,9 @@ export function AgentPanel({
 
 function handleAgentEvent(
   event: AgentEvent,
-  setMessages: React.Dispatch<React.SetStateAction<AgentMessage[]>>,
-  setSession: React.Dispatch<React.SetStateAction<AgentSessionSummary | null>>,
+  setMessages: Dispatch<SetStateAction<AgentMessage[]>>,
+  setTimeline: Dispatch<SetStateAction<AgentTimelineItem[]>>,
+  setSession: Dispatch<SetStateAction<AgentSessionSummary | null>>,
 ) {
   switch (event.type) {
     case 'session_created':
@@ -1152,12 +1329,422 @@ function handleAgentEvent(
 
     case 'message':
       setMessages((messages) => upsertMessage(messages, event.message))
+      setTimeline((timeline) =>
+        createTimelineFromMessages([event.message]).reduce(upsertTimelineItem, timeline),
+      )
       break
 
     case 'tool':
+      setTimeline((timeline) =>
+        upsertTimelineItem(timeline, createToolTimelineItemFromInvocation(event.invocation)),
+      )
+      break
+
+    case 'timeline':
+      setTimeline((timeline) => upsertTimelineItem(timeline, event.item))
+      break
+
     case 'permission_request':
+      setTimeline((timeline) => [
+        ...timeline,
+        {
+          createdAt: new Date().toISOString(),
+          detail: event.request.description,
+          event: 'session_updated',
+          id: `agent-timeline:permission:${event.request.id}`,
+          label: event.request.title,
+          status: 'queued',
+          type: 'lifecycle',
+        },
+      ])
       break
   }
+}
+
+function AgentTerminalTimeline({
+  items,
+  listRef,
+}: {
+  items: AgentTimelineItem[]
+  listRef: RefObject<HTMLDivElement | null>
+}) {
+  return (
+    <div className="cbv-agent-terminal-timeline" ref={listRef}>
+      {items.length > 0 ? (
+        items.map((item, index) => (
+          <AgentTimelineRow
+            isLast={index === items.length - 1}
+            item={item}
+            key={item.id}
+          />
+        ))
+      ) : (
+        <div className="cbv-agent-terminal-empty">
+          <span>└ idle · no timeline yet</span>
+          <p>Send a prompt or run /resume to attach to a pi session.</p>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function AgentTimelineRow({
+  isLast,
+  item,
+}: {
+  isLast: boolean
+  item: AgentTimelineItem
+}) {
+  if (item.type === 'tool') {
+    return <ToolTimelineRow glyph={isLast ? '└' : '├'} item={item} />
+  }
+
+  if (item.type === 'lifecycle') {
+    return <LifecycleTimelineRow glyph={isLast ? '└' : '├'} item={item} />
+  }
+
+  return <MessageTimelineRow glyph={isLast ? '└' : '├'} item={item} />
+}
+
+function MessageTimelineRow({
+  glyph,
+  item,
+}: {
+  glyph: string
+  item: Extract<AgentTimelineItem, { type: 'message' }>
+}) {
+  const rowLabel = item.blockKind === 'thinking' ? 'thinking' : item.role
+  const statusText = item.isStreaming ? 'streaming' : 'done'
+
+  if (item.blockKind === 'thinking') {
+    return (
+      <details
+        className="cbv-agent-terminal-row is-thinking"
+        open={item.isStreaming}
+      >
+        <summary>
+          <span className="cbv-agent-terminal-glyph">{glyph}</span>
+          <span>{rowLabel}</span>
+          <span>· {statusText}</span>
+        </summary>
+        <pre>{item.text || '...'}</pre>
+      </details>
+    )
+  }
+
+  return (
+    <article className={`cbv-agent-terminal-row is-message is-${item.role}`}>
+      <div className="cbv-agent-terminal-row-line">
+        <span className="cbv-agent-terminal-glyph">{glyph}</span>
+        <span>{rowLabel}</span>
+        {item.isStreaming ? <span>· streaming</span> : null}
+      </div>
+      <div className="cbv-agent-terminal-message-body">
+        {item.text || (item.role === 'assistant' ? '...' : ' ')}
+      </div>
+    </article>
+  )
+}
+
+function ToolTimelineRow({
+  glyph,
+  item,
+}: {
+  glyph: string
+  item: Extract<AgentTimelineItem, { type: 'tool' }>
+}) {
+  const toolTitle = formatToolTitle(item)
+  const statusText = item.status === 'completed'
+    ? 'ok'
+    : item.status === 'error'
+      ? 'error'
+      : 'running'
+  const durationText = item.durationMs === undefined
+    ? null
+    : formatDuration(item.durationMs)
+
+  return (
+    <details
+      className={`cbv-agent-terminal-row is-tool is-${item.status}`}
+      open={item.status !== 'completed'}
+    >
+      <summary>
+        <span className="cbv-agent-terminal-glyph">{glyph}</span>
+        <span>{toolTitle}</span>
+        {durationText ? <span>· {durationText}</span> : null}
+        <span>· {statusText}</span>
+      </summary>
+      <div className="cbv-agent-terminal-details">
+        {item.paths?.length ? (
+          <p>paths {item.paths.join(' · ')}</p>
+        ) : null}
+        <pre>args {formatJsonPreview(item.args)}</pre>
+        {item.resultPreview ? (
+          <pre>result {item.resultPreview}</pre>
+        ) : null}
+        {item.isError ? <p>error true</p> : null}
+      </div>
+    </details>
+  )
+}
+
+function LifecycleTimelineRow({
+  glyph,
+  item,
+}: {
+  glyph: string
+  item: Extract<AgentTimelineItem, { type: 'lifecycle' }>
+}) {
+  const detail = formatLifecycleDetail(item)
+
+  return (
+    <div className={`cbv-agent-terminal-row is-lifecycle is-${item.status ?? 'idle'}`}>
+      <div className="cbv-agent-terminal-row-line">
+        <span className="cbv-agent-terminal-glyph">{glyph}</span>
+        <span>{item.label}</span>
+        {detail ? <span>· {detail}</span> : null}
+      </div>
+      {item.detail ? (
+        <p className="cbv-agent-terminal-detail-line">{item.detail}</p>
+      ) : null}
+    </div>
+  )
+}
+
+function renderTerminalContextRows(input: {
+  hasInspectorContext: boolean
+  hasWorkingSetContext: boolean
+  inspectorContext: AgentScopeContext | null | undefined
+  onAdoptInspectorContextAsWorkingSet?: () => void
+  onClearWorkingSet?: () => void
+  workingSet: WorkingSetState | null
+  workingSetContext: AgentScopeContext | null
+  workingSetMatchesInspectorContext: boolean
+}) {
+  if (input.hasWorkingSetContext && input.workingSetContext) {
+    return (
+      <div className="cbv-agent-context-inline">
+        <span>ctx pinned</span>
+        <strong>{describeScopeContextTitle(input.workingSetContext)}</strong>
+        <em>{input.workingSet?.source === 'selection' ? 'selection' : 'working-set'}</em>
+        <details>
+          <summary>paths</summary>
+          {renderScopeContextList(input.workingSetContext)}
+          {renderScopeContextOverflow(input.workingSetContext)}
+        </details>
+        <div className="cbv-agent-context-actions">
+          {input.hasInspectorContext &&
+          !input.workingSetMatchesInspectorContext &&
+          input.onAdoptInspectorContextAsWorkingSet ? (
+            <button onClick={input.onAdoptInspectorContextAsWorkingSet} type="button">
+              replace
+            </button>
+          ) : null}
+          {input.onClearWorkingSet ? (
+            <button className="is-secondary" onClick={input.onClearWorkingSet} type="button">
+              clear
+            </button>
+          ) : null}
+        </div>
+      </div>
+    )
+  }
+
+  if (input.hasInspectorContext && input.inspectorContext) {
+    return (
+      <div className="cbv-agent-context-inline">
+        <span>ctx select</span>
+        <strong>{describeScopeContextTitle(input.inspectorContext)}</strong>
+        <em>{describeInspectorContext(input.inspectorContext)}</em>
+        <details>
+          <summary>paths</summary>
+          {renderScopeContextList(input.inspectorContext)}
+          {renderScopeContextOverflow(input.inspectorContext)}
+        </details>
+        {input.onAdoptInspectorContextAsWorkingSet ? (
+          <div className="cbv-agent-context-actions">
+            <button onClick={input.onAdoptInspectorContextAsWorkingSet} type="button">
+              pin
+            </button>
+          </div>
+        ) : null}
+      </div>
+    )
+  }
+
+  return null
+}
+
+function createTimelineFromMessages(messages: AgentMessage[]): AgentTimelineItem[] {
+  return messages.flatMap((message) => {
+    if (message.blocks.length === 0) {
+      return [
+        {
+          blockKind: 'text',
+          createdAt: message.createdAt,
+          id: `agent-timeline:message:${message.id}:empty`,
+          isStreaming: message.isStreaming,
+          messageId: message.id,
+          role: message.role,
+          text: '',
+          type: 'message' as const,
+        },
+      ]
+    }
+
+    return message.blocks.map((block, index) => ({
+      blockKind: block.kind,
+      createdAt: message.createdAt,
+      id: `agent-timeline:message:${message.id}:${block.kind}:${index}`,
+      isStreaming: message.isStreaming,
+      messageId: message.id,
+      role: message.role,
+      text: block.text,
+      type: 'message' as const,
+    }))
+  })
+}
+
+function createToolTimelineItemFromInvocation(
+  invocation: AgentToolInvocation,
+): AgentTimelineItem {
+  const startedAtMs = new Date(invocation.startedAt).getTime()
+  const endedAtMs = invocation.endedAt ? new Date(invocation.endedAt).getTime() : null
+  const durationMs =
+    endedAtMs !== null && Number.isFinite(startedAtMs)
+      ? Math.max(0, endedAtMs - startedAtMs)
+      : undefined
+
+  return {
+    args: invocation.args,
+    createdAt: invocation.startedAt,
+    durationMs,
+    endedAt: invocation.endedAt,
+    id: `agent-timeline:tool:${invocation.toolCallId}`,
+    isError: invocation.isError,
+    paths: invocation.paths,
+    resultPreview: invocation.resultPreview,
+    startedAt: invocation.startedAt,
+    status: invocation.endedAt ? (invocation.isError ? 'error' : 'completed') : 'running',
+    toolCallId: invocation.toolCallId,
+    toolName: invocation.toolName,
+    type: 'tool',
+  }
+}
+
+function upsertTimelineItem(
+  timeline: AgentTimelineItem[],
+  nextItem: AgentTimelineItem,
+) {
+  const existingIndex = timeline.findIndex((item) => item.id === nextItem.id)
+
+  if (existingIndex === -1) {
+    return [...timeline, nextItem]
+  }
+
+  return timeline.map((item, index) => index === existingIndex ? nextItem : item)
+}
+
+function formatToolTitle(item: Extract<AgentTimelineItem, { type: 'tool' }>) {
+  const normalizedName = item.toolName.toLowerCase()
+  const target = getToolTarget(item)
+
+  if (normalizedName === 'bash' || normalizedName === 'shell') {
+    return `shell ${target || item.toolName}`
+  }
+
+  if (normalizedName === 'edit') {
+    return `edit ${target || item.toolName}`
+  }
+
+  return `tool ${item.toolName}${target ? ` ${target}` : ''}`
+}
+
+function getToolTarget(item: Extract<AgentTimelineItem, { type: 'tool' }>) {
+  if (item.toolName === 'bash' || item.toolName === 'shell') {
+    return getArgString(item.args, ['command', 'cmd'])
+  }
+
+  return (
+    getArgString(item.args, ['path', 'file', 'filePath', 'filepath', 'query', 'pattern']) ||
+    item.paths?.[0] ||
+    ''
+  )
+}
+
+function getArgString(args: unknown, keys: string[]) {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) {
+    return ''
+  }
+
+  const record = args as Record<string, unknown>
+
+  for (const key of keys) {
+    const value = record[key]
+
+    if (typeof value === 'string' && value.trim()) {
+      return compactLine(value.trim(), 96)
+    }
+  }
+
+  return ''
+}
+
+function formatLifecycleDetail(item: Extract<AgentTimelineItem, { type: 'lifecycle' }>) {
+  const countText = item.counts
+    ? Object.entries(item.counts)
+        .map(([key, value]) => `${key}:${value}`)
+        .join(' ')
+    : ''
+  const statusText = item.status && item.status !== 'completed' ? item.status : ''
+
+  return [countText, statusText].filter(Boolean).join(' · ')
+}
+
+function formatDuration(durationMs: number) {
+  if (durationMs < 1000) {
+    return `${durationMs}ms`
+  }
+
+  return `${(durationMs / 1000).toFixed(durationMs < 10_000 ? 1 : 0)}s`
+}
+
+function formatJsonPreview(value: unknown) {
+  const text = typeof value === 'string' ? value : safeJsonStringify(value)
+  return compactLine(text, 1800)
+}
+
+function safeJsonStringify(value: unknown) {
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return String(value)
+  }
+}
+
+function compactLine(value: string, maxLength: number) {
+  const normalized = value.replace(/\s+/g, ' ').trim()
+
+  return normalized.length > maxLength
+    ? `${normalized.slice(0, maxLength)}...`
+    : normalized
+}
+
+function abbreviateId(id: string) {
+  return id.length > 10 ? id.slice(0, 10) : id
+}
+
+function isAgentThinkingLevel(
+  value: string,
+): value is NonNullable<AgentSessionSummary['thinkingLevel']> {
+  return (
+    value === 'off' ||
+    value === 'minimal' ||
+    value === 'low' ||
+    value === 'medium' ||
+    value === 'high' ||
+    value === 'xhigh'
+  )
 }
 
 function normalizeBridgeInfo(

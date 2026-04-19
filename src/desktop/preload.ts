@@ -38,8 +38,17 @@ contextBridge.exposeInMainWorld('semanticodeDesktop', {
             } | null
             task?: string
           }
+          mode?: 'send' | 'steer' | 'follow_up'
         },
   ) => ipcRenderer.invoke('semanticode:agent:send-message', payload),
+  listSessions: () => ipcRenderer.invoke('semanticode:agent:list-sessions'),
+  newSession: () => ipcRenderer.invoke('semanticode:agent:new-session'),
+  resumeSession: (sessionFile: string) =>
+    ipcRenderer.invoke('semanticode:agent:resume-session', sessionFile),
+  setThinkingLevel: (thinkingLevel: string) =>
+    ipcRenderer.invoke('semanticode:agent:set-thinking-level', thinkingLevel),
+  compact: (instructions?: string) =>
+    ipcRenderer.invoke('semanticode:agent:compact', instructions),
   cancel: () => ipcRenderer.invoke('semanticode:agent:cancel'),
   onEvent: (listener: (event: AgentEvent) => void) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, payload: AgentEvent) => {

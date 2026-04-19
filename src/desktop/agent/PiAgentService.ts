@@ -12,15 +12,34 @@ import {
   type Message,
   type KnownProvider,
 } from '@mariozechner/pi-ai'
+import {
+  AuthStorage,
+  createAgentSession,
+  createBashTool,
+  createEditTool,
+  createFindTool,
+  createGrepTool,
+  createLsTool,
+  createReadTool,
+  createWriteTool,
+  ModelRegistry,
+  SessionManager,
+  SettingsManager,
+  type AgentSession,
+  type AgentSessionEvent,
+  type SessionInfo,
+} from '@mariozechner/pi-coding-agent'
 
 import type {
   AgentAuthMode,
   AgentBrokerSessionSummary,
   AgentEvent,
   AgentMessage,
+  AgentSessionListItem,
   AgentSessionSummary,
   AgentSettingsInput,
   AgentSettingsState,
+  AgentTimelineItem,
   AgentToolInvocation,
 } from '../../schema/agent'
 import type {
@@ -42,6 +61,14 @@ import type {
   LayoutSuggestionPayload,
   LayoutSuggestionResponse,
 } from '../../schema/api'
+import {
+  createLifecycleTimelineItem,
+  createMessageTimelineItems,
+  createToolTimelineItem,
+  normalizeToolInvocation,
+  summarizeTimelineValue,
+  upsertTimelineItem,
+} from '../agent-runtime/agentTimeline'
 
 const DEFAULT_PI_PROVIDER = 'openai'
 const DEFAULT_PI_MODEL_ID = 'gpt-4.1-mini'
@@ -49,19 +76,28 @@ const BOOT_PROMPT_ENV_NAME = 'SEMANTICODE_PI_BOOT_PROMPT'
 const PI_PROVIDER_ENV_NAME = 'SEMANTICODE_PI_PROVIDER'
 const PI_MODEL_ENV_NAME = 'SEMANTICODE_PI_MODEL'
 
-interface PiAgentSessionRecord {
-  kind: 'pi'
-  agent: Agent
+interface BaseAgentSessionRecord {
   activeAssistantMessageId: string | null
   messages: AgentMessage[]
   summary: AgentSessionSummary
+  timeline: AgentTimelineItem[]
   toolInvocationById: Map<string, AgentToolInvocation>
   promptSequence: number
   unsubscribe: () => void
   workspaceRootDir: string
 }
 
-type AgentSessionRecord = PiAgentSessionRecord
+interface LegacyPiAgentSessionRecord extends BaseAgentSessionRecord {
+  agent: Agent
+  kind: 'legacy'
+}
+
+interface PiSdkAgentSessionRecord extends BaseAgentSessionRecord {
+  kind: 'sdk'
+  session: AgentSession
+}
+
+type AgentSessionRecord = LegacyPiAgentSessionRecord | PiSdkAgentSessionRecord
 
 export interface PiAgentServiceOptions {
   logger?: Pick<Console, 'error' | 'info' | 'warn'>
@@ -146,52 +182,39 @@ export class PiAgentService {
       hasProviderApiKey,
       lastError: disabledReason,
     }
-    const transport = disabledReason
-      ? createDisabledTransport()
-      : settings.authMode === 'brokered_oauth'
-        ? new CodexCliTransport({
-            authProvider: this.openAICodexProvider,
-            logger: this.logger,
+    const record =
+      settings.authMode === 'api_key' && !disabledReason
+        ? await this.createSdkSessionRecord({
+            provider,
+            settings,
+            summary,
             workspaceRootDir,
           })
-        : this.createTransport(provider)
-    const model =
-      settings.authMode === 'brokered_oauth'
-        ? createCodexCliModel(settings.modelId)
-        : resolveModel(provider, settings.modelId)
-    const agent = new Agent({
-      initialState: {
-        model,
-        systemPrompt: buildWorkspaceSystemPrompt(workspaceRootDir),
-        thinkingLevel: 'medium',
-        tools: [],
-      },
-      transport,
-    })
-
-    const unsubscribe = agent.subscribe((event) => {
-      this.handleAgentEvent(summary.id, workspaceRootDir, event)
-    })
-    const record: PiAgentSessionRecord = {
-      kind: 'pi',
-      agent,
-      activeAssistantMessageId: null,
-      messages: [],
-      summary,
-      toolInvocationById: new Map(),
-      promptSequence: 0,
-      unsubscribe,
-      workspaceRootDir,
-    }
+        : this.createLegacySessionRecord({
+            disabledReason,
+            provider,
+            settings,
+            summary,
+            workspaceRootDir,
+          })
 
     this.sessionsByWorkspaceRootDir.set(workspaceRootDir, record)
     this.emit({
       type: 'session_created',
-      session: summary,
+      session: record.summary,
     })
+    this.addTimelineItem(
+      record,
+      createLifecycleTimelineItem({
+        event: 'session_created',
+        label: 'session created',
+        status: record.summary.runState === 'disabled' ? 'error' : 'completed',
+        detail: `${record.summary.provider}/${record.summary.modelId}`,
+      }),
+    )
 
     this.logger.info(
-      `[semanticode][pi] Created ${summary.transport === 'codex_cli' ? 'Codex CLI' : 'provider'} workspace session ${summary.id} for ${workspaceRootDir} using ${summary.provider}/${summary.modelId}.`,
+      `[semanticode][pi] Created ${record.kind === 'sdk' ? 'SDK' : summary.transport === 'codex_cli' ? 'Codex CLI' : 'provider'} workspace session ${record.summary.id} for ${workspaceRootDir} using ${record.summary.provider}/${record.summary.modelId}.`,
     )
 
     if (disabledReason) {
@@ -215,8 +238,13 @@ export class PiAgentService {
       return
     }
 
-    record.agent.abort()
-    await record.agent.waitForIdle().catch(() => undefined)
+    if (record.kind === 'sdk') {
+      await record.session.abort().catch(() => undefined)
+      record.session.dispose()
+    } else {
+      record.agent.abort()
+      await record.agent.waitForIdle().catch(() => undefined)
+    }
     record.unsubscribe()
 
     this.sessionsByWorkspaceRootDir.delete(workspaceRootDir)
@@ -237,6 +265,145 @@ export class PiAgentService {
 
   getWorkspaceMessages(workspaceRootDir: string) {
     return this.sessionsByWorkspaceRootDir.get(workspaceRootDir)?.messages ?? []
+  }
+
+  getWorkspaceTimeline(workspaceRootDir: string) {
+    return this.sessionsByWorkspaceRootDir.get(workspaceRootDir)?.timeline ?? []
+  }
+
+  private createLegacySessionRecord(input: {
+    disabledReason?: string
+    provider: KnownProvider
+    settings: AgentSettingsState
+    summary: AgentSessionSummary
+    workspaceRootDir: string
+  }): LegacyPiAgentSessionRecord {
+    const transport = input.disabledReason
+      ? createDisabledTransport()
+      : input.settings.authMode === 'brokered_oauth'
+        ? new CodexCliTransport({
+            authProvider: this.openAICodexProvider,
+            logger: this.logger,
+            workspaceRootDir: input.workspaceRootDir,
+          })
+        : this.createTransport(input.provider)
+    const model =
+      input.settings.authMode === 'brokered_oauth'
+        ? createCodexCliModel(input.settings.modelId)
+        : resolveModel(input.provider, input.settings.modelId)
+    const agent = new Agent({
+      initialState: {
+        model,
+        systemPrompt: buildWorkspaceSystemPrompt(input.workspaceRootDir),
+        thinkingLevel: 'medium',
+        tools: [],
+      },
+      transport,
+    })
+    const unsubscribe = agent.subscribe((event) => {
+      this.handleLegacyAgentEvent(input.summary.id, input.workspaceRootDir, event)
+    })
+
+    return {
+      activeAssistantMessageId: null,
+      agent,
+      kind: 'legacy',
+      messages: [],
+      promptSequence: 0,
+      summary: {
+        ...input.summary,
+        thinkingLevel: 'medium',
+      },
+      timeline: [],
+      toolInvocationById: new Map(),
+      unsubscribe,
+      workspaceRootDir: input.workspaceRootDir,
+    }
+  }
+
+  private async createSdkSessionRecord(input: {
+    provider: KnownProvider
+    sessionManager?: SessionManager
+    settings: AgentSettingsState
+    summary: AgentSessionSummary
+    workspaceRootDir: string
+  }): Promise<PiSdkAgentSessionRecord> {
+    const authStorage = AuthStorage.inMemory()
+    const storedApiKey = await this.settingsStore.getStoredApiKey(input.provider)
+
+    if (storedApiKey) {
+      authStorage.setRuntimeApiKey(input.provider, storedApiKey)
+    }
+
+    const modelRegistry = ModelRegistry.inMemory(authStorage)
+    const model =
+      modelRegistry.find(input.provider, input.settings.modelId) ??
+      modelRegistry.getAll().find((candidate) => candidate.provider === input.provider)
+
+    if (!model) {
+      throw new Error(`No pi SDK model is available for provider "${input.provider}".`)
+    }
+
+    const settingsManager = SettingsManager.inMemory({
+      defaultModel: model.id,
+      defaultProvider: String(model.provider),
+      defaultThinkingLevel: 'medium',
+      retry: {
+        enabled: true,
+      },
+    })
+    const sessionManager = input.sessionManager ?? SessionManager.continueRecent(input.workspaceRootDir)
+    const { session } = await createAgentSession({
+      authStorage,
+      cwd: input.workspaceRootDir,
+      model,
+      modelRegistry,
+      sessionManager,
+      settingsManager,
+      thinkingLevel: 'medium',
+      tools: [
+        createReadTool(input.workspaceRootDir),
+        createWriteTool(input.workspaceRootDir),
+        createEditTool(input.workspaceRootDir),
+        createBashTool(input.workspaceRootDir),
+        createGrepTool(input.workspaceRootDir),
+        createFindTool(input.workspaceRootDir),
+        createLsTool(input.workspaceRootDir),
+      ],
+    })
+    const hydratedMessages = normalizeStoredSessionMessages(
+      input.summary.id,
+      session.state.messages as unknown[],
+    )
+    const record: PiSdkAgentSessionRecord = {
+      activeAssistantMessageId: null,
+      kind: 'sdk',
+      messages: hydratedMessages,
+      promptSequence: 0,
+      session,
+      summary: {
+        ...input.summary,
+        modelId: model.id,
+        provider: String(model.provider),
+        queue: {
+          followUp: 0,
+          steering: 0,
+        },
+        sessionFile: session.sessionManager.getSessionFile(),
+        sessionName: session.sessionManager.getSessionName(),
+        thinkingLevel: session.thinkingLevel,
+      },
+      timeline: hydratedMessages.flatMap(createMessageTimelineItems),
+      toolInvocationById: new Map(),
+      unsubscribe: () => undefined,
+      workspaceRootDir: input.workspaceRootDir,
+    }
+
+    record.unsubscribe = session.subscribe((event) => {
+      this.handleSdkAgentEvent(input.summary.id, input.workspaceRootDir, event)
+    })
+
+    return record
   }
 
   async getSettings() {
@@ -298,6 +465,7 @@ export class PiAgentService {
       } | null
       task?: string
     },
+    mode: 'send' | 'steer' | 'follow_up' = 'send',
   ) {
     this.logger.info(
       `[semanticode][agent] promptWorkspaceSession called for ${workspaceRootDir}.`,
@@ -327,21 +495,25 @@ export class PiAgentService {
     const startedAt = now
     const promptSequence = record.promptSequence + 1
     const existingToolCallIds = new Set(record.toolInvocationById.keys())
-    const normalizedMessage: AgentMessage = {
-      id: `agent-message:${randomUUID()}`,
-      role: 'user',
-      blocks: [{ kind: 'text', text: message }],
-      createdAt: now,
-      isStreaming: false,
-    }
 
     record.promptSequence = promptSequence
-    record.messages = upsertNormalizedMessage(record.messages, normalizedMessage)
-    this.emit({
-      type: 'message',
-      sessionId: record.summary.id,
-      message: normalizedMessage,
-    })
+    if (record.kind === 'legacy') {
+      const normalizedMessage: AgentMessage = {
+        id: `agent-message:${randomUUID()}`,
+        role: 'user',
+        blocks: [{ kind: 'text', text: message }],
+        createdAt: now,
+        isStreaming: false,
+      }
+
+      record.messages = upsertNormalizedMessage(record.messages, normalizedMessage)
+      this.emit({
+        type: 'message',
+        sessionId: record.summary.id,
+        message: normalizedMessage,
+      })
+      this.addMessageTimelineItems(record, normalizedMessage)
+    }
 
     record.summary = updateSessionSummary(record.summary, {
       lastError: undefined,
@@ -358,7 +530,20 @@ export class PiAgentService {
       this.logger.info(
         `[semanticode][agent] Prompting ${record.summary.transport === 'codex_cli' ? 'Codex CLI' : 'PI'} session ${record.summary.id} with model ${record.summary.modelId}.`,
       )
-      await record.agent.prompt(message)
+      if (record.kind === 'sdk') {
+        const streamingBehavior =
+          mode === 'steer'
+            ? 'steer'
+            : mode === 'follow_up' || record.session.isStreaming
+              ? 'followUp'
+              : undefined
+
+        await record.session.prompt(message, {
+          streamingBehavior,
+        })
+      } else {
+        await record.agent.prompt(message)
+      }
     } catch (error) {
       caughtError = error
       const message =
@@ -372,6 +557,15 @@ export class PiAgentService {
         type: 'session_updated',
         session: record.summary,
       })
+      this.addTimelineItem(
+        record,
+        createLifecycleTimelineItem({
+          detail: message,
+          event: 'error',
+          label: 'agent error',
+          status: 'error',
+        }),
+      )
     } finally {
       await this.telemetryService?.recordInteractivePrompt({
         finishedAt: new Date().toISOString(),
@@ -605,8 +799,240 @@ export class PiAgentService {
       return false
     }
 
-    record.agent.abort()
+    if (record.kind === 'sdk') {
+      await record.session.abort().catch(() => undefined)
+    } else {
+      record.agent.abort()
+    }
+    record.summary = updateSessionSummary(record.summary, {
+      runState: resolveSessionReadyState(record.summary),
+    })
+    this.emit({
+      session: record.summary,
+      type: 'session_updated',
+    })
+    this.addTimelineItem(
+      record,
+      createLifecycleTimelineItem({
+        event: 'cancelled',
+        label: 'cancelled',
+        status: 'completed',
+      }),
+    )
     return true
+  }
+
+  async setWorkspaceThinkingLevel(
+    workspaceRootDir: string,
+    thinkingLevel: NonNullable<AgentSessionSummary['thinkingLevel']>,
+  ) {
+    let record = this.sessionsByWorkspaceRootDir.get(workspaceRootDir)
+
+    if (!record) {
+      await this.ensureWorkspaceSession(workspaceRootDir)
+      record = this.sessionsByWorkspaceRootDir.get(workspaceRootDir)
+    }
+
+    if (!record) {
+      throw new Error('No workspace agent session exists for the active repository.')
+    }
+
+    if (record.kind === 'sdk') {
+      record.session.setThinkingLevel(thinkingLevel)
+      record.summary = {
+        ...record.summary,
+        thinkingLevel: record.session.thinkingLevel as AgentSessionSummary['thinkingLevel'],
+        updatedAt: new Date().toISOString(),
+      }
+    } else {
+      record.summary = {
+        ...record.summary,
+        thinkingLevel,
+        updatedAt: new Date().toISOString(),
+      }
+    }
+
+    this.emit({
+      session: record.summary,
+      type: 'session_updated',
+    })
+    this.addTimelineItem(
+      record,
+      createLifecycleTimelineItem({
+        detail: record.kind === 'sdk' ? undefined : 'Legacy transport records the setting for UI continuity only.',
+        event: 'session_updated',
+        label: `thinking ${record.summary.thinkingLevel ?? thinkingLevel}`,
+        status: 'completed',
+      }),
+    )
+    return record.summary
+  }
+
+  async compactWorkspaceSession(workspaceRootDir: string, instructions?: string) {
+    let record = this.sessionsByWorkspaceRootDir.get(workspaceRootDir)
+
+    if (!record) {
+      await this.ensureWorkspaceSession(workspaceRootDir)
+      record = this.sessionsByWorkspaceRootDir.get(workspaceRootDir)
+    }
+
+    if (!record) {
+      throw new Error('No workspace agent session exists for the active repository.')
+    }
+
+    if (record.kind !== 'sdk') {
+      const message = 'Manual compaction is only available for pi SDK sessions.'
+
+      this.addTimelineItem(
+        record,
+        createLifecycleTimelineItem({
+          detail: message,
+          event: 'error',
+          label: 'compact failed',
+          status: 'error',
+        }),
+      )
+      throw new Error(message)
+    }
+
+    record.summary = updateSessionSummary(record.summary, {
+      lastError: undefined,
+      runState: 'running',
+    })
+    this.emit({
+      session: record.summary,
+      type: 'session_updated',
+    })
+
+    try {
+      await record.session.compact(instructions)
+      record.summary = updateSessionSummary(record.summary, {
+        runState: resolveSessionReadyState(record.summary),
+      })
+      this.emit({
+        session: record.summary,
+        type: 'session_updated',
+      })
+      return record.summary
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Manual compaction failed.'
+
+      record.summary = updateSessionSummary(record.summary, {
+        lastError: message,
+        runState: 'error',
+      })
+      this.emit({
+        session: record.summary,
+        type: 'session_updated',
+      })
+      this.addTimelineItem(
+        record,
+        createLifecycleTimelineItem({
+          detail: message,
+          event: 'error',
+          label: 'compact failed',
+          status: 'error',
+        }),
+      )
+      throw error
+    }
+  }
+
+  async listWorkspaceSessions(workspaceRootDir: string): Promise<AgentSessionListItem[]> {
+    const sessions = await SessionManager.list(workspaceRootDir).catch(() => [])
+    return sessions.map(formatSessionListItem)
+  }
+
+  async startNewWorkspaceSession(workspaceRootDir: string) {
+    await this.disposeWorkspaceSession(workspaceRootDir)
+    const record = await this.createWorkspaceSessionWithManager(
+      workspaceRootDir,
+      SessionManager.create(workspaceRootDir),
+    )
+
+    this.sessionsByWorkspaceRootDir.set(workspaceRootDir, record)
+    this.emit({
+      session: record.summary,
+      type: 'session_created',
+    })
+    this.addTimelineItem(
+      record,
+      createLifecycleTimelineItem({
+        event: 'session_created',
+        label: 'new session',
+        status: 'completed',
+      }),
+    )
+    return record.summary
+  }
+
+  async resumeWorkspaceSession(workspaceRootDir: string, sessionFile: string) {
+    await this.disposeWorkspaceSession(workspaceRootDir)
+    const record = await this.createWorkspaceSessionWithManager(
+      workspaceRootDir,
+      SessionManager.open(sessionFile, undefined, workspaceRootDir),
+    )
+
+    this.sessionsByWorkspaceRootDir.set(workspaceRootDir, record)
+    this.emit({
+      session: record.summary,
+      type: 'session_created',
+    })
+    this.addTimelineItem(
+      record,
+      createLifecycleTimelineItem({
+        detail: sessionFile,
+        event: 'session_created',
+        label: 'session resumed',
+        status: 'completed',
+      }),
+    )
+    return record.summary
+  }
+
+  private async createWorkspaceSessionWithManager(
+    workspaceRootDir: string,
+    sessionManager: SessionManager,
+  ) {
+    await this.settingsStore.applyConfiguredApiKeys()
+    const settings = await this.getSettings()
+    const provider = resolveProvider(settings)
+    const hasProviderApiKey =
+      settings.authMode === 'api_key' ? Boolean(getApiKey(provider)) : false
+    const disabledReason = resolveDisabledReason(settings.authMode, provider, settings)
+    const resolvedModelId =
+      settings.authMode === 'brokered_oauth'
+        ? settings.modelId
+        : resolveModel(provider, settings.modelId).id
+
+    if (settings.authMode !== 'api_key' || disabledReason) {
+      throw new Error(
+        disabledReason ??
+          'Persistent pi SDK sessions are currently available for API-key agent mode.',
+      )
+    }
+
+    return this.createSdkSessionRecord({
+      provider,
+      sessionManager,
+      settings,
+      summary: {
+        authMode: settings.authMode,
+        bootPromptEnabled: false,
+        brokerSession: settings.brokerSession,
+        createdAt: new Date().toISOString(),
+        hasProviderApiKey,
+        id: `pi-session:${randomUUID()}`,
+        lastError: undefined,
+        modelId: resolvedModelId,
+        provider,
+        runState: 'ready',
+        transport: resolveTransportMode(settings.authMode),
+        updatedAt: new Date().toISOString(),
+        workspaceRootDir,
+      },
+      workspaceRootDir,
+    })
   }
 
   private async runNativeLayoutSuggestion(input: {
@@ -709,7 +1135,7 @@ export class PiAgentService {
     })
   }
 
-  private async runBootPrompt(record: PiAgentSessionRecord, prompt: string) {
+  private async runBootPrompt(record: AgentSessionRecord, prompt: string) {
     record.summary = updateSessionSummary(record.summary, {
       runState: 'running',
       lastError: undefined,
@@ -719,7 +1145,11 @@ export class PiAgentService {
       this.logger.info(
         `[semanticode][pi] Running boot prompt for workspace ${record.workspaceRootDir}.`,
       )
-      await record.agent.prompt(prompt)
+      if (record.kind === 'sdk') {
+        await record.session.prompt(prompt)
+      } else {
+        await record.agent.prompt(prompt)
+      }
       record.summary = updateSessionSummary(record.summary, {
         runState: 'ready',
       })
@@ -739,20 +1169,48 @@ export class PiAgentService {
     }
   }
 
-  private handleAgentEvent(
+  private handleLegacyAgentEvent(
     sessionId: string,
     workspaceRootDir: string,
     event: PiAgentEvent,
   ) {
     const record = this.sessionsByWorkspaceRootDir.get(workspaceRootDir)
 
-    if (!record || record.kind !== 'pi') {
+    if (!record || record.kind !== 'legacy') {
       return
     }
 
     switch (event.type) {
       case 'agent_start':
+        this.updateRecordSummary(record, {
+          runState: 'running',
+          lastError: undefined,
+        })
+        this.addTimelineItem(
+          record,
+          createLifecycleTimelineItem({
+            event: 'agent_start',
+            label: 'agent start',
+            status: 'running',
+          }),
+        )
+        break
+
       case 'turn_start':
+        this.updateRecordSummary(record, {
+          runState: 'running',
+          lastError: undefined,
+        })
+        this.addTimelineItem(
+          record,
+          createLifecycleTimelineItem({
+            event: 'turn_start',
+            label: 'turn start',
+            status: 'running',
+          }),
+        )
+        break
+
       case 'message_start':
         this.updateRecordSummary(record, {
           runState: 'running',
@@ -765,12 +1223,12 @@ export class PiAgentService {
         break
 
       case 'tool_execution_start':
-        record.toolInvocationById.set(event.toolCallId, {
+        record.toolInvocationById.set(event.toolCallId, normalizeToolInvocation({
           toolCallId: event.toolCallId,
           toolName: event.toolName,
           args: event.args,
           startedAt: new Date().toISOString(),
-        })
+        }))
         this.logger.info(
           `[semanticode][pi] ${sessionId} tool start: ${event.toolName}`,
         )
@@ -779,6 +1237,10 @@ export class PiAgentService {
           sessionId,
           invocation: record.toolInvocationById.get(event.toolCallId)!,
         })
+        this.addTimelineItem(
+          record,
+          createToolTimelineItem(record.toolInvocationById.get(event.toolCallId)!),
+        )
         break
 
       case 'tool_execution_end':
@@ -819,6 +1281,18 @@ export class PiAgentService {
           this.emitNormalizedMessage(record, event.message, false)
           record.activeAssistantMessageId = null
         }
+        this.addTimelineItem(
+          record,
+          createLifecycleTimelineItem({
+            counts:
+              event.type === 'turn_end'
+                ? { toolResults: event.toolResults.length }
+                : undefined,
+            event: event.type,
+            label: event.type === 'turn_end' ? 'turn done' : 'agent done',
+            status: 'completed',
+          }),
+        )
         break
 
       case 'message_end':
@@ -831,7 +1305,7 @@ export class PiAgentService {
   }
 
   private updateRecordSummary(
-    record: PiAgentSessionRecord,
+    record: AgentSessionRecord,
     changes: Partial<Pick<AgentSessionSummary, 'lastError' | 'runState'>>,
   ) {
     record.summary = updateSessionSummary(record.summary, changes)
@@ -842,7 +1316,7 @@ export class PiAgentService {
   }
 
   private emitNormalizedMessage(
-    record: PiAgentSessionRecord,
+    record: AgentSessionRecord,
     message: Message | AssistantMessage,
     isStreaming: boolean,
   ) {
@@ -863,10 +1337,11 @@ export class PiAgentService {
       message: normalizedMessage,
     })
     record.messages = upsertNormalizedMessage(record.messages, normalizedMessage)
+    this.addMessageTimelineItems(record, normalizedMessage)
   }
 
   private finishToolInvocation(
-    record: PiAgentSessionRecord,
+    record: AgentSessionRecord,
     sessionId: string,
     event: Extract<PiAgentEvent, { type: 'tool_execution_end' }>,
   ) {
@@ -880,6 +1355,7 @@ export class PiAgentService {
       ...existingInvocation,
       endedAt: new Date().toISOString(),
       isError: event.isError,
+      resultPreview: summarizeTimelineValue(event.result),
     }
 
     record.toolInvocationById.set(event.toolCallId, completedInvocation)
@@ -887,6 +1363,232 @@ export class PiAgentService {
       type: 'tool',
       sessionId,
       invocation: completedInvocation,
+    })
+    this.addTimelineItem(record, createToolTimelineItem(completedInvocation))
+  }
+
+  private handleSdkAgentEvent(
+    sessionId: string,
+    workspaceRootDir: string,
+    event: AgentSessionEvent,
+  ) {
+    const record = this.sessionsByWorkspaceRootDir.get(workspaceRootDir)
+
+    if (!record || record.kind !== 'sdk') {
+      return
+    }
+
+    switch (event.type) {
+      case 'agent_start':
+      case 'turn_start':
+        this.updateRecordSummary(record, {
+          runState: 'running',
+          lastError: undefined,
+        })
+        this.addTimelineItem(
+          record,
+          createLifecycleTimelineItem({
+            event: event.type,
+            label: event.type === 'agent_start' ? 'agent start' : 'turn start',
+            status: 'running',
+          }),
+        )
+        break
+
+      case 'message_start':
+        if (event.message.role === 'assistant') {
+          record.activeAssistantMessageId = `agent-message:${randomUUID()}`
+        }
+        this.emitNormalizedUnknownMessage(record, event.message, true)
+        break
+
+      case 'message_update':
+        this.emitNormalizedUnknownMessage(record, event.message, true)
+        break
+
+      case 'message_end':
+        this.emitNormalizedUnknownMessage(record, event.message, false)
+        if (event.message.role === 'assistant') {
+          record.activeAssistantMessageId = null
+        }
+        break
+
+      case 'tool_execution_start': {
+        const invocation = normalizeToolInvocation({
+          args: event.args,
+          startedAt: new Date().toISOString(),
+          toolCallId: event.toolCallId,
+          toolName: event.toolName,
+        })
+
+        record.toolInvocationById.set(event.toolCallId, invocation)
+        this.emit({
+          invocation,
+          sessionId,
+          type: 'tool',
+        })
+        this.addTimelineItem(record, createToolTimelineItem(invocation))
+        break
+      }
+
+      case 'tool_execution_update': {
+        const existingInvocation = record.toolInvocationById.get(event.toolCallId)
+
+        if (!existingInvocation) {
+          break
+        }
+
+        const updatedInvocation = {
+          ...existingInvocation,
+          resultPreview: summarizeTimelineValue(event.partialResult),
+        }
+
+        record.toolInvocationById.set(event.toolCallId, updatedInvocation)
+        this.addTimelineItem(record, createToolTimelineItem(updatedInvocation))
+        break
+      }
+
+      case 'tool_execution_end': {
+        const existingInvocation = record.toolInvocationById.get(event.toolCallId)
+        const completedInvocation = normalizeToolInvocation({
+          args: existingInvocation?.args ?? {},
+          endedAt: new Date().toISOString(),
+          isError: event.isError,
+          result: event.result,
+          startedAt: existingInvocation?.startedAt,
+          toolCallId: event.toolCallId,
+          toolName: event.toolName,
+        })
+
+        record.toolInvocationById.set(event.toolCallId, completedInvocation)
+        this.emit({
+          invocation: completedInvocation,
+          sessionId,
+          type: 'tool',
+        })
+        this.addTimelineItem(record, createToolTimelineItem(completedInvocation))
+        break
+      }
+
+      case 'turn_end': {
+        const errorMessage = getAgentMessageErrorMessage(event.message)
+
+        this.updateRecordSummary(record, {
+          lastError: errorMessage,
+          runState: resolveSessionReadyState(record.summary),
+        })
+        this.emitNormalizedUnknownMessage(record, event.message, false)
+        this.addTimelineItem(
+          record,
+          createLifecycleTimelineItem({
+            counts: { toolResults: event.toolResults.length },
+            event: 'turn_end',
+            label: 'turn done',
+            status: errorMessage ? 'error' : 'completed',
+          }),
+        )
+        break
+      }
+
+      case 'agent_end':
+        this.updateRecordSummary(record, {
+          runState: resolveSessionReadyState(record.summary),
+        })
+        this.addTimelineItem(
+          record,
+          createLifecycleTimelineItem({
+            event: 'agent_end',
+            label: 'agent done',
+            status: 'completed',
+          }),
+        )
+        break
+
+      case 'queue_update':
+        record.summary = {
+          ...record.summary,
+          queue: {
+            followUp: event.followUp.length,
+            steering: event.steering.length,
+          },
+          updatedAt: new Date().toISOString(),
+        }
+        this.emit({
+          session: record.summary,
+          type: 'session_updated',
+        })
+        this.addTimelineItem(
+          record,
+          createLifecycleTimelineItem({
+            counts: {
+              followUp: event.followUp.length,
+              steering: event.steering.length,
+            },
+            event: 'queue_update',
+            label: 'queue update',
+            status: event.followUp.length + event.steering.length > 0 ? 'queued' : 'completed',
+          }),
+        )
+        break
+
+      case 'compaction_start':
+      case 'compaction_end':
+      case 'auto_retry_start':
+      case 'auto_retry_end':
+        this.addTimelineItem(
+          record,
+          createLifecycleTimelineItem({
+            detail: 'errorMessage' in event ? event.errorMessage : undefined,
+            event: event.type,
+            label: formatSdkLifecycleLabel(event),
+            status: event.type.endsWith('_start')
+              ? 'running'
+              : 'success' in event && event.success === false
+                ? 'error'
+                : 'completed',
+          }),
+        )
+        break
+    }
+  }
+
+  private emitNormalizedUnknownMessage(
+    record: AgentSessionRecord,
+    message: unknown,
+    isStreaming: boolean,
+  ) {
+    const normalizedMessage = normalizeUnknownAgentMessage(
+      record.summary.id,
+      record.activeAssistantMessageId,
+      message,
+      isStreaming,
+    )
+
+    if (!normalizedMessage) {
+      return
+    }
+
+    record.messages = upsertNormalizedMessage(record.messages, normalizedMessage)
+    this.emit({
+      message: normalizedMessage,
+      sessionId: record.summary.id,
+      type: 'message',
+    })
+    this.addMessageTimelineItems(record, normalizedMessage)
+  }
+
+  private addMessageTimelineItems(record: AgentSessionRecord, message: AgentMessage) {
+    for (const item of createMessageTimelineItems(message)) {
+      this.addTimelineItem(record, item)
+    }
+  }
+
+  private addTimelineItem(record: AgentSessionRecord, item: AgentTimelineItem) {
+    record.timeline = upsertTimelineItem(record.timeline, item)
+    this.emit({
+      item,
+      sessionId: record.summary.id,
+      type: 'timeline',
     })
   }
 
@@ -904,6 +1606,18 @@ function collectNewToolInvocations(
   return [...toolInvocationById.values()].filter(
     (invocation) => !existingToolCallIds.has(invocation.toolCallId),
   )
+}
+
+function formatSessionListItem(session: SessionInfo): AgentSessionListItem {
+  return {
+    createdAt: session.created.toISOString(),
+    id: session.id,
+    messageCount: session.messageCount,
+    modifiedAt: session.modified.toISOString(),
+    name: session.name,
+    path: session.path,
+    preview: session.firstMessage || session.allMessagesText.slice(0, 160),
+  }
 }
 
 function createLayoutQueryTools(
@@ -1222,6 +1936,119 @@ function normalizeAgentMessage(
     blocks,
     createdAt: new Date(message.timestamp ?? Date.now()).toISOString(),
     isStreaming,
+  }
+}
+
+function normalizeStoredSessionMessages(sessionId: string, messages: unknown[]) {
+  return messages
+    .map((message, index) =>
+      normalizeUnknownAgentMessage(sessionId, null, message, false, index),
+    )
+    .filter((message): message is AgentMessage => Boolean(message))
+}
+
+function normalizeUnknownAgentMessage(
+  sessionId: string,
+  activeAssistantMessageId: string | null,
+  rawMessage: unknown,
+  isStreaming: boolean,
+  index = 0,
+): AgentMessage | null {
+  if (!rawMessage || typeof rawMessage !== 'object') {
+    return null
+  }
+
+  const message = rawMessage as {
+    content?: unknown
+    role?: string
+    timestamp?: number
+  }
+  const role =
+    message.role === 'user' ||
+    message.role === 'assistant' ||
+    message.role === 'tool' ||
+    message.role === 'toolResult'
+      ? message.role
+      : null
+
+  if (!role) {
+    return null
+  }
+
+  const normalizedRole: AgentMessage['role'] =
+    role === 'tool' || role === 'toolResult' ? 'tool' : role
+  const createdAt = new Date(message.timestamp ?? Date.now()).toISOString()
+  const id =
+    normalizedRole === 'assistant'
+      ? activeAssistantMessageId ?? `agent-message:${sessionId}:assistant:${index}`
+      : `agent-message:${sessionId}:${normalizedRole}:${message.timestamp ?? index}`
+  const blocks = normalizeMessageBlocks(message.content)
+
+  return {
+    blocks,
+    createdAt,
+    id,
+    isStreaming,
+    role: normalizedRole,
+  }
+}
+
+function normalizeMessageBlocks(content: unknown): AgentMessage['blocks'] {
+  if (typeof content === 'string') {
+    return [{ kind: 'text', text: content }]
+  }
+
+  if (!Array.isArray(content)) {
+    return []
+  }
+
+  return content.reduce<AgentMessage['blocks']>((result, block) => {
+    if (!block || typeof block !== 'object') {
+      return result
+    }
+
+    const typedBlock = block as {
+      text?: unknown
+      thinking?: unknown
+      type?: unknown
+    }
+
+    if (typedBlock.type === 'text' && typeof typedBlock.text === 'string') {
+      result.push({ kind: 'text', text: typedBlock.text })
+    }
+
+    if (typedBlock.type === 'thinking' && typeof typedBlock.thinking === 'string') {
+      result.push({ kind: 'thinking', text: typedBlock.thinking })
+    }
+
+    return result
+  }, [])
+}
+
+function getAgentMessageErrorMessage(message: unknown) {
+  if (!message || typeof message !== 'object') {
+    return undefined
+  }
+
+  const errorMessage = (message as { errorMessage?: unknown }).errorMessage
+
+  return typeof errorMessage === 'string' && errorMessage.trim()
+    ? errorMessage
+    : undefined
+}
+
+function formatSdkLifecycleLabel(event: AgentSessionEvent) {
+  switch (event.type) {
+    case 'compaction_start':
+      return `compaction start · ${event.reason}`
+    case 'compaction_end':
+      return `compaction done · ${event.reason}`
+    case 'auto_retry_start':
+      return `retry ${event.attempt}/${event.maxAttempts}`
+    case 'auto_retry_end':
+      return event.success ? `retry done · ${event.attempt}` : `retry failed · ${event.attempt}`
+    default:
+      return event.type.replaceAll('_', ' ')
   }
 }
 

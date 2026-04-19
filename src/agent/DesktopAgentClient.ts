@@ -1,12 +1,16 @@
 import type {
   AgentBrokerCallbackResult,
+  AgentCompactionRequest,
   AgentBrokerCompleteRequest,
   AgentCodexImportResponse,
   AgentBrokerLoginStartResponse,
+  AgentResumeSessionRequest,
+  AgentSessionListResponse,
   AgentBrokerSessionResponse,
   AgentSettingsResponse,
   AgentSettingsUpdateRequest,
   AgentStateResponse,
+  AgentThinkingLevelRequest,
 } from '../schema/api'
 import type { AgentEvent, AgentSessionSummary } from '../schema/agent'
 import {
@@ -16,9 +20,14 @@ import {
   SEMANTICODE_AGENT_AUTH_LOGOUT_ROUTE,
   SEMANTICODE_AGENT_AUTH_SESSION_ROUTE,
   SEMANTICODE_AGENT_CANCEL_ROUTE,
+  SEMANTICODE_AGENT_COMPACT_ROUTE,
   SEMANTICODE_AGENT_MESSAGE_ROUTE,
+  SEMANTICODE_AGENT_SESSIONS_ROUTE,
+  SEMANTICODE_AGENT_SESSION_NEW_ROUTE,
+  SEMANTICODE_AGENT_SESSION_RESUME_ROUTE,
   SEMANTICODE_AGENT_SETTINGS_ROUTE,
   SEMANTICODE_AGENT_SESSION_ROUTE,
+  SEMANTICODE_AGENT_THINKING_ROUTE,
 } from '../shared/constants'
 
 interface DesktopAgentBridge {
@@ -45,8 +54,14 @@ interface DesktopAgentBridge {
             } | null
             task?: string
           }
+          mode?: 'send' | 'steer' | 'follow_up'
         },
   ) => Promise<boolean>
+  listSessions?: () => Promise<AgentSessionListResponse>
+  newSession?: () => Promise<AgentSessionSummary | null>
+  resumeSession?: (sessionFile: string) => Promise<AgentSessionSummary | null>
+  setThinkingLevel?: (thinkingLevel: NonNullable<AgentSessionSummary['thinkingLevel']>) => Promise<AgentSessionSummary | null>
+  compact?: (instructions?: string) => Promise<AgentStateResponse>
 }
 
 export interface DesktopAgentBridgeInfo {
@@ -132,6 +147,7 @@ export class DesktopAgentClient {
             } | null
             task?: string
           }
+          mode?: 'send' | 'steer' | 'follow_up'
         },
   ) {
     const bridge = this.getBridge()
@@ -152,6 +168,93 @@ export class DesktopAgentClient {
       ),
     })
     return true
+  }
+
+  async listSessions() {
+    const bridge = this.getBridge()
+
+    if (bridge?.listSessions) {
+      return bridge.listSessions()
+    }
+
+    const response = await fetch(SEMANTICODE_AGENT_SESSIONS_ROUTE, {
+      method: 'GET',
+    })
+
+    if (!response.ok) {
+      throw new Error(await getResponseErrorMessage(
+        response,
+        `Agent sessions request failed with status ${response.status}.`,
+      ))
+    }
+
+    return (await response.json()) as AgentSessionListResponse
+  }
+
+  async newSession() {
+    const bridge = this.getBridge()
+
+    if (bridge?.newSession) {
+      return bridge.newSession()
+    }
+
+    const state = await this.fetchAgentState(SEMANTICODE_AGENT_SESSION_NEW_ROUTE, {
+      method: 'POST',
+    })
+
+    return state.session
+  }
+
+  async resumeSession(sessionFile: string) {
+    const bridge = this.getBridge()
+
+    if (bridge?.resumeSession) {
+      return bridge.resumeSession(sessionFile)
+    }
+
+    const state = await this.fetchAgentState(SEMANTICODE_AGENT_SESSION_RESUME_ROUTE, {
+      body: JSON.stringify({ sessionFile } satisfies AgentResumeSessionRequest),
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      method: 'POST',
+    })
+
+    return state.session
+  }
+
+  async setThinkingLevel(thinkingLevel: NonNullable<AgentSessionSummary['thinkingLevel']>) {
+    const bridge = this.getBridge()
+
+    if (bridge?.setThinkingLevel) {
+      return bridge.setThinkingLevel(thinkingLevel)
+    }
+
+    const state = await this.fetchAgentState(SEMANTICODE_AGENT_THINKING_ROUTE, {
+      body: JSON.stringify({ thinkingLevel } satisfies AgentThinkingLevelRequest),
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      method: 'POST',
+    })
+
+    return state.session
+  }
+
+  async compact(instructions?: string) {
+    const bridge = this.getBridge()
+
+    if (bridge?.compact) {
+      return bridge.compact(instructions)
+    }
+
+    return this.fetchAgentState(SEMANTICODE_AGENT_COMPACT_ROUTE, {
+      body: JSON.stringify({ instructions } satisfies AgentCompactionRequest),
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      method: 'POST',
+    })
   }
 
   async cancel() {

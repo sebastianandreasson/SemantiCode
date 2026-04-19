@@ -145,6 +145,7 @@ void app.whenReady().then(async () => {
               } | null
               task?: string
             }
+            mode?: 'send' | 'steer' | 'follow_up'
           },
     ) => {
     if (!activeWorkspaceRootDir) {
@@ -153,17 +154,70 @@ void app.whenReady().then(async () => {
 
     const message = typeof payload === 'string' ? payload : payload.message
     const metadata = typeof payload === 'string' ? undefined : payload.metadata
+    const mode = typeof payload === 'string' ? undefined : payload.mode
 
     console.info(
       `[semanticode][agent] IPC send-message received for ${activeWorkspaceRootDir}.`,
     )
-    void piAgentService.promptWorkspaceSession(activeWorkspaceRootDir, message, metadata).catch((error) => {
+    void piAgentService.promptWorkspaceSession(activeWorkspaceRootDir, message, metadata, mode).catch((error) => {
       console.error(
         '[semanticode][agent] Background prompt failed:',
         error instanceof Error ? error.message : error,
       )
     })
     return true
+  })
+
+  ipcMain.handle('semanticode:agent:list-sessions', async () => {
+    if (!activeWorkspaceRootDir) {
+      return { sessions: [] }
+    }
+
+    return {
+      sessions: await piAgentService.listWorkspaceSessions(activeWorkspaceRootDir),
+    }
+  })
+
+  ipcMain.handle('semanticode:agent:new-session', async () => {
+    if (!activeWorkspaceRootDir) {
+      return null
+    }
+
+    return piAgentService.startNewWorkspaceSession(activeWorkspaceRootDir)
+  })
+
+  ipcMain.handle('semanticode:agent:resume-session', async (_event, sessionFile: string) => {
+    if (!activeWorkspaceRootDir || !sessionFile) {
+      return null
+    }
+
+    return piAgentService.resumeWorkspaceSession(activeWorkspaceRootDir, sessionFile)
+  })
+
+  ipcMain.handle('semanticode:agent:set-thinking-level', async (_event, thinkingLevel: string) => {
+    if (!activeWorkspaceRootDir || !isAgentThinkingLevel(thinkingLevel)) {
+      return null
+    }
+
+    return piAgentService.setWorkspaceThinkingLevel(activeWorkspaceRootDir, thinkingLevel)
+  })
+
+  ipcMain.handle('semanticode:agent:compact', async (_event, instructions?: string) => {
+    if (!activeWorkspaceRootDir) {
+      return {
+        messages: [],
+        session: null,
+        timeline: [],
+      }
+    }
+
+    const session = await piAgentService.compactWorkspaceSession(activeWorkspaceRootDir, instructions)
+
+    return {
+      messages: piAgentService.getWorkspaceMessages(activeWorkspaceRootDir),
+      session,
+      timeline: piAgentService.getWorkspaceTimeline(activeWorkspaceRootDir),
+    }
   })
 
   ipcMain.handle('semanticode:agent:cancel', async () => {
@@ -225,6 +279,11 @@ app.on('before-quit', () => {
   ipcMain.removeHandler('semanticode:set-ui-preferences')
   ipcMain.removeHandler('semanticode:agent:create-session')
   ipcMain.removeHandler('semanticode:agent:send-message')
+  ipcMain.removeHandler('semanticode:agent:list-sessions')
+  ipcMain.removeHandler('semanticode:agent:new-session')
+  ipcMain.removeHandler('semanticode:agent:resume-session')
+  ipcMain.removeHandler('semanticode:agent:set-thinking-level')
+  ipcMain.removeHandler('semanticode:agent:compact')
   ipcMain.removeHandler('semanticode:agent:cancel')
 
   if (serverHandle) {
@@ -557,4 +616,15 @@ function parseSemanticodeAction(rawUrl: string) {
   } catch {
     return null
   }
+}
+
+function isAgentThinkingLevel(value: string): value is 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' {
+  return (
+    value === 'off' ||
+    value === 'minimal' ||
+    value === 'low' ||
+    value === 'medium' ||
+    value === 'high' ||
+    value === 'xhigh'
+  )
 }

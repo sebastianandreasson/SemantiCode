@@ -9,17 +9,26 @@ import {
   SEMANTICODE_AGENT_AUTH_LOGOUT_ROUTE,
   SEMANTICODE_AGENT_AUTH_SESSION_ROUTE,
   SEMANTICODE_AGENT_CANCEL_ROUTE,
+  SEMANTICODE_AGENT_COMPACT_ROUTE,
   SEMANTICODE_AGENT_MESSAGE_ROUTE,
+  SEMANTICODE_AGENT_SESSIONS_ROUTE,
+  SEMANTICODE_AGENT_SESSION_NEW_ROUTE,
+  SEMANTICODE_AGENT_SESSION_RESUME_ROUTE,
   SEMANTICODE_AGENT_SETTINGS_ROUTE,
   SEMANTICODE_AGENT_SESSION_ROUTE,
+  SEMANTICODE_AGENT_THINKING_ROUTE,
 } from '../../shared/constants'
 import type {
+  AgentCompactionRequest,
+  AgentResumeSessionRequest,
   AgentBrokerCompleteRequest,
   AgentBrokerSessionResponse,
   AgentPromptRequest,
+  AgentSessionListResponse,
   AgentSettingsResponse,
   AgentSettingsUpdateRequest,
   AgentStateResponse,
+  AgentThinkingLevelRequest,
 } from '../../types'
 import type { SemanticodeRequestHandlerOptions } from './types'
 import {
@@ -65,6 +74,7 @@ export async function handleAgentRoute(
       const state: AgentStateResponse = {
         session: options.agentRuntime.getWorkspaceSessionSummary(options.rootDir),
         messages: options.agentRuntime.getWorkspaceMessages(options.rootDir),
+        timeline: options.agentRuntime.getWorkspaceTimeline(options.rootDir),
       }
 
       sendJson(response, 200, state)
@@ -76,6 +86,7 @@ export async function handleAgentRoute(
       const state: AgentStateResponse = {
         session,
         messages: options.agentRuntime.getWorkspaceMessages(options.rootDir),
+        timeline: options.agentRuntime.getWorkspaceTimeline(options.rootDir),
       }
 
       sendJson(response, 200, state)
@@ -98,6 +109,7 @@ export async function handleAgentRoute(
       options.rootDir,
       payload.message,
       payload.metadata,
+      payload.mode,
     ).catch((error) => {
       console.error(
         '[semanticode][agent] Background prompt failed:',
@@ -107,6 +119,7 @@ export async function handleAgentRoute(
     const state: AgentStateResponse = {
       session: options.agentRuntime.getWorkspaceSessionSummary(options.rootDir),
       messages: options.agentRuntime.getWorkspaceMessages(options.rootDir),
+      timeline: options.agentRuntime.getWorkspaceTimeline(options.rootDir),
     }
 
     sendJson(response, 200, state)
@@ -118,6 +131,100 @@ export async function handleAgentRoute(
     const state: AgentStateResponse = {
       session: options.agentRuntime.getWorkspaceSessionSummary(options.rootDir),
       messages: options.agentRuntime.getWorkspaceMessages(options.rootDir),
+      timeline: options.agentRuntime.getWorkspaceTimeline(options.rootDir),
+    }
+
+    sendJson(response, 200, state)
+    return true
+  }
+
+  if (pathname === SEMANTICODE_AGENT_SESSIONS_ROUTE && method === 'GET') {
+    const result: AgentSessionListResponse = {
+      sessions: await options.agentRuntime.listWorkspaceSessions(options.rootDir),
+    }
+
+    sendJson(response, 200, result)
+    return true
+  }
+
+  if (pathname === SEMANTICODE_AGENT_SESSION_NEW_ROUTE && method === 'POST') {
+    const session = await options.agentRuntime.startNewWorkspaceSession(options.rootDir)
+    const state: AgentStateResponse = {
+      session,
+      messages: options.agentRuntime.getWorkspaceMessages(options.rootDir),
+      timeline: options.agentRuntime.getWorkspaceTimeline(options.rootDir),
+    }
+
+    sendJson(response, 200, state)
+    return true
+  }
+
+  if (pathname === SEMANTICODE_AGENT_SESSION_RESUME_ROUTE && method === 'POST') {
+    const payload = await readJsonBody<AgentResumeSessionRequest>(request)
+
+    if (!payload?.sessionFile?.trim()) {
+      sendJson(response, 400, {
+        message: 'A session file is required.',
+      })
+      return true
+    }
+
+    const session = await options.agentRuntime.resumeWorkspaceSession(
+      options.rootDir,
+      payload.sessionFile,
+    )
+    const state: AgentStateResponse = {
+      session,
+      messages: options.agentRuntime.getWorkspaceMessages(options.rootDir),
+      timeline: options.agentRuntime.getWorkspaceTimeline(options.rootDir),
+    }
+
+    sendJson(response, 200, state)
+    return true
+  }
+
+  if (pathname === SEMANTICODE_AGENT_THINKING_ROUTE && method === 'POST') {
+    const payload = await readJsonBody<AgentThinkingLevelRequest>(request)
+    const thinkingLevel = payload?.thinkingLevel
+
+    if (
+      thinkingLevel !== 'off' &&
+      thinkingLevel !== 'minimal' &&
+      thinkingLevel !== 'low' &&
+      thinkingLevel !== 'medium' &&
+      thinkingLevel !== 'high' &&
+      thinkingLevel !== 'xhigh'
+    ) {
+      sendJson(response, 400, {
+        message: 'A valid thinking level is required.',
+      })
+      return true
+    }
+
+    const session = await options.agentRuntime.setWorkspaceThinkingLevel(
+      options.rootDir,
+      thinkingLevel,
+    )
+    const state: AgentStateResponse = {
+      session,
+      messages: options.agentRuntime.getWorkspaceMessages(options.rootDir),
+      timeline: options.agentRuntime.getWorkspaceTimeline(options.rootDir),
+    }
+
+    sendJson(response, 200, state)
+    return true
+  }
+
+  if (pathname === SEMANTICODE_AGENT_COMPACT_ROUTE && method === 'POST') {
+    const payload = await readJsonBody<AgentCompactionRequest>(request)
+    const session = await options.agentRuntime.compactWorkspaceSession(
+      options.rootDir,
+      payload?.instructions,
+    )
+    const state: AgentStateResponse = {
+      session,
+      messages: options.agentRuntime.getWorkspaceMessages(options.rootDir),
+      timeline: options.agentRuntime.getWorkspaceTimeline(options.rootDir),
     }
 
     sendJson(response, 200, state)

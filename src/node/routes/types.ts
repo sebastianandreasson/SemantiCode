@@ -10,6 +10,7 @@ import type {
   AgentSettingsResponse,
   AgentSettingsUpdateRequest,
   AgentStateResponse,
+  AgentSessionListItem,
   LayoutSuggestionPayload,
   LayoutSuggestionResponse,
   AgentHeatSample,
@@ -34,7 +35,10 @@ export interface AgentRuntimeRequestBridge {
   getSettings: () => Promise<AgentSettingsResponse['settings']>
   getWorkspaceMessages: (workspaceRootDir: string) => AgentStateResponse['messages']
   getWorkspaceSessionSummary: (workspaceRootDir: string) => AgentStateResponse['session']
+  getWorkspaceTimeline: (workspaceRootDir: string) => AgentStateResponse['timeline']
+  listWorkspaceSessions: (workspaceRootDir: string) => Promise<AgentSessionListItem[]>
   logoutBrokeredAuthSession: () => Promise<AgentBrokerSessionResponse['brokerSession']>
+  compactWorkspaceSession: (workspaceRootDir: string, instructions?: string) => Promise<AgentStateResponse['session']>
   promptWorkspaceSession: (
     workspaceRootDir: string,
     message: string,
@@ -44,7 +48,14 @@ export interface AgentRuntimeRequestBridge {
       scope?: AutonomousRunScope | null
       task?: string
     },
+    mode?: 'send' | 'steer' | 'follow_up',
   ) => Promise<void>
+  resumeWorkspaceSession: (workspaceRootDir: string, sessionFile: string) => Promise<AgentStateResponse['session']>
+  setWorkspaceThinkingLevel: (
+    workspaceRootDir: string,
+    thinkingLevel: NonNullable<NonNullable<AgentStateResponse['session']>['thinkingLevel']>,
+  ) => Promise<AgentStateResponse['session']>
+  startNewWorkspaceSession: (workspaceRootDir: string) => Promise<AgentStateResponse['session']>
   suggestLayout: (
     workspaceRootDir: string,
     input: LayoutSuggestionPayload,

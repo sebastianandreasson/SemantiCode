@@ -372,8 +372,8 @@ export class CodexCliTransport implements AgentTransport {
 
         stream.push({
           type: 'tool_execution_end',
-          isError: false,
-          result: '',
+          isError: Boolean(action.isError),
+          result: formatCodexToolResult(action.result),
           toolCallId: existingInvocation.toolCallId,
           toolName: existingInvocation.toolName,
         })
@@ -669,4 +669,20 @@ function buildCodexExitError(activeRunState: ActiveCodexRunState, exitCode: numb
   }
 
   return `Codex CLI exited with status ${exitCode}.`
+}
+
+function formatCodexToolResult(result: unknown) {
+  if (result === undefined || result === null) {
+    return ''
+  }
+
+  if (typeof result === 'string') {
+    return result
+  }
+
+  try {
+    return JSON.stringify(result)
+  } catch {
+    return String(result)
+  }
 }

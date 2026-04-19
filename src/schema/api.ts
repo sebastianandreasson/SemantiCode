@@ -21,9 +21,11 @@ import type {
 import type {
   AgentBrokerSessionSummary,
   AgentMessage,
+  AgentSessionListItem,
   AgentSessionSummary,
   AgentSettingsInput,
   AgentSettingsState,
+  AgentTimelineItem,
 } from './agent'
 import type { UiPreferences } from './store'
 import type {
@@ -179,6 +181,7 @@ export interface GraphNeighborsResponse {
 export interface AgentStateResponse {
   session: AgentSessionSummary | null
   messages: AgentMessage[]
+  timeline: AgentTimelineItem[]
 }
 
 export interface AgentPromptRequest {
@@ -189,6 +192,23 @@ export interface AgentPromptRequest {
     scope?: AutonomousRunScope | null
     task?: string
   }
+  mode?: 'send' | 'steer' | 'follow_up'
+}
+
+export interface AgentResumeSessionRequest {
+  sessionFile: string
+}
+
+export interface AgentThinkingLevelRequest {
+  thinkingLevel: NonNullable<AgentSessionSummary['thinkingLevel']>
+}
+
+export interface AgentCompactionRequest {
+  instructions?: string
+}
+
+export interface AgentSessionListResponse {
+  sessions: AgentSessionListItem[]
 }
 
 export interface AgentSettingsResponse {

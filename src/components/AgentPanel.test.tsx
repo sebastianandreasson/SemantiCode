@@ -1,9 +1,9 @@
 import { act } from 'react'
-import { render, screen, waitFor } from '@testing-library/react'
+import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { AgentSessionSummary, AgentSettingsState } from '../schema/agent'
+import type { AgentEvent, AgentSessionSummary, AgentSettingsState } from '../schema/agent'
 
 const bridgeInfo = {
   hasAgentBridge: false,
@@ -76,6 +76,11 @@ describe('AgentPanel OAuth reconciliation', () => {
     })
   })
 
+  afterEach(() => {
+    cleanup()
+    vi.useRealTimers()
+  })
+
   it('recreates the session after polled OAuth completion and enables sending', async () => {
     const signedOutSettings = buildSettings({ brokerState: 'signed_out' })
     const authenticatedSettings = buildSettings({
@@ -105,8 +110,8 @@ describe('AgentPanel OAuth reconciliation', () => {
     mockClient.getHttpState.mockImplementation(async () => {
       httpStateCallCount += 1
       return httpStateCallCount === 1
-        ? { messages: [], session: disabledSession }
-        : { messages: [], session: readySession }
+        ? { messages: [], session: disabledSession, timeline: [] }
+        : { messages: [], session: readySession, timeline: [] }
     })
 
     mockClient.createSession
@@ -121,11 +126,11 @@ describe('AgentPanel OAuth reconciliation', () => {
     })
 
     await waitFor(() => {
-      expect(screen.getByText('ready')).not.toBeNull()
+      expect(screen.getAllByText('ready').length).toBeGreaterThan(0)
     })
 
     const sendButton = screen.getByRole('button', { name: 'Send' })
-    const composer = screen.getByPlaceholderText('Ask about this repository or request a change…')
+    const composer = screen.getByRole('textbox')
 
     expect(mockClient.createSession.mock.calls.length).toBeGreaterThanOrEqual(2)
     expect(sendButton.hasAttribute('disabled')).toBe(true)
@@ -153,8 +158,8 @@ describe('AgentPanel OAuth reconciliation', () => {
 
     mockClient.getSettings.mockResolvedValue(authenticatedSettings)
     mockClient.getHttpState
-      .mockResolvedValueOnce({ messages: [], session: readySession })
-      .mockResolvedValueOnce({ messages: [], session: refreshedSession })
+      .mockResolvedValueOnce({ messages: [], session: readySession, timeline: [] })
+      .mockResolvedValueOnce({ messages: [], session: refreshedSession, timeline: [] })
     mockClient.createSession
       .mockResolvedValueOnce(readySession)
       .mockResolvedValueOnce(refreshedSession)
@@ -173,7 +178,7 @@ describe('AgentPanel OAuth reconciliation', () => {
     render(<AgentPanel desktopHostAvailable settingsOnly />)
 
     await waitFor(() => {
-      expect(screen.getByText('ready')).not.toBeNull()
+      expect(screen.getAllByText('ready').length).toBeGreaterThan(0)
     })
 
     const modelSelect = screen.getByLabelText('Model')
@@ -194,6 +199,76 @@ describe('AgentPanel OAuth reconciliation', () => {
         }),
       )
     })
+  })
+
+  it('renders timeline rows and keeps live tool events visible', async () => {
+    const readySession = buildSession({
+      accountLabel: 'tester@example.com',
+      brokerState: 'authenticated',
+      id: 'session-ready',
+      runState: 'ready',
+    })
+    let listener: ((event: AgentEvent) => void) | null = null
+
+    mockClient.getBridgeInfo.mockReturnValue({
+      hasAgentBridge: true,
+      hasDesktopHost: true,
+    })
+    mockClient.subscribe.mockImplementation((nextListener) => {
+      listener = nextListener
+      return () => undefined
+    })
+    mockClient.getSettings.mockResolvedValue(buildSettings({
+      accountLabel: 'tester@example.com',
+      brokerState: 'authenticated',
+    }))
+    mockClient.getHttpState.mockResolvedValue({
+      messages: [],
+      session: readySession,
+      timeline: [
+        {
+          blockKind: 'text',
+          createdAt: '2026-04-15T00:00:00.000Z',
+          id: 'timeline:user',
+          messageId: 'message:user',
+          role: 'user',
+          text: 'Change the panel',
+          type: 'message',
+        },
+        {
+          createdAt: '2026-04-15T00:00:01.000Z',
+          event: 'turn_start',
+          id: 'timeline:turn',
+          label: 'turn start',
+          status: 'running',
+          type: 'lifecycle',
+        },
+      ],
+    })
+
+    render(<AgentPanel desktopHostAvailable />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Change the panel')).not.toBeNull()
+    })
+    await waitFor(() => {
+      expect(listener).not.toBeNull()
+    })
+
+    await act(async () => {
+      listener?.({
+        invocation: {
+          args: { path: 'src/App.tsx' },
+          startedAt: '2026-04-15T00:00:02.000Z',
+          toolCallId: 'call-1',
+          toolName: 'read',
+        },
+        sessionId: readySession.id,
+        type: 'tool',
+      })
+    })
+
+    expect(screen.getByText('tool read src/App.tsx')).not.toBeNull()
   })
 })
 

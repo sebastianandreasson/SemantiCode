@@ -95,7 +95,9 @@ describe('parseCodexLineActions', () => {
     })
     expect(endActions).toEqual([
       {
+        isError: false,
         kind: 'tool_call_end',
+        result: undefined,
         toolCallId: 'call-1',
       },
     ])

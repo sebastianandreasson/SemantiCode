@@ -243,18 +243,22 @@ export function useSemanticSearchController({
 
   useEffect(() => {
     if (!semanticSearchAvailable) {
-      setSemanticSearchPending(false)
-      setSemanticSearchError(null)
-      setSemanticSearchRankedMatches([])
+      setSemanticSearchPending((pending) => (pending ? false : pending))
+      setSemanticSearchError((error) => (error !== null ? null : error))
+      setSemanticSearchRankedMatches((matches) =>
+        matches.length > 0 ? [] : matches,
+      )
       return
     }
 
     const trimmedQuery = semanticSearchQuery.trim()
 
     if (trimmedQuery.length < SEMANTIC_SEARCH_MIN_QUERY_LENGTH) {
-      setSemanticSearchPending(false)
-      setSemanticSearchError(null)
-      setSemanticSearchRankedMatches([])
+      setSemanticSearchPending((pending) => (pending ? false : pending))
+      setSemanticSearchError((error) => (error !== null ? null : error))
+      setSemanticSearchRankedMatches((matches) =>
+        matches.length > 0 ? [] : matches,
+      )
       return
     }
 
@@ -312,7 +316,9 @@ export function useSemanticSearchController({
             return
           }
 
-          setSemanticSearchRankedMatches([])
+          setSemanticSearchRankedMatches((matches) =>
+            matches.length > 0 ? [] : matches,
+          )
           setSemanticSearchError(
             error instanceof Error ? error.message : 'Semantic search failed.',
           )

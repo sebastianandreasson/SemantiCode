@@ -277,5 +277,7 @@ describe('PiAgentService brokered oauth integration', () => {
         }),
       ]),
     )
+
+    await service.disposeWorkspaceSession(workspaceRootDir)
   })
 })

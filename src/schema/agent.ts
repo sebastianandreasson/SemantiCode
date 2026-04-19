@@ -32,6 +32,13 @@ export interface AgentSessionSummary {
   runState: AgentRunState
   bootPromptEnabled: boolean
   hasProviderApiKey: boolean
+  thinkingLevel?: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+  sessionFile?: string
+  sessionName?: string
+  queue?: {
+    followUp: number
+    steering: number
+  }
   lastError?: string
 }
 
@@ -55,6 +62,70 @@ export interface AgentToolInvocation {
   startedAt: string
   endedAt?: string
   isError?: boolean
+  paths?: string[]
+  resultPreview?: string
+}
+
+export type AgentTimelineItem =
+  | {
+      id: string
+      type: 'message'
+      messageId: string
+      role: AgentMessage['role']
+      blockKind: AgentMessageBlock['kind']
+      text: string
+      createdAt: string
+      isStreaming?: boolean
+    }
+  | {
+      id: string
+      type: 'tool'
+      toolCallId: string
+      toolName: string
+      args: unknown
+      createdAt: string
+      startedAt: string
+      endedAt?: string
+      durationMs?: number
+      isError?: boolean
+      paths?: string[]
+      resultPreview?: string
+      status: 'running' | 'completed' | 'error'
+    }
+  | {
+      id: string
+      type: 'lifecycle'
+      event:
+        | 'session_created'
+        | 'session_updated'
+        | 'agent_start'
+        | 'turn_start'
+        | 'turn_end'
+        | 'message_start'
+        | 'message_end'
+        | 'agent_end'
+        | 'queue_update'
+        | 'compaction_start'
+        | 'compaction_end'
+        | 'auto_retry_start'
+        | 'auto_retry_end'
+        | 'cancelled'
+        | 'error'
+      label: string
+      createdAt: string
+      detail?: string
+      status?: 'running' | 'completed' | 'error' | 'queued'
+      counts?: Record<string, number>
+    }
+
+export interface AgentSessionListItem {
+  createdAt: string
+  id: string
+  messageCount: number
+  modifiedAt: string
+  name?: string
+  path: string
+  preview: string
 }
 
 export interface AgentPermissionRequest {
@@ -121,6 +192,11 @@ export type AgentEvent =
       type: 'tool'
       sessionId: string
       invocation: AgentToolInvocation
+    }
+  | {
+      type: 'timeline'
+      sessionId: string
+      item: AgentTimelineItem
     }
   | {
       type: 'permission_request'

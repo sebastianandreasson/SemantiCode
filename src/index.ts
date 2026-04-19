@@ -12,11 +12,16 @@ export {
 } from './store/visualizerStore'
 export type {
   AgentEvent,
+  AgentCompactionRequest,
   AgentMessage,
   AgentMessageBlock,
   AgentPermissionRequest,
   AgentRunState,
+  AgentSessionListItem,
+  AgentSessionListResponse,
   AgentSessionSummary,
+  AgentThinkingLevelRequest,
+  AgentTimelineItem,
   AgentToolInvocation,
   AnalysisFact,
   AnalysisState,

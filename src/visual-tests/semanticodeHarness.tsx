@@ -11,6 +11,7 @@ import type {
   AgentMessage,
   AgentSettingsState,
   AgentSessionSummary,
+  AgentTimelineItem,
   AutonomousRunDetail,
   AutonomousRunSummary,
   AutonomousRunTimelinePoint,
@@ -602,7 +603,13 @@ const agentSession: AgentSessionSummary = {
   id: 'visual-agent-session',
   modelId: 'gpt-5.4',
   provider: 'openai',
+  queue: {
+    followUp: 1,
+    steering: 0,
+  },
   runState: 'ready',
+  sessionName: 'visual-fixture',
+  thinkingLevel: 'medium',
   transport: 'codex_cli',
   updatedAt: generatedAt,
   workspaceRootDir: rootDir,
@@ -619,6 +626,61 @@ const agentMessages: AgentMessage[] = [
     createdAt: generatedAt,
     id: 'message-assistant',
     role: 'assistant',
+  },
+]
+
+const agentTimeline: AgentTimelineItem[] = [
+  {
+    blockKind: 'text',
+    createdAt: generatedAt,
+    id: 'timeline-user',
+    messageId: 'message-user',
+    role: 'user',
+    text: 'Tighten the bottom chat into a pi-style terminal surface.',
+    type: 'message',
+  },
+  {
+    args: { path: 'src/components/AgentPanel.tsx' },
+    createdAt: generatedAt,
+    durationMs: 42,
+    endedAt: generatedAt,
+    id: 'timeline-tool-read',
+    paths: ['src/components/AgentPanel.tsx'],
+    resultPreview: 'read 218 lines',
+    startedAt: generatedAt,
+    status: 'completed',
+    toolCallId: 'tool-read',
+    toolName: 'read',
+    type: 'tool',
+  },
+  {
+    args: { command: 'npm run test' },
+    createdAt: generatedAt,
+    id: 'timeline-tool-shell',
+    paths: ['npm run test'],
+    startedAt: generatedAt,
+    status: 'running',
+    toolCallId: 'tool-shell',
+    toolName: 'bash',
+    type: 'tool',
+  },
+  {
+    blockKind: 'text',
+    createdAt: generatedAt,
+    id: 'timeline-assistant',
+    messageId: 'message-assistant',
+    role: 'assistant',
+    text: 'I am tracking the dashboard component and API client in the visual smoke fixture.',
+    type: 'message',
+  },
+  {
+    counts: { actions: 7 },
+    createdAt: generatedAt,
+    event: 'turn_end',
+    id: 'timeline-turn-done',
+    label: 'turn done',
+    status: 'completed',
+    type: 'lifecycle',
   },
 ]
 
@@ -845,15 +907,43 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   }
 
   if (path === '/__semanticode/agent/session') {
-    return jsonResponse({ messages: agentMessages, session: agentSession })
+    return jsonResponse({ messages: agentMessages, session: agentSession, timeline: agentTimeline })
   }
 
   if (path === '/__semanticode/agent/message') {
-    return jsonResponse({ messages: agentMessages, session: agentSession })
+    return jsonResponse({ messages: agentMessages, session: agentSession, timeline: agentTimeline })
   }
 
   if (path === '/__semanticode/agent/cancel') {
-    return jsonResponse({ messages: agentMessages, session: agentSession })
+    return jsonResponse({ messages: agentMessages, session: agentSession, timeline: agentTimeline })
+  }
+
+  if (path === '/__semanticode/agent/thinking') {
+    return jsonResponse({ messages: agentMessages, session: agentSession, timeline: agentTimeline })
+  }
+
+  if (path === '/__semanticode/agent/compact') {
+    return jsonResponse({ messages: agentMessages, session: agentSession, timeline: agentTimeline })
+  }
+
+  if (path === '/__semanticode/agent/sessions') {
+    return jsonResponse({
+      sessions: [
+        {
+          createdAt: generatedAt,
+          id: 'visual-agent-session',
+          messageCount: agentMessages.length,
+          modifiedAt: generatedAt,
+          name: 'visual-fixture',
+          path: '/tmp/visual-agent-session.jsonl',
+          preview: 'Tighten the bottom chat into a pi-style terminal surface.',
+        },
+      ],
+    })
+  }
+
+  if (path === '/__semanticode/agent/session/new' || path === '/__semanticode/agent/session/resume') {
+    return jsonResponse({ messages: agentMessages, session: agentSession, timeline: agentTimeline })
   }
 
   if (path === '/__semanticode/agent/settings') {
