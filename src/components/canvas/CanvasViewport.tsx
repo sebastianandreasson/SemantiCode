@@ -44,6 +44,36 @@ const SYMBOL_LEGEND_ITEMS = [
   { label: 'Variable', kindClass: 'variable' },
 ] as const
 
+const MINIMAP_NODE_COLORS: Record<string, string> = {
+  annotation: 'oklch(0.58 0.02 260)',
+  class: 'oklch(0.72 0.15 15)',
+  component: 'oklch(0.74 0.14 300)',
+  constant: 'oklch(0.74 0.13 145)',
+  directory: 'oklch(0.56 0.04 260)',
+  file: 'oklch(0.62 0.05 220)',
+  function: 'oklch(0.74 0.14 240)',
+  group: 'oklch(0.68 0.09 64)',
+  hook: 'oklch(0.74 0.13 180)',
+  module: 'oklch(0.72 0.05 260)',
+  type: 'oklch(0.76 0.14 75)',
+  variable: 'oklch(0.75 0.08 210)',
+} as const
+
+const MINIMAP_NODE_COLORS_LIGHT: Record<string, string> = {
+  annotation: 'oklch(0.68 0.02 260)',
+  class: 'oklch(0.62 0.16 15)',
+  component: 'oklch(0.58 0.16 300)',
+  constant: 'oklch(0.58 0.14 145)',
+  directory: 'oklch(0.62 0.04 260)',
+  file: 'oklch(0.56 0.07 220)',
+  function: 'oklch(0.56 0.16 240)',
+  group: 'oklch(0.6 0.12 64)',
+  hook: 'oklch(0.56 0.14 180)',
+  module: 'oklch(0.6 0.05 260)',
+  type: 'oklch(0.58 0.15 75)',
+  variable: 'oklch(0.58 0.08 210)',
+} as const
+
 interface CanvasViewportProps {
   agentHeatDebugOpen: boolean
   agentHeatDebugState: FollowDebugState
@@ -166,24 +196,38 @@ export const CanvasViewport = memo(function CanvasViewport({
       node.data && typeof node.data === 'object'
         ? (node.data as Record<string, unknown>)
         : null
+    const palette =
+      themeMode === 'dark' ? MINIMAP_NODE_COLORS : MINIMAP_NODE_COLORS_LIGHT
 
     if (node.type === 'annotationNode') {
-      return themeMode === 'dark' ? '#5c6573' : '#c7bda9'
+      return palette.annotation
     }
 
     if (data?.groupContainer) {
-      return themeMode === 'dark' ? '#5a5249' : '#cab790'
+      return palette.group
     }
 
     if (data?.container) {
-      return themeMode === 'dark' ? '#4a5667' : '#d2c5b2'
+      return palette.directory
     }
 
     if (node.type === 'symbolNode') {
-      return themeMode === 'dark' ? '#57a395' : '#8fb7ac'
+      const kindClass =
+        typeof data?.kindClass === 'string' ? data.kindClass : null
+      const kind = typeof data?.kind === 'string' ? data.kind : null
+
+      return palette[kindClass ?? kind ?? 'module'] ?? palette.module
     }
 
-    return themeMode === 'dark' ? '#667487' : '#b7ac9e'
+    if (data?.kind === 'directory') {
+      return palette.directory
+    }
+
+    if (data?.kind === 'file') {
+      return palette.file
+    }
+
+    return palette.module
   }
 
   return (
