@@ -35,6 +35,13 @@ export type FlowEdgeData = Record<string, unknown> & {
   highlighted?: boolean
 }
 
+const DEFAULT_CALL_EDGE_RENDER_LIMIT = 700
+
+export interface FlowModelOptions {
+  callEdgeRenderLimit?: number
+  selectedNodeIds?: Set<string>
+}
+
 export interface GraphSummary {
   incoming: number
   outgoing: number
@@ -216,6 +223,7 @@ export function buildFlowModel(
   layoutGroupContainers: Map<string, LayoutGroupContainer>,
   collapsedDirectoryIds: Set<string>,
   toggleCollapsedDirectory: (nodeId: string) => void,
+  options: FlowModelOptions = {},
 ) {
   const hiddenNodeIds = new Set(layout.hiddenNodeIds)
   const hiddenFilesystemDescendantIds =
@@ -345,19 +353,25 @@ export function buildFlowModel(
   }
 
   if (graphLayers.calls) {
+    const callEdges = viewMode === 'symbols'
+      ? aggregateSymbolEdges(
+          snapshot,
+          'calls',
+          visibleNodeIds,
+          symbolClusterState,
+          expandedClusterIds,
+        )
+      : aggregateFileEdges(snapshot, 'calls').filter(
+          (edge) =>
+            visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target),
+        )
+
     edges.push(
-      ...(viewMode === 'symbols'
-        ? aggregateSymbolEdges(
-            snapshot,
-            'calls',
-            visibleNodeIds,
-            symbolClusterState,
-            expandedClusterIds,
-          )
-        : aggregateFileEdges(snapshot, 'calls').filter(
-            (edge) =>
-              visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target),
-          )),
+      ...prioritizeCallEdgesForRendering(
+        callEdges,
+        options.selectedNodeIds ?? new Set(),
+        options.callEdgeRenderLimit ?? DEFAULT_CALL_EDGE_RENDER_LIMIT,
+      ),
     )
   }
 
@@ -886,7 +900,8 @@ function buildFlowEdge(
       dimmed: false,
       highlighted: false,
     },
-    animated: kind !== 'contains',
+    animated: false,
+    interactionWidth: kind === 'calls' ? 8 : 16,
     markerEnd: {
       type: MarkerType.ArrowClosed,
       color: stroke,
@@ -930,14 +945,14 @@ function aggregateFileEdges(
           kind,
           count: nextCount,
         },
-        label: `${nextCount} calls`,
+        label: formatCallEdgeLabel(nextCount),
       })
       continue
     }
 
     edges.set(
       key,
-      buildFlowEdge(key, kind, sourceFileId, targetFileId, '1 call', {
+      buildFlowEdge(key, kind, sourceFileId, targetFileId, undefined, {
         kind,
         count: 1,
       }),
@@ -1011,7 +1026,7 @@ function aggregateSymbolEdges(
         kind,
         count: nextCount,
       },
-      label: `${nextCount} calls`,
+      label: formatCallEdgeLabel(nextCount),
     })
   }
 
@@ -1024,9 +1039,51 @@ function aggregateSymbolEdges(
 
     return {
       ...edge,
-      label: count > 1 ? `${count} calls` : '1 call',
+      label: formatCallEdgeLabel(count),
     }
   })
+}
+
+function formatCallEdgeLabel(count: number) {
+  return count > 1 ? `${count} calls` : undefined
+}
+
+function prioritizeCallEdgesForRendering(
+  edges: Edge[],
+  selectedNodeIds: Set<string>,
+  limit: number,
+) {
+  if (edges.length <= limit) {
+    return edges
+  }
+
+  return [...edges]
+    .sort((left, right) => {
+      const leftSelectedRank = isEdgeConnectedToSelection(left, selectedNodeIds) ? 0 : 1
+      const rightSelectedRank = isEdgeConnectedToSelection(right, selectedNodeIds) ? 0 : 1
+
+      if (leftSelectedRank !== rightSelectedRank) {
+        return leftSelectedRank - rightSelectedRank
+      }
+
+      const leftCount = getFlowEdgeData(left)?.count ?? 1
+      const rightCount = getFlowEdgeData(right)?.count ?? 1
+
+      if (leftCount !== rightCount) {
+        return rightCount - leftCount
+      }
+
+      return left.id.localeCompare(right.id)
+    })
+    .slice(0, limit)
+}
+
+function isEdgeConnectedToSelection(edge: Edge, selectedNodeIds: Set<string>) {
+  if (selectedNodeIds.size === 0) {
+    return false
+  }
+
+  return selectedNodeIds.has(edge.source) || selectedNodeIds.has(edge.target)
 }
 
 function getVisibleSymbolEdgeEndpoint(

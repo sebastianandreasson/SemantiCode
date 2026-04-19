@@ -182,6 +182,9 @@ export function useCanvasGraphController({
       layoutGroupContainers,
       collapsedDirectoryIdSet,
       toggleCollapsedDirectory,
+      {
+        selectedNodeIds: selectedNodeIdSet,
+      },
     )
   }, [
     collapsedDirectoryIdSet,
@@ -191,6 +194,7 @@ export function useCanvasGraphController({
     graphLayers,
     layoutGroupContainers,
     resolvedScene,
+    selectedNodeIdSet,
     snapshotOrNull,
     symbolClusterState,
     toggleCollapsedDirectory,
