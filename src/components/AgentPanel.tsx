@@ -1671,6 +1671,9 @@ function handleAgentEvent(
     case 'tool':
       break
 
+    case 'file_operation':
+      break
+
     case 'timeline':
       break
 

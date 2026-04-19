@@ -78,6 +78,7 @@ export async function handleAgentRoute(
   if (pathname === SEMANTICODE_AGENT_SESSION_ROUTE) {
     if (method === 'GET') {
       const state: AgentStateResponse = {
+        fileOperations: options.agentRuntime.getWorkspaceFileOperations(options.rootDir),
         session: options.agentRuntime.getWorkspaceSessionSummary(options.rootDir),
         messages: options.agentRuntime.getWorkspaceMessages(options.rootDir),
         timeline: options.agentRuntime.getWorkspaceTimeline(options.rootDir),
@@ -90,6 +91,7 @@ export async function handleAgentRoute(
     if (method === 'POST') {
       const session = await options.agentRuntime.ensureWorkspaceSession(options.rootDir)
       const state: AgentStateResponse = {
+        fileOperations: options.agentRuntime.getWorkspaceFileOperations(options.rootDir),
         session,
         messages: options.agentRuntime.getWorkspaceMessages(options.rootDir),
         timeline: options.agentRuntime.getWorkspaceTimeline(options.rootDir),
@@ -123,6 +125,7 @@ export async function handleAgentRoute(
       )
     })
     const state: AgentStateResponse = {
+      fileOperations: options.agentRuntime.getWorkspaceFileOperations(options.rootDir),
       session: options.agentRuntime.getWorkspaceSessionSummary(options.rootDir),
       messages: options.agentRuntime.getWorkspaceMessages(options.rootDir),
       timeline: options.agentRuntime.getWorkspaceTimeline(options.rootDir),
@@ -135,6 +138,7 @@ export async function handleAgentRoute(
   if (pathname === SEMANTICODE_AGENT_CANCEL_ROUTE && method === 'POST') {
     await options.agentRuntime.cancelWorkspaceSession(options.rootDir)
     const state: AgentStateResponse = {
+      fileOperations: options.agentRuntime.getWorkspaceFileOperations(options.rootDir),
       session: options.agentRuntime.getWorkspaceSessionSummary(options.rootDir),
       messages: options.agentRuntime.getWorkspaceMessages(options.rootDir),
       timeline: options.agentRuntime.getWorkspaceTimeline(options.rootDir),
@@ -165,6 +169,7 @@ export async function handleAgentRoute(
   if (pathname === SEMANTICODE_AGENT_SESSION_NEW_ROUTE && method === 'POST') {
     const session = await options.agentRuntime.startNewWorkspaceSession(options.rootDir)
     const state: AgentStateResponse = {
+      fileOperations: options.agentRuntime.getWorkspaceFileOperations(options.rootDir),
       session,
       messages: options.agentRuntime.getWorkspaceMessages(options.rootDir),
       timeline: options.agentRuntime.getWorkspaceTimeline(options.rootDir),
@@ -189,6 +194,7 @@ export async function handleAgentRoute(
       payload.sessionFile,
     )
     const state: AgentStateResponse = {
+      fileOperations: options.agentRuntime.getWorkspaceFileOperations(options.rootDir),
       session,
       messages: options.agentRuntime.getWorkspaceMessages(options.rootDir),
       timeline: options.agentRuntime.getWorkspaceTimeline(options.rootDir),
@@ -221,6 +227,7 @@ export async function handleAgentRoute(
       thinkingLevel,
     )
     const state: AgentStateResponse = {
+      fileOperations: options.agentRuntime.getWorkspaceFileOperations(options.rootDir),
       session,
       messages: options.agentRuntime.getWorkspaceMessages(options.rootDir),
       timeline: options.agentRuntime.getWorkspaceTimeline(options.rootDir),
@@ -263,6 +270,7 @@ export async function handleAgentRoute(
 
     const session = await options.agentRuntime.setWorkspaceModel(options.rootDir, payload)
     const state: AgentStateResponse = {
+      fileOperations: options.agentRuntime.getWorkspaceFileOperations(options.rootDir),
       session,
       messages: options.agentRuntime.getWorkspaceMessages(options.rootDir),
       timeline: options.agentRuntime.getWorkspaceTimeline(options.rootDir),
@@ -279,6 +287,7 @@ export async function handleAgentRoute(
       payload?.instructions,
     )
     const state: AgentStateResponse = {
+      fileOperations: options.agentRuntime.getWorkspaceFileOperations(options.rootDir),
       session,
       messages: options.agentRuntime.getWorkspaceMessages(options.rootDir),
       timeline: options.agentRuntime.getWorkspaceTimeline(options.rootDir),

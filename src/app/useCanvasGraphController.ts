@@ -50,6 +50,20 @@ import {
   type FlowModel,
 } from '../visualizer/flowModel'
 
+const FLOW_MODEL_VIEWPORT_ZOOM_BUCKETS = [
+  [0.04, 0.035],
+  [0.065, 0.055],
+  [0.1, 0.085],
+  [0.16, 0.13],
+  [0.25, 0.2],
+  [0.4, 0.32],
+  [0.65, 0.52],
+  [0.95, 0.8],
+  [1.35, 1.1],
+  [2, 1.65],
+  [3, 2.45],
+] as const
+
 export interface UseCanvasGraphControllerInput {
   collapsedDirectoryIds: string[]
   compareOverlayActive: boolean
@@ -377,29 +391,16 @@ export function useCanvasGraphController({
       mode: input.mode,
       node: primaryNode,
     })
-    const bounds = flowInstance.getNodesBounds([primaryNodeId])
 
-    if (bounds.width > 0 && bounds.height > 0) {
-      void flowInstance.setCenter(
-        bounds.x + bounds.width / 2,
-        bounds.y + bounds.height / 2,
-        {
-          duration: input.isEdit ? 260 : 220,
-          zoom: desiredZoom,
-        },
-      )
-    } else {
-      const nodesToFit = nodes.filter((node) => targetNodeIds.includes(node.id))
-
-      if (nodesToFit.length > 0) {
-        void flowInstance.fitView({
-          duration: input.isEdit ? 260 : 220,
-          maxZoom: desiredZoom,
-          nodes: nodesToFit,
-          padding: input.isEdit ? 0.14 : 0.18,
-        })
-      }
-    }
+    focusFlowOnNode({
+      duration: input.isEdit ? 260 : 220,
+      flowInstance,
+      maxZoom: desiredZoom,
+      nodes,
+      padding: input.isEdit ? 0.14 : 0.18,
+      targetNodeId: primaryNodeId,
+      targetNodeIds,
+    })
   }, [flowInstance, nodes, snapshotOrNull])
 
   const focusCanvasOnNode = useCallback((input: {
@@ -478,35 +479,20 @@ export function useCanvasGraphController({
       snapshotOrNull.nodes[targetNodeId] ??
       snapshotOrNull.nodes[input.nodeId] ??
       null
-    const bounds = flowInstance.getNodesBounds([targetNodeId])
     const desiredZoom = getFollowTargetZoom({
       isEdit: false,
       mode: viewMode === 'symbols' ? 'symbols' : 'files',
       node: targetNode,
     })
 
-    if (bounds.width > 0 && bounds.height > 0) {
-      void flowInstance.setCenter(
-        bounds.x + bounds.width / 2,
-        bounds.y + bounds.height / 2,
-        {
-          duration: 240,
-          zoom: desiredZoom,
-        },
-      )
-      return
-    }
-
-    const nodesToFit = nodes.filter((node) => node.id === targetNodeId)
-
-    if (nodesToFit.length > 0) {
-      void flowInstance.fitView({
-        duration: 240,
-        maxZoom: desiredZoom,
-        nodes: nodesToFit,
-        padding: 0.18,
-      })
-    }
+    focusFlowOnNode({
+      duration: 240,
+      flowInstance,
+      maxZoom: desiredZoom,
+      nodes,
+      padding: 0.18,
+      targetNodeId,
+    })
   }, [flowInstance, nodes, snapshotOrNull, symbolClusterState, viewMode])
 
   useEffect(() => {
@@ -685,56 +671,50 @@ export function useCanvasGraphController({
   }
 }
 
+function focusFlowOnNode(input: {
+  duration: number
+  flowInstance: ReactFlowInstance<Node, Edge>
+  maxZoom: number
+  nodes: Node[]
+  padding: number
+  targetNodeId: string
+  targetNodeIds?: string[]
+}) {
+  const bounds = input.flowInstance.getNodesBounds([input.targetNodeId])
+
+  if (bounds.width > 0 && bounds.height > 0) {
+    void input.flowInstance.setCenter(
+      bounds.x + bounds.width / 2,
+      bounds.y + bounds.height / 2,
+      {
+        duration: input.duration,
+        zoom: input.maxZoom,
+      },
+    )
+    return
+  }
+
+  const targetNodeIds = input.targetNodeIds ?? [input.targetNodeId]
+  const nodesToFit = input.nodes.filter((node) => targetNodeIds.includes(node.id))
+
+  if (nodesToFit.length > 0) {
+    void input.flowInstance.fitView({
+      duration: input.duration,
+      maxZoom: input.maxZoom,
+      nodes: nodesToFit,
+      padding: input.padding,
+    })
+  }
+}
+
 function getFlowModelViewportZoomBucket(zoom: number) {
   if (!Number.isFinite(zoom)) {
     return 1
   }
 
-  if (zoom <= 0.04) {
-    return 0.035
-  }
+  const bucket = FLOW_MODEL_VIEWPORT_ZOOM_BUCKETS.find(([maxZoom]) => zoom <= maxZoom)
 
-  if (zoom <= 0.065) {
-    return 0.055
-  }
-
-  if (zoom <= 0.1) {
-    return 0.085
-  }
-
-  if (zoom <= 0.16) {
-    return 0.13
-  }
-
-  if (zoom <= 0.25) {
-    return 0.2
-  }
-
-  if (zoom <= 0.4) {
-    return 0.32
-  }
-
-  if (zoom <= 0.65) {
-    return 0.52
-  }
-
-  if (zoom <= 0.95) {
-    return 0.8
-  }
-
-  if (zoom <= 1.35) {
-    return 1.1
-  }
-
-  if (zoom <= 2) {
-    return 1.65
-  }
-
-  if (zoom <= 3) {
-    return 2.45
-  }
-
-  return 3.5
+  return bucket?.[1] ?? 3.5
 }
 
 function areFlowNodesEquivalent(left: Node[], right: Node[]) {

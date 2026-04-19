@@ -1,9 +1,13 @@
 import type { LayoutSpec } from '../../schema/layout'
-import type { SemanticProjectionPoint, SemanticProjectionRecord, SemanticRefinementInput } from '../types'
+import type {
+  SemanticProjectionPoint,
+  SemanticProjectionRecord,
+  SemanticRefinementInput,
+} from '../types'
 
-const CLUSTER_SHELF_WIDTH = 3600
-const CLUSTER_GAP_X = 220
-const CLUSTER_GAP_Y = 180
+const CLUSTER_SHELF_WIDTH = 6200
+const CLUSTER_GAP_X = 340
+const CLUSTER_GAP_Y = 260
 
 export function refineSemanticLayout(
   projection: SemanticProjectionRecord,
@@ -20,7 +24,11 @@ export function refineSemanticLayout(
   let currentRowHeight = 0
 
   for (const cluster of clusters) {
-    const packedCluster = packCluster(cluster, input.minimumSpacing)
+    const packedCluster = packCluster(
+      cluster,
+      input.minimumSpacing,
+      input.nodeFootprints ?? {},
+    )
 
     if (cursorX > 0 && cursorX + packedCluster.width > CLUSTER_SHELF_WIDTH) {
       cursorX = 0
@@ -119,16 +127,23 @@ function clusterProjectionPoints(
 function packCluster(
   cluster: SemanticProjectionPoint[],
   minimumSpacing: number,
+  nodeFootprints: NonNullable<SemanticRefinementInput['nodeFootprints']>,
 ) {
-  const innerSpacing = minimumSpacing * 1.8
+  const innerSpacing = Math.round(minimumSpacing * 0.58)
   const padding = minimumSpacing
   const occupancy = new Set<string>()
   const normalizedPoints = normalizeClusterPoints(cluster)
 
   if (normalizedPoints.length === 1) {
+    const footprint = getNodeFootprint(
+      normalizedPoints[0].symbolId,
+      nodeFootprints,
+      minimumSpacing,
+    )
+
     return {
-      width: padding * 2 + innerSpacing,
-      height: padding * 2 + innerSpacing,
+      width: padding * 2 + footprint.width,
+      height: padding * 2 + footprint.height,
       points: [
         {
           symbolId: normalizedPoints[0].symbolId,
@@ -140,34 +155,81 @@ function packCluster(
   }
 
   const targetColumns = Math.max(2, Math.ceil(Math.sqrt(normalizedPoints.length)))
-  const packedPoints = normalizedPoints.map((point) => {
+  const packedCells = normalizedPoints.map((point) => {
     const desiredColumn = Math.round(point.x * (targetColumns - 1))
-    const desiredRow = Math.round(point.y * Math.max(1, Math.ceil(normalizedPoints.length / targetColumns) - 1))
+    const desiredRow = Math.round(
+      point.y *
+        Math.max(1, Math.ceil(normalizedPoints.length / targetColumns) - 1),
+    )
     const cell = findNearestFreeCell(desiredColumn, desiredRow, occupancy)
 
     occupancy.add(`${cell.column}:${cell.row}`)
 
     return {
       symbolId: point.symbolId,
-      x: padding + cell.column * innerSpacing,
-      y: padding + cell.row * innerSpacing,
       row: cell.row,
       column: cell.column,
+      footprint: getNodeFootprint(point.symbolId, nodeFootprints, minimumSpacing),
     }
   })
 
-  const maxColumn = Math.max(...packedPoints.map((point) => point.column))
-  const maxRow = Math.max(...packedPoints.map((point) => point.row))
+  const maxColumn = Math.max(...packedCells.map((point) => point.column))
+  const maxRow = Math.max(...packedCells.map((point) => point.row))
+  const columnWidths = Array.from({ length: maxColumn + 1 }, () => minimumSpacing)
+  const rowHeights = Array.from({ length: maxRow + 1 }, () => minimumSpacing)
+
+  for (const point of packedCells) {
+    columnWidths[point.column] = Math.max(
+      columnWidths[point.column] ?? minimumSpacing,
+      point.footprint.width,
+    )
+    rowHeights[point.row] = Math.max(
+      rowHeights[point.row] ?? minimumSpacing,
+      point.footprint.height,
+    )
+  }
+
+  const columnOffsets = buildOffsets(columnWidths, padding, innerSpacing)
+  const rowOffsets = buildOffsets(rowHeights, padding, innerSpacing)
 
   return {
-    width: padding * 2 + (maxColumn + 1) * innerSpacing,
-    height: padding * 2 + (maxRow + 1) * innerSpacing,
-    points: packedPoints.map(({ symbolId, x, y }) => ({
+    width: padding * 2 + sum(columnWidths) + Math.max(0, maxColumn) * innerSpacing,
+    height: padding * 2 + sum(rowHeights) + Math.max(0, maxRow) * innerSpacing,
+    points: packedCells.map(({ column, footprint, row, symbolId }) => ({
       symbolId,
-      x,
-      y,
+      x:
+        columnOffsets[column] +
+        Math.max(0, ((columnWidths[column] ?? 0) - footprint.width) / 2),
+      y:
+        rowOffsets[row] +
+        Math.max(0, ((rowHeights[row] ?? 0) - footprint.height) / 2),
     })),
   }
+}
+
+function getNodeFootprint(
+  symbolId: string,
+  nodeFootprints: NonNullable<SemanticRefinementInput['nodeFootprints']>,
+  minimumSpacing: number,
+) {
+  return nodeFootprints[symbolId] ?? {
+    height: minimumSpacing,
+    width: minimumSpacing,
+  }
+}
+
+function buildOffsets(sizes: number[], padding: number, gap: number) {
+  let cursor = padding
+
+  return sizes.map((size) => {
+    const offset = cursor
+    cursor += size + gap
+    return offset
+  })
+}
+
+function sum(values: number[]) {
+  return values.reduce((total, value) => total + value, 0)
 }
 
 function normalizeClusterPoints(cluster: SemanticProjectionPoint[]) {

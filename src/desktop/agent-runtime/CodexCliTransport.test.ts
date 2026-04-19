@@ -224,5 +224,15 @@ describe('CodexCliTransport', () => {
       toolCallId: 'call-1',
       toolName: 'read_file',
     })
+    expect(events.find((event) => event.type === 'turn_end')).toMatchObject({
+      toolResults: [
+        expect.objectContaining({
+          isError: false,
+          role: 'toolResult',
+          toolCallId: 'call-1',
+          toolName: 'read_file',
+        }),
+      ],
+    })
   })
 })

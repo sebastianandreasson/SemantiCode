@@ -232,6 +232,7 @@ void app.whenReady().then(async () => {
   ipcMain.handle('semanticode:agent:compact', async (_event, instructions?: string) => {
     if (!activeWorkspaceRootDir) {
       return {
+        fileOperations: [],
         messages: [],
         session: null,
         timeline: [],
@@ -241,6 +242,7 @@ void app.whenReady().then(async () => {
     const session = await piAgentService.compactWorkspaceSession(activeWorkspaceRootDir, instructions)
 
     return {
+      fileOperations: piAgentService.getWorkspaceFileOperations(activeWorkspaceRootDir),
       messages: piAgentService.getWorkspaceMessages(activeWorkspaceRootDir),
       session,
       timeline: piAgentService.getWorkspaceTimeline(activeWorkspaceRootDir),

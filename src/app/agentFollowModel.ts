@@ -1,6 +1,7 @@
 import {
   isFileNode,
   isSymbolNode,
+  type AgentFileOperation,
   type ProjectSnapshot,
   type SymbolNode,
   type TelemetryActivityEvent,
@@ -9,6 +10,7 @@ import {
 } from '../types'
 
 export const FOLLOW_AGENT_EDIT_CAMERA_LOCK_MS = 1400
+const FOLLOW_AGENT_EVENT_PRIORITY_WINDOW_MS = 30_000
 
 export type FollowTargetKind = 'symbol' | 'file'
 export type FollowTargetConfidence =
@@ -34,6 +36,8 @@ export type FollowDomainEvent =
       timestamp: string
       timestampMs: number
       toolNames: string[]
+      sourcePriority: number
+      sourceSequence: number
     }
   | {
       type: 'snapshot_refreshed' | 'symbols_available'
@@ -107,6 +111,7 @@ export interface FollowControllerState {
   snapshotSignature: string | null
   symbolCount: number
   visibleNodeIds: string[]
+  fileOperations: AgentFileOperation[]
   telemetryActivityEvents: TelemetryActivityEvent[]
   liveChangedFiles: string[]
   dirtyFileEditSignals: DirtyFileEditSignal[]
@@ -140,6 +145,11 @@ export type FollowControllerAction =
       nowMs: number
       telemetryActivityEvents: TelemetryActivityEvent[]
       telemetryEnabled: boolean
+    }
+  | {
+      type: 'FILE_OPERATIONS_UPDATED'
+      fileOperations: AgentFileOperation[]
+      nowMs: number
     }
   | {
       type: 'DIRTY_FILES_UPDATED'
@@ -216,6 +226,7 @@ export function createInitialFollowControllerState(): FollowControllerState {
       refreshPending: false,
     },
     enabled: false,
+    fileOperations: [],
     knownChangedPaths: [],
     lastAcknowledgedCameraCommandId: null,
     lastAcknowledgedInspectorCommandId: null,
@@ -255,6 +266,7 @@ export function followControllerReducer(
           currentInspectorCommand: null,
           currentRefreshCommand: null,
           enabled: false,
+          fileOperations: [],
           knownChangedPaths: [],
           lastAcknowledgedCameraCommandId: null,
           lastAcknowledgedInspectorCommandId: null,
@@ -283,6 +295,27 @@ export function followControllerReducer(
         telemetryActivityEvents: action.telemetryActivityEvents,
         telemetryEnabled: action.telemetryEnabled,
       })
+    case 'FILE_OPERATIONS_UPDATED': {
+      const reprioritizedPaths = getChangedFileOperationPaths({
+        nextOperations: action.fileOperations,
+        previousOperations: state.fileOperations,
+      })
+
+      return deriveFollowControllerState({
+        ...state,
+        fileOperations: action.fileOperations,
+        nowMs: action.nowMs,
+        pendingDirtyPaths: state.enabled
+          ? computePendingEditedPaths({
+              currentPendingPaths: state.pendingDirtyPaths,
+              liveChangedFiles: state.liveChangedFiles,
+              previousChangedPaths: new Set(state.knownChangedPaths),
+              reprioritizedPaths,
+              telemetryActivityEvents: state.telemetryActivityEvents,
+            })
+          : [],
+      })
+    }
     case 'DIRTY_FILES_UPDATED': {
       const previousChangedPaths = new Set(state.knownChangedPaths)
 
@@ -529,13 +562,23 @@ function deriveFollowControllerState(
         createTelemetryFollowEvent(event, state.nowMs),
       ).sort(compareFollowEventsDescending)
     : []
+  const normalizedFileOperationEvents = state.fileOperations
+    .map((operation) => createFileOperationFollowEvent(operation, state.nowMs))
+    .filter((event): event is FollowFileEvent => Boolean(event))
+    .sort(compareFollowEventsDescending)
   const normalizedDirtyEditEvents = state.dirtyFileEditSignals
     .map(createDirtySignalFollowEvent)
     .sort(compareFollowEventsDescending)
-  const normalizedActivityEvents = normalizedTelemetryEvents.filter(
-    (event) => event.type === 'file_touched',
-  )
-  const normalizedEditEvents = [...normalizedDirtyEditEvents, ...normalizedTelemetryEvents]
+  const normalizedActivityEvents = [
+    ...normalizedFileOperationEvents,
+    ...normalizedTelemetryEvents,
+  ].filter((event) => event.type === 'file_touched')
+    .sort(compareFollowEventsDescending)
+  const normalizedEditEvents = [
+    ...normalizedDirtyEditEvents,
+    ...normalizedFileOperationEvents,
+    ...normalizedTelemetryEvents,
+  ]
     .filter((event) => event.type === 'file_edited')
     .sort(compareFollowEventsDescending)
   const latestResolvedEdit = resolveLatestEditTarget({
@@ -984,9 +1027,43 @@ function createTelemetryFollowEvent(
     eventKey: event.key,
     key: `${type}:${event.key}`,
     path: event.path,
+    sourcePriority: 1,
+    sourceSequence: 0,
     timestamp: event.timestamp,
     timestampMs,
     toolNames: event.toolNames,
+    type,
+  }
+}
+
+function createFileOperationFollowEvent(
+  operation: AgentFileOperation,
+  fallbackNowMs: number,
+): FollowFileEvent | null {
+  if (!operation.path || operation.status === 'error') {
+    return null
+  }
+
+  const timestampMs = parseTimestampMs(operation.timestamp, fallbackNowMs)
+  const type = operation.kind === 'file_read'
+    ? 'file_touched'
+    : isFileChangingOperationKind(operation.kind)
+      ? 'file_edited'
+      : null
+
+  if (!type) {
+    return null
+  }
+
+  return {
+    eventKey: operation.id,
+    key: `operation:${type}:${operation.id}`,
+    path: operation.path,
+    sourcePriority: getFileOperationSourcePriority(operation),
+    sourceSequence: getOperationPathSequence(operation),
+    timestamp: operation.timestamp,
+    timestampMs,
+    toolNames: [operation.toolName],
     type,
   }
 }
@@ -998,6 +1075,8 @@ function createDirtyFileFollowEvent(pathValue: string): FollowFileEvent {
     eventKey: `dirty:${pathValue}`,
     key: `dirty:${pathValue}`,
     path: pathValue,
+    sourcePriority: 2,
+    sourceSequence: 0,
     timestamp,
     timestampMs: 0,
     toolNames: ['git-diff'],
@@ -1010,6 +1089,8 @@ function createDirtySignalFollowEvent(signal: DirtyFileEditSignal): FollowFileEv
     eventKey: `dirty:${signal.path}:${signal.fingerprint}`,
     key: `dirty:${signal.path}:${signal.fingerprint}`,
     path: signal.path,
+    sourcePriority: 4,
+    sourceSequence: 0,
     timestamp: signal.changedAt,
     timestampMs: signal.changedAtMs,
     toolNames: ['git-diff'],
@@ -1031,9 +1112,55 @@ function getChangedDirtySignalPaths(input: {
     .map((signal) => signal.path)
 }
 
+function getChangedFileOperationPaths(input: {
+  nextOperations: AgentFileOperation[]
+  previousOperations: AgentFileOperation[]
+}) {
+  const previousOperationIds = new Set(
+    input.previousOperations.map((operation) => operation.id),
+  )
+
+  return input.nextOperations
+    .filter((operation) =>
+      operation.path &&
+      operation.status !== 'error' &&
+      isFileChangingOperationKind(operation.kind) &&
+      !previousOperationIds.has(operation.id),
+    )
+    .sort((left, right) =>
+      parseTimestampMs(right.timestamp, 0) - parseTimestampMs(left.timestamp, 0),
+    )
+    .map((operation) => operation.path!)
+}
+
+function isFileChangingOperationKind(kind: AgentFileOperation['kind']) {
+  return (
+    kind === 'file_changed' ||
+    kind === 'file_delete' ||
+    kind === 'file_rename' ||
+    kind === 'file_write'
+  )
+}
+
 function compareFollowEventsDescending(left: FollowFileEvent, right: FollowFileEvent) {
   if (left.timestampMs !== right.timestampMs) {
+    const timestampDeltaMs = Math.abs(right.timestampMs - left.timestampMs)
+    if (
+      timestampDeltaMs <= FOLLOW_AGENT_EVENT_PRIORITY_WINDOW_MS &&
+      left.sourcePriority !== right.sourcePriority
+    ) {
+      return right.sourcePriority - left.sourcePriority
+    }
+
     return right.timestampMs - left.timestampMs
+  }
+
+  if (left.sourcePriority !== right.sourcePriority) {
+    return right.sourcePriority - left.sourcePriority
+  }
+
+  if (left.sourceSequence !== right.sourceSequence) {
+    return left.sourceSequence - right.sourceSequence
   }
 
   return right.eventKey.localeCompare(left.eventKey)
@@ -1042,6 +1169,29 @@ function compareFollowEventsDescending(left: FollowFileEvent, right: FollowFileE
 function parseTimestampMs(timestamp: string, fallbackNowMs: number) {
   const nextTimestampMs = new Date(timestamp).getTime()
   return Number.isFinite(nextTimestampMs) ? nextTimestampMs : fallbackNowMs
+}
+
+function getOperationPathSequence(operation: AgentFileOperation) {
+  if (!operation.path) {
+    return 0
+  }
+
+  const pathIndex = operation.paths.indexOf(operation.path)
+  return pathIndex >= 0 ? pathIndex : 0
+}
+
+function getFileOperationSourcePriority(operation: AgentFileOperation) {
+  switch (operation.source) {
+    case 'request-telemetry':
+      return 1
+    case 'assistant-message':
+    case 'git-dirty':
+      return 2
+    case 'agent-tool':
+    case 'codex-cli':
+    case 'pi-sdk':
+      return 3
+  }
 }
 
 function isPreferredFollowSymbolNode(symbol: SymbolNode) {

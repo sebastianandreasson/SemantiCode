@@ -22,6 +22,7 @@ import type {
   AgentAuthMode,
   AgentBrokerSessionSummary,
   AgentControlState,
+  AgentFileOperation,
   AgentMessage,
   AgentSessionListItem,
   AgentSessionSummary,
@@ -184,6 +185,7 @@ export interface AgentStateResponse {
   session: AgentSessionSummary | null
   messages: AgentMessage[]
   timeline: AgentTimelineItem[]
+  fileOperations?: AgentFileOperation[]
 }
 
 export interface AgentControlsResponse {

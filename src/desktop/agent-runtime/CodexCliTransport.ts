@@ -15,6 +15,7 @@ import type {
   Model,
   TextContent,
   ThinkingContent,
+  ToolResultMessage,
 } from '@mariozechner/pi-ai'
 
 import type { OpenAICodexProvider } from '../providers/openai-codex/provider'
@@ -39,6 +40,7 @@ interface ActiveCodexRunState {
   processId: string
   stderrLines: string[]
   thinkingText: string
+  toolResultsById: Map<string, ToolResultMessage>
   toolInvocationsById: Map<string, AgentToolInvocation>
 }
 
@@ -146,6 +148,7 @@ export class CodexCliTransport implements AgentTransport {
       processId,
       stderrLines: [],
       thinkingText: '',
+      toolResultsById: new Map(),
       toolInvocationsById: new Map(),
     }
     const partialState = createPartialAssistantState(config.model)
@@ -222,7 +225,7 @@ export class CodexCliTransport implements AgentTransport {
         errorMessage: 'Codex CLI run was aborted.',
         stopReason: 'aborted',
       })
-      emitFinalTurn(stream, partialState, abortedMessage, userMessage)
+      emitFinalTurn(stream, partialState, abortedMessage, userMessage, activeRunState)
       return
     }
 
@@ -232,7 +235,7 @@ export class CodexCliTransport implements AgentTransport {
         errorMessage: activeRunState.lastError,
         stopReason: 'error',
       })
-      emitFinalTurn(stream, partialState, errorMessage, userMessage)
+      emitFinalTurn(stream, partialState, errorMessage, userMessage, activeRunState)
       return
     }
 
@@ -242,12 +245,12 @@ export class CodexCliTransport implements AgentTransport {
         errorMessage: buildCodexExitError(activeRunState, exitCode),
         stopReason: 'error',
       })
-      emitFinalTurn(stream, partialState, errorMessage, userMessage)
+      emitFinalTurn(stream, partialState, errorMessage, userMessage, activeRunState)
       return
     }
 
     ensureAssistantMessageStarted(partialState, stream)
-    emitFinalTurn(stream, partialState, finalAssistantMessage, userMessage)
+    emitFinalTurn(stream, partialState, finalAssistantMessage, userMessage, activeRunState)
   }
 
   private handleStdoutLine(
@@ -370,13 +373,25 @@ export class CodexCliTransport implements AgentTransport {
           continue
         }
 
+        const formattedResult = formatCodexToolResult(action.result)
+
         stream.push({
           type: 'tool_execution_end',
           isError: Boolean(action.isError),
-          result: formatCodexToolResult(action.result),
+          result: formattedResult,
           toolCallId: existingInvocation.toolCallId,
           toolName: existingInvocation.toolName,
         })
+        activeRunState.toolResultsById.set(
+          existingInvocation.toolCallId,
+          createToolResultMessage({
+            details: action.result,
+            isError: Boolean(action.isError),
+            result: formattedResult,
+            toolCallId: existingInvocation.toolCallId,
+            toolName: existingInvocation.toolName,
+          }),
+        )
       }
     }
   }
@@ -430,6 +445,7 @@ function emitFinalTurn(
   partialState: PartialAssistantState,
   message: AssistantMessage,
   userMessage: Message,
+  activeRunState: ActiveCodexRunState,
 ) {
   ensureAssistantMessageStarted(partialState, stream)
   stream.push({
@@ -439,7 +455,7 @@ function emitFinalTurn(
   stream.push({
     type: 'turn_end',
     message,
-    toolResults: [],
+    toolResults: [...activeRunState.toolResultsById.values()],
   })
   stream.push({
     type: 'agent_end',
@@ -534,6 +550,31 @@ function createAssistantMessage(
       output: 0,
     },
     ...overrides,
+  }
+}
+
+function createToolResultMessage(input: {
+  details: unknown
+  isError: boolean
+  result: string
+  toolCallId: string
+  toolName: string
+}): ToolResultMessage {
+  return {
+    content: input.result
+      ? [
+          {
+            text: input.result,
+            type: 'text',
+          },
+        ]
+      : [],
+    details: input.details,
+    isError: input.isError,
+    role: 'toolResult',
+    timestamp: Date.now(),
+    toolCallId: input.toolCallId,
+    toolName: input.toolName,
   }
 }
 

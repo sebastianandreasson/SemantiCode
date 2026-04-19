@@ -1,3 +1,5 @@
+import type { AgentFileOperation } from './agent'
+
 export type AutonomousRunStatus =
   | 'idle'
   | 'running'
@@ -47,10 +49,42 @@ export interface AutonomousRunTodoSummary {
 }
 
 export interface AutonomousRunDetail extends AutonomousRunSummary {
+  fileOperations: AgentFileOperation[]
   logExcerpt: string
   lastOutputExcerpt: string
+  liveFeed: AutonomousRunLiveFeedEntry[]
   scope: AutonomousRunScope | null
   todos: AutonomousRunTodoSummary[]
+}
+
+export interface AutonomousRunLiveFeedEntry {
+  [key: string]: unknown
+  argsSummary?: string
+  attributionKind?: string
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
+  files?: string[]
+  inputTokens?: number
+  isError?: boolean
+  iteration: number
+  kind: string
+  model?: string
+  outputTokens?: number
+  partialSummary?: string
+  phase: string
+  primaryFile?: string
+  reason?: string
+  resultSummary?: string
+  retryCount?: number
+  role: string
+  seq?: number
+  sessionId?: string
+  text: string
+  timestamp: string
+  toolName?: string
+  toolNames?: string[]
+  totalTokens?: number
+  type: string
 }
 
 export interface AutonomousRunTimelinePoint {

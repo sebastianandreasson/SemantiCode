@@ -14,6 +14,7 @@ import {
   type FollowIntent,
 } from './agentFollowModel'
 import type {
+  AgentFileOperation,
   ProjectSnapshot,
   TelemetryActivityEvent,
   TelemetryMode,
@@ -23,6 +24,7 @@ import type {
 interface UseAgentFollowControllerInput {
   dirtyFileEditSignals: DirtyFileEditSignal[]
   enabled: boolean
+  fileOperations: AgentFileOperation[]
   liveChangedFiles: string[]
   snapshot: ProjectSnapshot | null
   telemetryActivityEvents: TelemetryActivityEvent[]
@@ -57,6 +59,14 @@ export function useAgentFollowController(
       telemetryEnabled: input.telemetryEnabled,
     })
   }, [input.telemetryActivityEvents, input.telemetryEnabled])
+
+  useEffect(() => {
+    dispatch({
+      type: 'FILE_OPERATIONS_UPDATED',
+      fileOperations: input.fileOperations,
+      nowMs: Date.now(),
+    })
+  }, [input.fileOperations])
 
   useEffect(() => {
     dispatch({

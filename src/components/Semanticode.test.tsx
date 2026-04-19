@@ -129,7 +129,7 @@ const semanticLayout = {
   title: 'Semantic symbols',
   strategy: 'semantic' as const,
   nodeScope: 'symbols' as const,
-  description: 'Resolved semantic symbol layout with semantic-spacing-v2.',
+  description: 'Resolved semantic symbol layout with semantic-spacing-v3.',
   placements: {
     'symbol:entry': { nodeId: 'symbol:entry', x: 24, y: 24 },
     'symbol:helper': { nodeId: 'symbol:helper', x: 180, y: 24 },

@@ -109,4 +109,5 @@ export interface SemanticUmapInput {
 export interface SemanticRefinementInput {
   baseLayout: LayoutSpec
   minimumSpacing: number
+  nodeFootprints?: Record<string, { height: number; width: number }>
 }

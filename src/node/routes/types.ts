@@ -37,6 +37,7 @@ export interface AgentRuntimeRequestBridge {
   ensureWorkspaceSession: (workspaceRootDir: string) => Promise<AgentStateResponse['session']>
   getWorkspaceControls: (workspaceRootDir: string) => Promise<AgentControlsResponse['controls']>
   getSettings: () => Promise<AgentSettingsResponse['settings']>
+  getWorkspaceFileOperations: (workspaceRootDir: string) => NonNullable<AgentStateResponse['fileOperations']>
   getWorkspaceMessages: (workspaceRootDir: string) => AgentStateResponse['messages']
   getWorkspaceSessionSummary: (workspaceRootDir: string) => AgentStateResponse['session']
   getWorkspaceTimeline: (workspaceRootDir: string) => AgentStateResponse['timeline']

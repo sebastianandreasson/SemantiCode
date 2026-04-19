@@ -1,6 +1,8 @@
-import { memo, type CSSProperties } from 'react'
+import { memo } from 'react'
 
 import { Handle, Position, type NodeProps } from '@xyflow/react'
+
+import { cx, getAgentHeatStyle } from './nodePresentation'
 
 type CodebaseCanvasNodeData = Record<string, unknown> & {
   title: string
@@ -26,26 +28,18 @@ export const CodebaseCanvasNode = memo(function CodebaseCanvasNode({
 
   return (
     <div
-      className={[
+      className={cx(
         'cbv-node',
         nodeData.kind === 'directory' ? 'is-directory' : 'is-file',
-        nodeData.container ? 'is-folder-container' : '',
-        nodeData.groupContainer ? 'is-group-container' : '',
-        selected ? 'is-selected' : '',
-        nodeData.dimmed ? 'is-dimmed' : '',
-        nodeData.highlighted ? 'is-compare-highlighted' : '',
-        (nodeData.heatWeight ?? 0) > 0 ? 'has-agent-heat' : '',
-        nodeData.heatPulse ? 'is-agent-heat-pulse' : '',
-      ]
-        .filter(Boolean)
-        .join(' ')}
-      style={
-        (nodeData.heatWeight ?? 0) > 0
-          ? ({
-              '--cbv-agent-heat-strength': `${Math.max(0.28, Math.min(1, nodeData.heatWeight ?? 0))}`,
-            } as CSSProperties)
-          : undefined
-      }
+        nodeData.container && 'is-folder-container',
+        nodeData.groupContainer && 'is-group-container',
+        selected && 'is-selected',
+        nodeData.dimmed && 'is-dimmed',
+        nodeData.highlighted && 'is-compare-highlighted',
+        (nodeData.heatWeight ?? 0) > 0 && 'has-agent-heat',
+        nodeData.heatPulse && 'is-agent-heat-pulse',
+      )}
+      style={getAgentHeatStyle(nodeData.heatWeight)}
     >
       {nodeData.collapsible ? (
         <button

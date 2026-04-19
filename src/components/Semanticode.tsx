@@ -36,6 +36,7 @@ import {
   hasWorkspaceSyncUpdates,
 } from './shell/workspaceStatusFormat'
 import { useAgentFollowController } from '../app/useAgentFollowController'
+import { useAgentFileOperations } from '../app/useAgentFileOperations'
 import { useAutonomousRunsController } from '../app/useAutonomousRunsController'
 import { useCanvasGraphController } from '../app/useCanvasGraphController'
 import { useFollowAgentExecutors } from '../app/useFollowAgentExecutors'
@@ -245,6 +246,20 @@ export function Semanticode({
     selectedRunId,
     workspaceSyncStatus,
   })
+  const agentFileOperations = useAgentFileOperations({
+    enabled: followActiveAgent,
+  })
+  const followFileOperations = useMemo(() => {
+    const autonomousFileOperations =
+      selectedRunDetail?.runId === activeRunId
+        ? selectedRunDetail.fileOperations
+        : []
+
+    return [
+      ...agentFileOperations,
+      ...autonomousFileOperations,
+    ]
+  }, [activeRunId, agentFileOperations, selectedRunDetail])
 
   useEffect(() => {
     if (snapshot === undefined) {
@@ -442,6 +457,7 @@ export function Semanticode({
   } = useAgentFollowController({
     dirtyFileEditSignals: followDirtyFileSignals,
     enabled: followActiveAgent,
+    fileOperations: followFileOperations,
     liveChangedFiles,
     snapshot: effectiveSnapshot,
     telemetryActivityEvents,

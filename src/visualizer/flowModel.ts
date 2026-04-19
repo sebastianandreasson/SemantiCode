@@ -2741,154 +2741,92 @@ export function updateLayoutPlacement(
   snapshot: CodebaseSnapshot | null,
   viewMode: VisualizerViewMode,
 ) {
+  const updateCanvasLayout = (
+    getNextLayout: (layout: LayoutSpec) => LayoutSpec | null,
+  ) =>
+    updateActiveLayout(
+      activeLayout,
+      activeDraft,
+      layouts,
+      draftLayouts,
+      setLayouts,
+      setDraftLayouts,
+      getNextLayout,
+    )
+
   if (isAnnotationNodeId(nodeId)) {
     const annotationId = getAnnotationIdFromNodeId(nodeId)
 
-    if (activeDraft?.layout) {
-      const nextDraftLayouts = draftLayouts.map((draft) => {
-        if (draft.id !== activeDraft.id || !draft.layout) {
-          return draft
-        }
-
-        return {
-          ...draft,
-          layout: {
-            ...draft.layout,
-            annotations: draft.layout.annotations.map((annotation) =>
-              annotation.id === annotationId
-                ? {
-                    ...annotation,
-                    x: position.x,
-                    y: position.y,
-                  }
-                : annotation,
-            ),
-            updatedAt: new Date().toISOString(),
-          },
-          updatedAt: new Date().toISOString(),
-        }
-      })
-
-      setDraftLayouts(nextDraftLayouts)
-      return
-    }
-
-    if (!activeLayout) {
-      return
-    }
-
-    const nextLayouts = layouts.map((layout) => {
-      if (layout.id !== activeLayout.id) {
-        return layout
-      }
-
-      return {
-        ...layout,
-        annotations: layout.annotations.map((annotation) =>
-          annotation.id === annotationId
-            ? {
-                ...annotation,
-                x: position.x,
-                y: position.y,
-              }
-            : annotation,
-        ),
-        updatedAt: new Date().toISOString(),
-      }
-    })
-
-    setLayouts(nextLayouts)
+    updateCanvasLayout((layout) => ({
+      ...layout,
+      annotations: layout.annotations.map((annotation) =>
+        annotation.id === annotationId
+          ? {
+              ...annotation,
+              x: position.x,
+              y: position.y,
+            }
+          : annotation,
+      ),
+    }))
     return
   }
 
   if (isLayoutGroupNodeId(nodeId)) {
     const groupId = getLayoutGroupIdFromNodeId(nodeId)
 
-    if (activeDraft?.layout) {
-      const nextDraftLayouts = draftLayouts.map((draft) => {
-        if (draft.id !== activeDraft.id || !draft.layout) {
-          return draft
-        }
-
-        return {
-          ...draft,
-          layout: {
-            ...draft.layout,
-            placements: buildUpdatedPlacementsForMovedGroup(
-              draft.layout,
-              snapshot,
-              viewMode,
-              groupId,
-              position,
-            ),
-            updatedAt: new Date().toISOString(),
-          },
-          updatedAt: new Date().toISOString(),
-        }
-      })
-
-      setDraftLayouts(nextDraftLayouts)
-      return
-    }
-
-    if (!activeLayout) {
-      return
-    }
-
-    const nextLayouts = layouts.map((layout) => {
-      if (layout.id !== activeLayout.id) {
-        return layout
-      }
-
-      return {
-        ...layout,
-        placements: buildUpdatedPlacementsForMovedGroup(
-          layout,
-          snapshot,
-          viewMode,
-          groupId,
-          position,
-        ),
-        updatedAt: new Date().toISOString(),
-      }
-    })
-
-    setLayouts(nextLayouts)
+    updateCanvasLayout((layout) => ({
+      ...layout,
+      placements: buildUpdatedPlacementsForMovedGroup(
+        layout,
+        snapshot,
+        viewMode,
+        groupId,
+        position,
+      ),
+    }))
     return
   }
 
+  updateCanvasLayout((layout) =>
+    layout.placements[nodeId]
+      ? {
+          ...layout,
+          placements: buildUpdatedPlacementsForMovedNode(
+            layout,
+            snapshot,
+            viewMode,
+            nodeId,
+            position,
+          ),
+        }
+      : null,
+  )
+}
+
+function updateActiveLayout(
+  activeLayout: LayoutSpec | null,
+  activeDraft: LayoutDraft | null,
+  layouts: LayoutSpec[],
+  draftLayouts: LayoutDraft[],
+  setLayouts: (layouts: LayoutSpec[]) => void,
+  setDraftLayouts: (draftLayouts: LayoutDraft[]) => void,
+  getNextLayout: (layout: LayoutSpec) => LayoutSpec | null,
+) {
+  const updatedAt = new Date().toISOString()
+
   if (activeDraft?.layout) {
-    const nextDraftLayouts = draftLayouts.map((draft) => {
+    setDraftLayouts(draftLayouts.map((draft) => {
       if (draft.id !== activeDraft.id || !draft.layout) {
         return draft
       }
 
-      const currentPlacement = draft.layout.placements[nodeId]
+      const layout = getNextLayout(draft.layout)
 
-      if (!currentPlacement) {
-        return draft
-      }
-
-      const nextPlacements = buildUpdatedPlacementsForMovedNode(
-        draft.layout,
-        snapshot,
-        viewMode,
-        nodeId,
-        position,
-      )
-
-      return {
-        ...draft,
-        layout: {
-          ...draft.layout,
-          placements: nextPlacements,
-          updatedAt: new Date().toISOString(),
-        },
-        updatedAt: new Date().toISOString(),
-      }
-    })
-
-    setDraftLayouts(nextDraftLayouts)
+      return layout
+        ? { ...draft, layout: { ...layout, updatedAt }, updatedAt }
+        : draft
+    }))
     return
   }
 
@@ -2896,33 +2834,15 @@ export function updateLayoutPlacement(
     return
   }
 
-  const nextLayouts = layouts.map((layout) => {
+  setLayouts(layouts.map((layout) => {
     if (layout.id !== activeLayout.id) {
       return layout
     }
 
-    const currentPlacement = layout.placements[nodeId]
+    const nextLayout = getNextLayout(layout)
 
-    if (!currentPlacement) {
-      return layout
-    }
-
-    const nextPlacements = buildUpdatedPlacementsForMovedNode(
-      layout,
-      snapshot,
-      viewMode,
-      nodeId,
-      position,
-    )
-
-    return {
-      ...layout,
-      placements: nextPlacements,
-      updatedAt: new Date().toISOString(),
-    }
-  })
-
-  setLayouts(nextLayouts)
+    return nextLayout ? { ...nextLayout, updatedAt } : layout
+  }))
 }
 
 export function buildUpdatedPlacementsForMovedNode(
@@ -3225,7 +3145,7 @@ function shouldRefreshGeneratedDefaultLayout(
 ) {
   const generatedDescription = generatedLayout.description ?? ''
   const existingDescription = existingLayout.description ?? ''
-  const versionMarkers = ['symbol-spacing-v2', 'semantic-spacing-v2']
+  const versionMarkers = ['symbol-spacing-v2', 'semantic-spacing-v2', 'semantic-spacing-v3']
 
   return versionMarkers.some(
     (marker) =>

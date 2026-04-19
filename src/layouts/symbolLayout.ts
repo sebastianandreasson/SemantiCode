@@ -128,7 +128,7 @@ export function buildSymbolLayout(snapshot: ProjectSnapshot): LayoutSpec {
   }
 }
 
-function getSymbolLayoutSlot(symbol: SymbolNode) {
+export function getSymbolLayoutSlot(symbol: SymbolNode) {
   const loc = getSymbolLoc(symbol)
   const logLoc = Math.log10(loc + 1)
   const highLocWeight = Math.max(0, Math.min(1, (logLoc - 2.1) / 0.9))

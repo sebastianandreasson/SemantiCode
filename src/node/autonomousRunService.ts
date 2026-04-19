@@ -5,7 +5,9 @@ import { dirname, join, resolve } from 'node:path'
 import { createRequire } from 'node:module'
 
 import type {
+  AgentFileOperation,
   AutonomousRunDetail,
+  AutonomousRunLiveFeedEntry,
   AutonomousRunScope,
   AutonomousRunStartRequest,
   AutonomousRunStatus,
@@ -23,6 +25,7 @@ import {
   resolvePiHarnessPaths,
   writeRunScopeMetadata,
 } from './piHarnessPaths'
+import { createFileOperationsFromToolInvocation } from '../desktop/agent-runtime/agentFileOperations'
 
 interface ActiveRunProcess {
   process: ReturnType<typeof spawn>
@@ -132,16 +135,23 @@ export class AutonomousRunService {
 
     const paths = await resolvePiHarnessPaths(rootDir)
     const runPaths = getPiRunScopedPaths(paths, runId)
-    const [scope, logExcerpt, lastOutputExcerpt, runTelemetryEvents] = await Promise.all([
+    const [scope, logExcerpt, lastOutputExcerpt, liveFeed, runTelemetryEvents] = await Promise.all([
       readRunScopeMetadata(rootDir, runId),
       readExcerpt(runPaths.logFile, 7000),
       readExcerpt(runPaths.lastOutputFile, 4000),
+      readRunLiveFeed(runPaths.liveFeedFile),
       readRunTelemetryEvents(rootDir, runId),
     ])
 
     return {
       ...summary,
+      fileOperations: createFileOperationsFromLiveFeed({
+        liveFeed,
+        rootDir,
+        runId,
+      }),
       lastOutputExcerpt,
+      liveFeed,
       logExcerpt,
       scope:
         scope && scope.paths.length > 0
@@ -149,8 +159,8 @@ export class AutonomousRunService {
               layoutTitle: scope.layoutTitle,
               paths: scope.paths,
               symbolPaths: scope.symbolPaths,
-            title: scope.title,
-          }
+              title: scope.title,
+            }
           : null,
       todos: deriveRunTodoSummaries(runTelemetryEvents),
     }
@@ -613,6 +623,246 @@ async function readExcerpt(filePath: string, maxCharacters: number) {
   } catch {
     return ''
   }
+}
+
+async function readRunLiveFeed(filePath: string): Promise<AutonomousRunLiveFeedEntry[]> {
+  const records = await readJsonlTail<AutonomousRunLiveFeedEntry>(filePath, {
+    maxBytes: 768 * 1024,
+    maxItems: 300,
+  })
+
+  return records
+    .map(normalizeLiveFeedEntry)
+    .filter((entry): entry is AutonomousRunLiveFeedEntry => entry !== null)
+    .sort(compareLiveFeedEntries)
+}
+
+function createFileOperationsFromLiveFeed(input: {
+  liveFeed: AutonomousRunLiveFeedEntry[]
+  rootDir: string
+  runId: string
+}): AgentFileOperation[] {
+  const operationsById = new Map<string, AgentFileOperation>()
+  const activeToolIdsByName = new Map<string, string>()
+
+  input.liveFeed.forEach((entry, index) => {
+    if (!isToolLiveFeedEntry(entry)) {
+      return
+    }
+
+    const toolName = String(entry.toolName ?? '').trim()
+
+    if (!toolName) {
+      return
+    }
+
+    const toolKey = getLiveFeedToolKey(input.runId, entry, index)
+    const normalizedToolName = toolName.toLowerCase()
+    const activeToolId =
+      entry.type === 'tool_start'
+        ? toolKey
+        : activeToolIdsByName.get(normalizedToolName) ?? toolKey
+
+    if (entry.type === 'tool_start') {
+      activeToolIdsByName.set(normalizedToolName, activeToolId)
+    }
+
+    const operations = createFileOperationsFromToolInvocation({
+      invocation: {
+        args: getLiveFeedInvocationArgs(entry),
+        endedAt: entry.type === 'tool_end' ? entry.timestamp : undefined,
+        isError: entry.isError,
+        paths: getLiveFeedPaths(entry),
+        resultPreview: entry.resultSummary ?? entry.partialSummary,
+        startedAt: entry.timestamp,
+        toolCallId: activeToolId,
+        toolName,
+      },
+      sessionId: String(entry.sessionId ?? '').trim() || input.runId,
+      source: 'request-telemetry',
+      status: getLiveFeedOperationStatus(entry),
+      timestamp: entry.timestamp,
+      workspaceRootDir: input.rootDir,
+    })
+
+    for (const operation of operations) {
+      const current = operationsById.get(operation.id)
+
+      if (!current || compareOperationsAscending(current, operation) <= 0) {
+        operationsById.set(operation.id, operation)
+      }
+    }
+
+    if (entry.type === 'tool_end') {
+      activeToolIdsByName.delete(normalizedToolName)
+    }
+  })
+
+  return [...operationsById.values()].sort(compareOperationsAscending)
+}
+
+function isToolLiveFeedEntry(entry: AutonomousRunLiveFeedEntry) {
+  return (
+    entry.type === 'tool_start' ||
+    entry.type === 'tool_update' ||
+    entry.type === 'tool_end'
+  )
+}
+
+function getLiveFeedToolKey(
+  runId: string,
+  entry: AutonomousRunLiveFeedEntry,
+  index: number,
+) {
+  return [
+    'autonomous-live-feed',
+    runId,
+    String(entry.seq ?? index),
+    String(entry.toolName ?? ''),
+  ].join(':')
+}
+
+function getLiveFeedInvocationArgs(entry: AutonomousRunLiveFeedEntry) {
+  return parseLiveFeedSummary(entry.argsSummary) ?? {
+    files: entry.files ?? [],
+    path: entry.primaryFile ?? '',
+  }
+}
+
+function getLiveFeedPaths(entry: AutonomousRunLiveFeedEntry) {
+  return [
+    entry.primaryFile,
+    ...(Array.isArray(entry.files) ? entry.files : []),
+  ]
+    .map((pathValue) => String(pathValue ?? '').trim())
+    .filter(Boolean)
+}
+
+function getLiveFeedOperationStatus(entry: AutonomousRunLiveFeedEntry) {
+  if (entry.type === 'tool_end') {
+    return entry.isError ? 'error' : 'completed'
+  }
+
+  return 'running'
+}
+
+function parseLiveFeedSummary(value: string | undefined) {
+  const trimmed = String(value ?? '').trim()
+
+  if (!trimmed) {
+    return undefined
+  }
+
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
+    return trimmed
+  }
+
+  try {
+    return JSON.parse(trimmed) as unknown
+  } catch {
+    return trimmed
+  }
+}
+
+function compareOperationsAscending(
+  left: AgentFileOperation,
+  right: AgentFileOperation,
+) {
+  const leftTime = new Date(left.timestamp).getTime()
+  const rightTime = new Date(right.timestamp).getTime()
+
+  if (Number.isFinite(leftTime) && Number.isFinite(rightTime) && leftTime !== rightTime) {
+    return leftTime - rightTime
+  }
+
+  if (left.status !== right.status) {
+    return getOperationStatusRank(left.status) - getOperationStatusRank(right.status)
+  }
+
+  return left.id.localeCompare(right.id)
+}
+
+function getOperationStatusRank(status: AgentFileOperation['status']) {
+  if (status === 'running') {
+    return 0
+  }
+
+  if (status === 'error') {
+    return 1
+  }
+
+  return 2
+}
+
+async function readJsonlTail<T>(
+  filePath: string,
+  input: {
+    maxBytes: number
+    maxItems: number
+  },
+) {
+  try {
+    const raw = await readFile(filePath, 'utf8')
+    const truncated = raw.length > input.maxBytes
+    const tail = truncated ? raw.slice(-input.maxBytes) : raw
+    const lines = tail.split('\n')
+
+    if (truncated && lines.length > 0) {
+      lines.shift()
+    }
+
+    return lines
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .slice(-input.maxItems)
+      .flatMap((line) => {
+        try {
+          return [JSON.parse(line) as T]
+        } catch {
+          return []
+        }
+      })
+  } catch {
+    return []
+  }
+}
+
+function normalizeLiveFeedEntry(entry: AutonomousRunLiveFeedEntry | null) {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+    return null
+  }
+
+  const normalized: AutonomousRunLiveFeedEntry = {
+    ...entry,
+    iteration: Number(entry.iteration ?? 0),
+    kind: String(entry.kind ?? ''),
+    phase: String(entry.phase ?? ''),
+    role: String(entry.role ?? ''),
+    text: String(entry.text ?? ''),
+    timestamp: String(entry.timestamp ?? ''),
+    type: String(entry.type ?? 'event'),
+  }
+
+  const seq = Number(entry.seq)
+  if (Number.isFinite(seq)) {
+    normalized.seq = seq
+  }
+
+  return normalized
+}
+
+function compareLiveFeedEntries(
+  left: AutonomousRunLiveFeedEntry,
+  right: AutonomousRunLiveFeedEntry,
+) {
+  const leftSeq = Number(left.seq)
+  const rightSeq = Number(right.seq)
+
+  if (Number.isFinite(leftSeq) && Number.isFinite(rightSeq) && leftSeq !== rightSeq) {
+    return leftSeq - rightSeq
+  }
+
+  return left.timestamp.localeCompare(right.timestamp)
 }
 
 async function readRunTelemetryEvents(rootDir: string, runId: string): Promise<RunTelemetryEventRecord[]> {

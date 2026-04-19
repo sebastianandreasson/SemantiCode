@@ -40,6 +40,8 @@ import type {
   AgentBrokerSessionSummary,
   AgentControlState,
   AgentEvent,
+  AgentFileOperation,
+  AgentFileOperationSource,
   AgentModelControlOption,
   AgentMessage,
   AgentSessionListItem,
@@ -73,6 +75,10 @@ import type {
   LayoutSuggestionResponse,
 } from '../../schema/api'
 import {
+  createFileOperationsFromAgentMessage,
+  createFileOperationsFromToolInvocation,
+} from '../agent-runtime/agentFileOperations'
+import {
   createLifecycleTimelineItem,
   createMessageTimelineItems,
   createToolTimelineItem,
@@ -93,6 +99,7 @@ const DEFAULT_PI_MODEL_ID = 'gpt-4.1-mini'
 const BOOT_PROMPT_ENV_NAME = 'SEMANTICODE_PI_BOOT_PROMPT'
 const PI_PROVIDER_ENV_NAME = 'SEMANTICODE_PI_PROVIDER'
 const PI_MODEL_ENV_NAME = 'SEMANTICODE_PI_MODEL'
+const MAX_SESSION_FILE_OPERATIONS = 250
 
 type PiRegistryModel = ReturnType<ModelRegistry['getAll']>[number]
 
@@ -100,6 +107,7 @@ interface BaseAgentSessionRecord {
   activeAssistantMessageId: string | null
   capabilities: WorkspaceAgentCapabilities
   completedAssistantMessageId: string | null
+  fileOperations: AgentFileOperation[]
   messages: AgentMessage[]
   summary: AgentSessionSummary
   timeline: AgentTimelineItem[]
@@ -317,6 +325,10 @@ export class PiAgentService {
     return this.sessionsByWorkspaceRootDir.get(workspaceRootDir)?.messages ?? []
   }
 
+  getWorkspaceFileOperations(workspaceRootDir: string) {
+    return this.sessionsByWorkspaceRootDir.get(workspaceRootDir)?.fileOperations ?? []
+  }
+
   getWorkspaceTimeline(workspaceRootDir: string) {
     return this.sessionsByWorkspaceRootDir.get(workspaceRootDir)?.timeline ?? []
   }
@@ -387,6 +399,7 @@ export class PiAgentService {
       agent,
       capabilities: resolveCapabilities(input.settings.authMode, input.disabledReason),
       completedAssistantMessageId: null,
+      fileOperations: [],
       kind: 'legacy',
       messages: [],
       promptSequence: 0,
@@ -484,10 +497,16 @@ export class PiAgentService {
       input.summary.id,
       session.state.messages as unknown[],
     )
+    const hydratedFileOperations = createFileOperationsFromMessages({
+      messages: hydratedMessages,
+      sessionId: input.summary.id,
+      workspaceRootDir: input.workspaceRootDir,
+    })
     const record: PiSdkAgentSessionRecord = {
       activeAssistantMessageId: null,
       capabilities: PI_SDK_AGENT_CAPABILITIES,
       completedAssistantMessageId: null,
+      fileOperations: hydratedFileOperations,
       kind: 'sdk',
       messages: hydratedMessages,
       pendingContextQueue,
@@ -1633,26 +1652,25 @@ export class PiAgentService {
         }
         break
 
-      case 'tool_execution_start':
-        record.toolInvocationById.set(event.toolCallId, normalizeToolInvocation({
+      case 'tool_execution_start': {
+        const invocation = normalizeToolInvocation({
           toolCallId: event.toolCallId,
           toolName: event.toolName,
           args: event.args,
           startedAt: new Date().toISOString(),
-        }))
+        })
+
+        record.toolInvocationById.set(event.toolCallId, invocation)
         this.logger.info(
           `[semanticode][pi] ${sessionId} tool start: ${event.toolName}`,
         )
-        this.emit({
-          type: 'tool',
-          sessionId,
-          invocation: record.toolInvocationById.get(event.toolCallId)!,
-        })
+        this.emitToolInvocation(record, sessionId, invocation)
         this.addTimelineItem(
           record,
-          createToolTimelineItem(record.toolInvocationById.get(event.toolCallId)!),
+          createToolTimelineItem(invocation),
         )
         break
+      }
 
       case 'tool_execution_end':
         this.finishToolInvocation(record, sessionId, event)
@@ -1746,6 +1764,11 @@ export class PiAgentService {
       nextSessionId,
       record.session.state.messages as unknown[],
     )
+    record.fileOperations = createFileOperationsFromMessages({
+      messages: record.messages,
+      sessionId: nextSessionId,
+      workspaceRootDir: record.workspaceRootDir,
+    })
     record.timeline = record.messages.flatMap(createMessageTimelineItems)
     record.summary = {
       ...record.summary,
@@ -1857,6 +1880,7 @@ export class PiAgentService {
       message: normalizedMessage,
     })
     record.messages = upsertNormalizedMessage(record.messages, normalizedMessage)
+    this.emitFileOperationsForMessage(record, normalizedMessage)
     this.addMessageTimelineItems(record, normalizedMessage)
     return normalizedMessage
   }
@@ -1872,20 +1896,74 @@ export class PiAgentService {
       return
     }
 
-    const completedInvocation: AgentToolInvocation = {
-      ...existingInvocation,
+    const completedInvocation = normalizeToolInvocation({
+      args: existingInvocation.args,
       endedAt: new Date().toISOString(),
       isError: event.isError,
-      resultPreview: summarizeTimelineValue(event.result),
-    }
+      result: event.result,
+      startedAt: existingInvocation.startedAt,
+      toolCallId: event.toolCallId,
+      toolName: existingInvocation.toolName || event.toolName,
+    })
 
     record.toolInvocationById.set(event.toolCallId, completedInvocation)
-    this.emit({
-      type: 'tool',
-      sessionId,
-      invocation: completedInvocation,
-    })
+    this.emitToolInvocation(record, sessionId, completedInvocation)
     this.addTimelineItem(record, createToolTimelineItem(completedInvocation))
+  }
+
+  private emitToolInvocation(
+    record: AgentSessionRecord,
+    sessionId: string,
+    invocation: AgentToolInvocation,
+  ) {
+    this.emit({
+      invocation,
+      sessionId,
+      type: 'tool',
+    })
+    this.emitFileOperationsForInvocation(record, sessionId, invocation)
+  }
+
+  private emitFileOperationsForInvocation(
+    record: AgentSessionRecord,
+    sessionId: string,
+    invocation: AgentToolInvocation,
+  ) {
+    const operations = createFileOperationsFromToolInvocation({
+      invocation,
+      sessionId,
+      source: getFileOperationSource(record),
+      workspaceRootDir: record.workspaceRootDir,
+    })
+
+    for (const operation of operations) {
+      record.fileOperations = upsertFileOperation(record.fileOperations, operation)
+      this.emit({
+        operation,
+        sessionId,
+        type: 'file_operation',
+      })
+    }
+  }
+
+  private emitFileOperationsForMessage(
+    record: AgentSessionRecord,
+    message: AgentMessage,
+  ) {
+    const operations = createFileOperationsFromAgentMessage({
+      message,
+      sessionId: record.summary.id,
+      workspaceRootDir: record.workspaceRootDir,
+    })
+
+    for (const operation of operations) {
+      record.fileOperations = upsertFileOperation(record.fileOperations, operation)
+      this.emit({
+        operation,
+        sessionId: record.summary.id,
+        type: 'file_operation',
+      })
+    }
   }
 
   private handleSdkAgentEvent(
@@ -1947,11 +2025,7 @@ export class PiAgentService {
         })
 
         record.toolInvocationById.set(event.toolCallId, invocation)
-        this.emit({
-          invocation,
-          sessionId,
-          type: 'tool',
-        })
+        this.emitToolInvocation(record, sessionId, invocation)
         this.addTimelineItem(record, createToolTimelineItem(invocation))
         break
       }
@@ -1969,6 +2043,7 @@ export class PiAgentService {
         }
 
         record.toolInvocationById.set(event.toolCallId, updatedInvocation)
+        this.emitFileOperationsForInvocation(record, sessionId, updatedInvocation)
         this.addTimelineItem(record, createToolTimelineItem(updatedInvocation))
         break
       }
@@ -1986,11 +2061,7 @@ export class PiAgentService {
         })
 
         record.toolInvocationById.set(event.toolCallId, completedInvocation)
-        this.emit({
-          invocation: completedInvocation,
-          sessionId,
-          type: 'tool',
-        })
+        this.emitToolInvocation(record, sessionId, completedInvocation)
         this.addTimelineItem(record, createToolTimelineItem(completedInvocation))
         break
       }
@@ -2105,6 +2176,7 @@ export class PiAgentService {
       sessionId: record.summary.id,
       type: 'message',
     })
+    this.emitFileOperationsForMessage(record, normalizedMessage)
     this.addMessageTimelineItems(record, normalizedMessage)
     return normalizedMessage
   }
@@ -2156,6 +2228,66 @@ function collectNewToolInvocations(
   return [...toolInvocationById.values()].filter(
     (invocation) => !existingToolCallIds.has(invocation.toolCallId),
   )
+}
+
+function upsertFileOperation(
+  operations: AgentFileOperation[],
+  nextOperation: AgentFileOperation,
+) {
+  const existingIndex = operations.findIndex(
+    (operation) => operation.id === nextOperation.id,
+  )
+  const nextOperations =
+    existingIndex === -1
+      ? [nextOperation, ...operations]
+      : operations.map((operation, index) =>
+          index === existingIndex ? nextOperation : operation,
+        )
+
+  return nextOperations
+    .sort(compareFileOperationsDescending)
+    .slice(0, MAX_SESSION_FILE_OPERATIONS)
+}
+
+function createFileOperationsFromMessages(input: {
+  messages: AgentMessage[]
+  sessionId: string
+  workspaceRootDir: string
+}) {
+  return input.messages
+    .flatMap((message) =>
+      createFileOperationsFromAgentMessage({
+        message,
+        sessionId: input.sessionId,
+        workspaceRootDir: input.workspaceRootDir,
+      }),
+    )
+    .reduce<AgentFileOperation[]>(
+      (operations, operation) => upsertFileOperation(operations, operation),
+      [],
+    )
+}
+
+function compareFileOperationsDescending(
+  left: AgentFileOperation,
+  right: AgentFileOperation,
+) {
+  const leftTimestampMs = new Date(left.timestamp).getTime()
+  const rightTimestampMs = new Date(right.timestamp).getTime()
+
+  if (Number.isFinite(leftTimestampMs) && Number.isFinite(rightTimestampMs)) {
+    return rightTimestampMs - leftTimestampMs
+  }
+
+  return right.id.localeCompare(left.id)
+}
+
+function getFileOperationSource(record: AgentSessionRecord): AgentFileOperationSource {
+  if (record.kind === 'sdk') {
+    return 'pi-sdk'
+  }
+
+  return record.summary.transport === 'codex_cli' ? 'codex-cli' : 'agent-tool'
 }
 
 function formatSessionListItem(session: SessionInfo): AgentSessionListItem {

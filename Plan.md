@@ -405,6 +405,75 @@ If remote AI is supported, include a strict policy for:
 - how much content is sent
 - how the user can inspect the payload
 
+## Follow Agent Rework TODOs
+
+Goal:
+
+- Make follow-agent trustworthy by showing what the agent is reading, writing,
+  deleting, renaming, or changing while it works.
+- Split the feature into three explicit layers:
+  telemetry/file-operation parsing, live event emission, and UI reaction/state.
+- Keep request telemetry and git dirty-state checks as fallback signals, not as
+  the primary source of truth for live follow behavior.
+
+### 1. Normalize Agent File Operations
+
+- [x] Define a shared `AgentFileOperation` schema with operation kind, paths,
+  source, confidence, status, timestamp, session id, tool call id, and tool name.
+- [x] Add a pure parser that converts raw tool invocations into normalized file
+  operations.
+- [x] Classify direct tools such as read, grep, ls, find, edit, write, patch,
+  apply, replace, delete, and rename without needing git diff fallback.
+- [x] Add conservative shell-command inference for common read/write commands.
+- [x] Preserve uncertainty with confidence levels instead of pretending shell
+  inference is exact.
+- [x] Unit test operation parsing separately from timeline rendering and UI
+  follow behavior.
+
+### 2. Emit Live Operation Events
+
+- [x] Emit `file_operation` events from the desktop agent runtime whenever a
+  tool starts, updates, or completes.
+- [x] Emit operations for both Codex CLI transport events and PI SDK session
+  events.
+- [x] Keep timeline events for human-readable history, but stop making follow
+  behavior depend on timeline rows or request telemetry polling.
+- [x] Include operation status so the UI can distinguish in-progress work from
+  completed or failed work.
+- [x] Keep request telemetry writes as durable history and heatmap input.
+- [x] Add tests that assert live agent sessions emit file-operation events next
+  to existing tool and timeline events.
+
+### 3. Feed UI Follow From Operations
+
+- [x] Add a UI hook that subscribes to desktop agent events and keeps a bounded
+  live buffer of file operations.
+- [x] Feed operation-derived read/write events into the follow reducer before
+  telemetry and dirty-file fallbacks.
+- [x] Make reads drive activity follow and writes/deletes/renames drive edit
+  follow.
+- [x] Keep dirty-file signals as a reconciliation layer for tools or shell
+  commands that cannot be parsed confidently.
+- [ ] Surface operation confidence in debug state so suspicious gaps are visible
+  during development.
+- [ ] Ensure follow remains stable when a file is read, edited, edited again,
+  then another file is edited before the first dirty queue entry clears.
+
+### 4. Handle Hard Cases
+
+- [ ] Track new files before the next snapshot refresh and request a refresh
+  when the target file is not yet represented in the canvas.
+- [ ] Represent delete and rename operations explicitly instead of collapsing
+  them into generic edits.
+- [ ] Normalize absolute, relative, and workspace-rooted paths to the snapshot
+  path format.
+- [ ] Capture operation events from multi-path tools and shell commands that
+  touch several files.
+- [ ] Add a compact operation timeline/debug panel for validating what follow
+  thinks happened.
+- [ ] Add end-to-end coverage for read-only tool calls, exact edits, shell
+  writes, multi-file operations, failed tools, and delayed snapshot refreshes.
+
 ## Milestones
 
 ### Milestone 1: Solid local foundation

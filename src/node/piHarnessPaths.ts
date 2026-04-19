@@ -82,6 +82,7 @@ export function getPiRunScopedPaths(paths: PiHarnessPaths, runId: string) {
   return {
     lastIterationSummaryFile: join(runDir, 'last-iteration.json'),
     lastOutputFile: join(runDir, 'last-output.txt'),
+    liveFeedFile: join(runDir, 'live-feed.jsonl'),
     logFile: join(runDir, 'pi.log'),
     runDir,
     stateFile: join(runDir, 'state.json'),

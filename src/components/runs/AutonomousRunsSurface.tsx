@@ -1,5 +1,7 @@
 import type {
+  AgentFileOperation,
   AutonomousRunDetail,
+  AutonomousRunLiveFeedEntry,
   AutonomousRunSummary,
   AutonomousRunTimelinePoint,
 } from '../../types'
@@ -196,7 +198,40 @@ export function AutonomousRunsSurface({
                     <p>No completed TODOs yet.</p>
                   )}
                 </div>
+
+                <div className="cbv-run-detail-card">
+                  <p className="cbv-eyebrow">file operations</p>
+                  {selectedRunDetail?.fileOperations.length ? (
+                    <ul className="cbv-run-file-operations">
+                      {selectedRunDetail.fileOperations.slice(-120).reverse().map((operation) => (
+                        <FileOperationRow key={operation.id} operation={operation} />
+                      ))}
+                    </ul>
+                  ) : (
+                    <p>No file operations recorded yet.</p>
+                  )}
+                </div>
               </div>
+
+              <div className="cbv-run-detail-card">
+                <p className="cbv-eyebrow">live output</p>
+                {selectedRunDetail?.liveFeed.length ? (
+                  <ul className="cbv-run-live-feed">
+                    {selectedRunDetail.liveFeed.slice(-80).map((entry, index) => (
+                      <LiveFeedEntryRow entry={entry} key={getLiveFeedEntryKey(entry, index)} />
+                    ))}
+                  </ul>
+                ) : (
+                  <p>No live agent output yet.</p>
+                )}
+              </div>
+
+              {selectedRunDetail?.lastOutputExcerpt ? (
+                <div className="cbv-run-detail-card">
+                  <p className="cbv-eyebrow">last agent output</p>
+                  <pre className="cbv-run-log">{selectedRunDetail.lastOutputExcerpt}</pre>
+                </div>
+              ) : null}
 
               {selectedRunDetail?.logExcerpt ? (
                 <div className="cbv-run-detail-card">
@@ -215,6 +250,120 @@ export function AutonomousRunsSurface({
       </div>
     </div>
   )
+}
+
+function FileOperationRow({
+  operation,
+}: {
+  operation: AgentFileOperation
+}) {
+  const pathLabel = operation.path ?? operation.paths[0] ?? '(no path)'
+  const meta = [
+    operation.toolName,
+    operation.status,
+    operation.confidence,
+  ].filter(Boolean)
+
+  return (
+    <li className={`cbv-run-file-operation is-${operation.kind}`}>
+      <div className="cbv-run-file-operation-line">
+        <span>{formatTimestamp(operation.timestamp)}</span>
+        <strong>{formatFileOperationKind(operation.kind)}</strong>
+        {meta.length ? <em>{meta.join(' · ')}</em> : null}
+      </div>
+      <code title={pathLabel}>{pathLabel}</code>
+      {operation.resultPreview ? <pre>{operation.resultPreview}</pre> : null}
+    </li>
+  )
+}
+
+function formatFileOperationKind(kind: AgentFileOperation['kind']) {
+  return kind.replace(/^file_/, '').replaceAll('_', ' ')
+}
+
+function LiveFeedEntryRow({
+  entry,
+}: {
+  entry: AutonomousRunLiveFeedEntry
+}) {
+  const typeLabel = formatLiveFeedType(entry)
+  const meta = [
+    entry.phase,
+    entry.role,
+    entry.toolName,
+    entry.totalTokens ? `${formatTokenCount(entry.totalTokens)} tok` : '',
+  ].filter(Boolean)
+  const text = formatLiveFeedText(entry)
+
+  return (
+    <li className={`cbv-run-live-feed-entry is-${entry.isError ? 'error' : entry.type}`}>
+      <div className="cbv-run-live-feed-line">
+        <span>{formatTimestamp(entry.timestamp)}</span>
+        <strong>{typeLabel}</strong>
+        {meta.length ? <em>{meta.join(' · ')}</em> : null}
+      </div>
+      {text ? <pre>{text}</pre> : null}
+      <details>
+        <summary>raw event</summary>
+        <pre>{formatJsonPreview(entry)}</pre>
+      </details>
+    </li>
+  )
+}
+
+function getLiveFeedEntryKey(entry: AutonomousRunLiveFeedEntry, index: number) {
+  return [
+    entry.seq ?? index,
+    entry.timestamp,
+    entry.type,
+    entry.toolName ?? '',
+  ].join(':')
+}
+
+function formatLiveFeedType(entry: AutonomousRunLiveFeedEntry) {
+  if (entry.type === 'text_delta') {
+    return 'assistant'
+  }
+
+  if (entry.type === 'thinking_delta') {
+    return 'thinking'
+  }
+
+  if (entry.type === 'tool_start') {
+    return `tool start${entry.toolName ? ` · ${entry.toolName}` : ''}`
+  }
+
+  if (entry.type === 'tool_update') {
+    return `tool update${entry.toolName ? ` · ${entry.toolName}` : ''}`
+  }
+
+  if (entry.type === 'tool_end') {
+    return `tool end${entry.toolName ? ` · ${entry.toolName}` : ''}`
+  }
+
+  if (entry.type === 'token_usage') {
+    return 'tokens'
+  }
+
+  return entry.type.replaceAll('_', ' ')
+}
+
+function formatLiveFeedText(entry: AutonomousRunLiveFeedEntry) {
+  return [
+    entry.text,
+    entry.argsSummary ? `args ${entry.argsSummary}` : '',
+    entry.partialSummary ? `partial ${entry.partialSummary}` : '',
+    entry.resultSummary ? `result ${entry.resultSummary}` : '',
+    entry.files?.length ? `files ${entry.files.join(' · ')}` : '',
+  ].filter(Boolean).join('\n')
+}
+
+function formatJsonPreview(value: unknown) {
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return String(value)
+  }
 }
 
 function formatTokenCount(value: number) {

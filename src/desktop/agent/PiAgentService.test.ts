@@ -186,7 +186,7 @@ describe('PiAgentService brokered oauth integration', () => {
         child.stdout.write(
           `${JSON.stringify({
             item: {
-              text: 'Found the file list.',
+              text: 'Found [`src/App.tsx`](/tmp/workspace/src/App.tsx).',
               type: 'agent_message',
             },
             type: 'item.completed',
@@ -270,7 +270,7 @@ describe('PiAgentService brokered oauth integration', () => {
           (event.message as { role?: string } | undefined)?.role === 'assistant' &&
           Array.isArray((event.message as { blocks?: Array<{ text?: string }> } | undefined)?.blocks) &&
           (event.message as { blocks: Array<{ text?: string }> }).blocks.some(
-            (block) => block.text === 'Found the file list.',
+            (block) => block.text === 'Found [`src/App.tsx`](/tmp/workspace/src/App.tsx).',
           ),
       )
     const toolStart = events.find(
@@ -286,6 +286,18 @@ describe('PiAgentService brokered oauth integration', () => {
         (event.invocation as { toolCallId?: string; endedAt?: string } | undefined)?.toolCallId ===
           'call-1' &&
         Boolean((event.invocation as { endedAt?: string } | undefined)?.endedAt),
+    )
+    const fileOperation = events.find(
+      (event) =>
+        event.type === 'file_operation' &&
+        (event.operation as { toolCallId?: string } | undefined)?.toolCallId ===
+          'call-1',
+    )
+    const assistantFileOperation = events.find(
+      (event) =>
+        event.type === 'file_operation' &&
+        (event.operation as { source?: string } | undefined)?.source ===
+          'assistant-message',
     )
 
     expect(sessionCreated).toBeTruthy()
@@ -307,6 +319,46 @@ describe('PiAgentService brokered oauth integration', () => {
         toolName: 'read_file',
       },
     })
+    expect(fileOperation).toMatchObject({
+      operation: {
+        confidence: 'exact',
+        kind: 'file_read',
+        path: 'src/App.tsx',
+        source: 'codex-cli',
+        toolCallId: 'call-1',
+        toolName: 'read_file',
+      },
+      type: 'file_operation',
+    })
+    expect(assistantFileOperation).toMatchObject({
+      operation: {
+        confidence: 'fallback',
+        kind: 'file_read',
+        path: 'src/App.tsx',
+        source: 'assistant-message',
+        toolName: 'assistant_message',
+      },
+      type: 'file_operation',
+    })
+    expect(service.getWorkspaceFileOperations(workspaceRootDir)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          confidence: 'exact',
+          kind: 'file_read',
+          path: 'src/App.tsx',
+          source: 'codex-cli',
+          toolCallId: 'call-1',
+          toolName: 'read_file',
+        }),
+        expect.objectContaining({
+          confidence: 'fallback',
+          kind: 'file_read',
+          path: 'src/App.tsx',
+          source: 'assistant-message',
+          toolName: 'assistant_message',
+        }),
+      ]),
+    )
 
     expect(service.getWorkspaceMessages(workspaceRootDir)).toEqual(
       expect.arrayContaining([
@@ -323,7 +375,7 @@ describe('PiAgentService brokered oauth integration', () => {
           blocks: expect.arrayContaining([
             expect.objectContaining({
               kind: 'text',
-              text: 'Found the file list.',
+              text: 'Found [`src/App.tsx`](/tmp/workspace/src/App.tsx).',
             }),
           ]),
           role: 'assistant',
@@ -351,7 +403,7 @@ describe('PiAgentService brokered oauth integration', () => {
             item.type === 'message' &&
             item.role === 'assistant' &&
             item.blockKind === 'text' &&
-            item.text === 'Found the file list.',
+            item.text === 'Found [`src/App.tsx`](/tmp/workspace/src/App.tsx).',
         ),
     ).toHaveLength(1)
 

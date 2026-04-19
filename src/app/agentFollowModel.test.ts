@@ -6,7 +6,7 @@ import {
   followControllerReducer,
   getPreferredFollowSymbolIdsForFile,
 } from './agentFollowModel'
-import type { ProjectSnapshot, TelemetryActivityEvent } from '../types'
+import type { AgentFileOperation, ProjectSnapshot, TelemetryActivityEvent } from '../types'
 
 describe('agentFollowModel', () => {
   it('prefers edit targets over generic activity targets', () => {
@@ -44,6 +44,168 @@ describe('agentFollowModel', () => {
     expect(state.debug.currentMode).toBe('edit')
     expect(state.currentCameraCommand?.target.path).toBe('debug_brute.js')
     expect(state.currentInspectorCommand?.target.path).toBe('debug_brute.js')
+  })
+
+  it('follows live file operation events before telemetry is available', () => {
+    const snapshot = createSnapshot()
+    const state = reduceFollowState([
+      { type: 'FOLLOW_TOGGLED', enabled: true, nowMs: 1_500 },
+      { type: 'VIEW_MODE_CHANGED', mode: 'symbols', nowMs: 1_510, viewMode: 'symbols' },
+      {
+        type: 'SNAPSHOT_CONTEXT_UPDATED',
+        nowMs: 1_520,
+        snapshot,
+        visibleNodeIds: ['symbol:createPRNG', 'symbol:getSpawnCell'],
+      },
+      {
+        type: 'FILE_OPERATIONS_UPDATED',
+        fileOperations: [
+          createFileOperation({
+            id: 'operation:read:game',
+            kind: 'file_read',
+            path: 'game.js',
+            timestamp: '2026-04-18T10:00:01.000Z',
+            toolName: 'read_file',
+          }),
+          createFileOperation({
+            id: 'operation:write:debug',
+            kind: 'file_write',
+            path: 'debug_brute.js',
+            timestamp: '2026-04-18T10:00:02.000Z',
+            toolName: 'apply_patch',
+          }),
+        ],
+        nowMs: 1_530,
+      },
+    ])
+
+    expect(state.debug.currentMode).toBe('edit')
+    expect(state.latestResolvedActivityTarget?.path).toBe('game.js')
+    expect(state.latestResolvedEditTarget).toEqual(
+      expect.objectContaining({
+        eventKey: 'operation:write:debug',
+        path: 'debug_brute.js',
+        primaryNodeId: 'symbol:createPRNG',
+      }),
+    )
+    expect(state.currentInspectorCommand?.target.toolNames).toEqual(['apply_patch'])
+  })
+
+  it('keeps the primary path first for same-timestamp multi-path operations', () => {
+    const snapshot = createSnapshot()
+    const state = reduceFollowState([
+      { type: 'FOLLOW_TOGGLED', enabled: true, nowMs: 1_600 },
+      {
+        type: 'SNAPSHOT_CONTEXT_UPDATED',
+        nowMs: 1_610,
+        snapshot,
+        visibleNodeIds: ['file:debug', 'file:game'],
+      },
+      {
+        type: 'FILE_OPERATIONS_UPDATED',
+        fileOperations: [
+          createFileOperation({
+            id: 'operation:read:0:debug',
+            kind: 'file_read',
+            path: 'debug_brute.js',
+            paths: ['debug_brute.js', 'game.js'],
+            timestamp: '2026-04-18T10:00:01.000Z',
+            toolName: 'rg',
+          }),
+          createFileOperation({
+            id: 'operation:read:1:game',
+            kind: 'file_read',
+            path: 'game.js',
+            paths: ['debug_brute.js', 'game.js'],
+            timestamp: '2026-04-18T10:00:01.000Z',
+            toolName: 'rg',
+          }),
+        ],
+        nowMs: 1_620,
+      },
+    ])
+
+    expect(state.debug.currentMode).toBe('activity')
+    expect(state.latestResolvedActivityTarget?.path).toBe('debug_brute.js')
+  })
+
+  it('prefers recent live operation reads over coarser request telemetry', () => {
+    const snapshot = createSnapshot()
+    const state = reduceFollowState([
+      { type: 'FOLLOW_TOGGLED', enabled: true, nowMs: 1_700 },
+      {
+        type: 'SNAPSHOT_CONTEXT_UPDATED',
+        nowMs: 1_710,
+        snapshot,
+        visibleNodeIds: ['file:debug', 'file:game'],
+      },
+      {
+        type: 'FILE_OPERATIONS_UPDATED',
+        fileOperations: [
+          createFileOperation({
+            id: 'operation:read:debug',
+            kind: 'file_read',
+            path: 'debug_brute.js',
+            timestamp: '2026-04-18T10:00:01.000Z',
+            toolName: 'read_file',
+          }),
+        ],
+        nowMs: 1_720,
+      },
+      {
+        type: 'TELEMETRY_BATCH_UPDATED',
+        nowMs: 1_730,
+        telemetryEnabled: true,
+        telemetryActivityEvents: [
+          createTelemetryEvent({
+            key: 'request:summary:game',
+            path: 'game.js',
+            timestamp: '2026-04-18T10:00:05.000Z',
+            toolNames: ['read_file'],
+          }),
+        ],
+      },
+    ])
+
+    expect(state.debug.currentMode).toBe('activity')
+    expect(state.latestResolvedActivityTarget?.path).toBe('debug_brute.js')
+  })
+
+  it('follows file references extracted from assistant messages', () => {
+    const snapshot = createSnapshot()
+    const state = reduceFollowState([
+      { type: 'FOLLOW_TOGGLED', enabled: true, nowMs: 1_800 },
+      {
+        type: 'SNAPSHOT_CONTEXT_UPDATED',
+        nowMs: 1_810,
+        snapshot,
+        visibleNodeIds: ['file:debug', 'file:game'],
+      },
+      {
+        type: 'FILE_OPERATIONS_UPDATED',
+        fileOperations: [
+          createFileOperation({
+            confidence: 'fallback',
+            id: 'operation:assistant:debug',
+            kind: 'file_read',
+            path: 'debug_brute.js',
+            source: 'assistant-message',
+            timestamp: '2026-04-18T10:00:01.000Z',
+            toolName: 'assistant_message',
+          }),
+        ],
+        nowMs: 1_820,
+      },
+    ])
+
+    expect(state.debug.currentMode).toBe('activity')
+    expect(state.latestResolvedActivityTarget).toEqual(
+      expect.objectContaining({
+        eventKey: 'operation:assistant:debug',
+        path: 'debug_brute.js',
+        primaryNodeId: 'file:debug',
+      }),
+    )
   })
 
   it('adds newly dirty files to the queue in telemetry order and prunes cleared ones', () => {
@@ -543,6 +705,28 @@ function createTelemetryEvent(
     timestamp: overrides.timestamp ?? '2026-04-18T10:00:00.000Z',
     toolNames: overrides.toolNames ?? [],
     totalTokens: overrides.totalTokens ?? 100,
+  }
+}
+
+function createFileOperation(
+  overrides: Partial<AgentFileOperation> & Pick<
+    AgentFileOperation,
+    'id' | 'kind' | 'path' | 'timestamp' | 'toolName'
+  >,
+): AgentFileOperation {
+  return {
+    confidence: overrides.confidence ?? 'exact',
+    id: overrides.id,
+    kind: overrides.kind,
+    path: overrides.path,
+    paths: overrides.paths ?? (overrides.path ? [overrides.path] : []),
+    resultPreview: overrides.resultPreview,
+    sessionId: overrides.sessionId ?? 'session:test',
+    source: overrides.source ?? 'pi-sdk',
+    status: overrides.status ?? 'completed',
+    timestamp: overrides.timestamp,
+    toolCallId: overrides.toolCallId ?? 'call:test',
+    toolName: overrides.toolName,
   }
 }
 

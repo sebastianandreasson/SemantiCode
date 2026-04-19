@@ -2,6 +2,8 @@ import { memo, type CSSProperties } from 'react'
 
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 
+import { cx, getAgentHeatStyle } from './nodePresentation'
+
 type CodebaseSymbolNodeData = Record<string, unknown> & {
   title: string
   subtitle: string
@@ -58,34 +60,25 @@ export const CodebaseSymbolNode = memo(function CodebaseSymbolNode({
     '--cbv-symbol-subtitle-margin': `${0.125 * contentScale}rem`,
     '--cbv-symbol-handle-size': `${0.375 * contentScale}rem`,
     '--cbv-symbol-stripe-width': `${Math.max(2, 2 * locScale)}px`,
-    ...((nodeData.heatWeight ?? 0) > 0
-      ? {
-          '--cbv-agent-heat-strength': `${Math.max(
-            0.28,
-            Math.min(1, nodeData.heatWeight ?? 0),
-          )}`,
-        }
-      : {}),
+    ...(getAgentHeatStyle(nodeData.heatWeight) ?? {}),
   } as CSSProperties
 
   return (
     <div
-      className={[
+      className={cx(
         'cbv-node',
         'is-symbol',
-        nodeData.kindClass ? `is-kind-${nodeData.kindClass}` : '',
-        nodeData.contained ? 'is-contained' : '',
-        nodeData.clusterExpanded ? 'is-cluster-expanded' : '',
-        nodeData.compact ? 'is-compact' : '',
-        locScale > 1.08 ? 'is-loc-scaled' : '',
-        selected ? 'is-selected' : '',
-        nodeData.dimmed ? 'is-dimmed' : '',
-        nodeData.highlighted ? 'is-compare-highlighted' : '',
-        (nodeData.heatWeight ?? 0) > 0 ? 'has-agent-heat' : '',
-        nodeData.heatPulse ? 'is-agent-heat-pulse' : '',
-      ]
-        .filter(Boolean)
-        .join(' ')}
+        nodeData.kindClass && `is-kind-${nodeData.kindClass}`,
+        nodeData.contained && 'is-contained',
+        nodeData.clusterExpanded && 'is-cluster-expanded',
+        nodeData.compact && 'is-compact',
+        locScale > 1.08 && 'is-loc-scaled',
+        selected && 'is-selected',
+        nodeData.dimmed && 'is-dimmed',
+        nodeData.highlighted && 'is-compare-highlighted',
+        (nodeData.heatWeight ?? 0) > 0 && 'has-agent-heat',
+        nodeData.heatPulse && 'is-agent-heat-pulse',
+      )}
       style={nodeStyle}
     >
       <Handle

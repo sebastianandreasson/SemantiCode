@@ -10,6 +10,7 @@ import { buildSemanticPurposeSummaryRecords } from './purposeSummaries'
 import { projectSemanticEmbeddings } from './projection/umap'
 import { refineSemanticLayout } from './projection/refinement'
 import { hashSemanticText } from './symbolText'
+import { getSymbolLayoutSlot } from '../layouts/symbolLayout'
 import type {
   SemanticEmbeddingVectorRecord,
   SemanticPurposeSummaryRecord,
@@ -20,7 +21,7 @@ import type { PreprocessedWorkspaceContext } from '../preprocessing/types'
 const SEMANTIC_SYMBOL_NODE_WIDTH = 248
 const SEMANTIC_SYMBOL_NODE_HEIGHT = 82
 const SEMANTIC_PROJECTION_SEED = 17
-const SEMANTIC_LAYOUT_COORDINATE_VERSION = 'semantic-spacing-v2'
+const SEMANTIC_LAYOUT_COORDINATE_VERSION = 'semantic-spacing-v3'
 
 const SUPPORTED_SYMBOL_KINDS = new Set<SymbolKind>([
   'class',
@@ -54,7 +55,8 @@ export function buildSemanticLayout(
 
   return refineSemanticLayout(projection, {
     baseLayout,
-    minimumSpacing: 220,
+    minimumSpacing: 260,
+    nodeFootprints: buildSemanticNodeFootprints(snapshot, purposeSummaries),
   })
 }
 
@@ -189,4 +191,18 @@ function isSupportedSemanticSymbol(
   node: ProjectSnapshot['nodes'][string],
 ): node is SymbolNode {
   return isSymbolNode(node) && SUPPORTED_SYMBOL_KINDS.has(node.symbolKind)
+}
+
+function buildSemanticNodeFootprints(
+  snapshot: ProjectSnapshot,
+  purposeSummaries: SemanticPurposeSummaryRecord[],
+) {
+  return Object.fromEntries(
+    purposeSummaries.flatMap((record) => {
+      const node = snapshot.nodes[record.symbolId]
+      return node && isSupportedSemanticSymbol(node)
+        ? [[record.symbolId, getSymbolLayoutSlot(node)]]
+        : []
+    }),
+  )
 }

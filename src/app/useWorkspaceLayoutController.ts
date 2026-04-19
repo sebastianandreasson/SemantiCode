@@ -534,7 +534,7 @@ function isResolvedSemanticLayoutCurrent(
       layout.strategy === 'semantic' &&
       layout.updatedAt === snapshot.generatedAt &&
       !layout.description?.startsWith('Experimental semantic symbol layout scaffold.') &&
-      Boolean(layout.description?.includes('semantic-spacing-v2'))
+      Boolean(layout.description?.includes('semantic-spacing-v3'))
   )
 }
 

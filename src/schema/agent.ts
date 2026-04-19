@@ -124,6 +124,41 @@ export interface AgentToolInvocation {
   resultPreview?: string
 }
 
+export type AgentFileOperationKind =
+  | 'file_read'
+  | 'file_write'
+  | 'file_delete'
+  | 'file_rename'
+  | 'file_changed'
+  | 'shell_command'
+
+export type AgentFileOperationConfidence = 'exact' | 'inferred' | 'fallback'
+
+export type AgentFileOperationSource =
+  | 'agent-tool'
+  | 'assistant-message'
+  | 'codex-cli'
+  | 'git-dirty'
+  | 'pi-sdk'
+  | 'request-telemetry'
+
+export type AgentFileOperationStatus = 'running' | 'completed' | 'error'
+
+export interface AgentFileOperation {
+  confidence: AgentFileOperationConfidence
+  id: string
+  kind: AgentFileOperationKind
+  path?: string
+  paths: string[]
+  resultPreview?: string
+  sessionId: string
+  source: AgentFileOperationSource
+  status: AgentFileOperationStatus
+  timestamp: string
+  toolCallId?: string
+  toolName: string
+}
+
 export type AgentTimelineItem =
   | {
       id: string
@@ -251,6 +286,11 @@ export type AgentEvent =
       type: 'tool'
       sessionId: string
       invocation: AgentToolInvocation
+    }
+  | {
+      type: 'file_operation'
+      sessionId: string
+      operation: AgentFileOperation
     }
   | {
       type: 'timeline'

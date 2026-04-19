@@ -67,6 +67,11 @@ describe('buildSemanticLayout', () => {
 
     expect(layout.placements['symbol:alpha']).toBeDefined()
     expect(layout.placements['symbol:beta']).toBeDefined()
+    expect(
+      (layout.placements['symbol:beta']?.x ?? 0) -
+        (layout.placements['symbol:alpha']?.x ?? 0),
+    ).toBeGreaterThan(1_000)
+    expect(layout.description).toContain('semantic-spacing-v3')
     expect(layout.hiddenNodeIds).not.toContain('symbol:alpha')
     expect(layout.hiddenNodeIds).not.toContain('symbol:beta')
   })
@@ -119,7 +124,7 @@ function createSnapshot(): ProjectSnapshot {
         parentSymbolId: null,
         range: {
           start: { line: 1, column: 1 },
-          end: { line: 3, column: 1 },
+          end: { line: 220, column: 1 },
         },
       },
       'symbol:beta': {
