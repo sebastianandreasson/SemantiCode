@@ -235,6 +235,84 @@ describe('React project plugin', () => {
       await rm(rootDir, { recursive: true, force: true })
     }
   })
+
+  it('classifies common React component declaration shapes from snapshot analysis', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'semanticode-react-components-'))
+
+    try {
+      await mkdir(join(rootDir, 'src'), { recursive: true })
+      await writeFile(
+        join(rootDir, 'package.json'),
+        JSON.stringify({
+          name: 'react-component-shapes',
+          dependencies: {
+            react: '^19.0.0',
+          },
+        }),
+        'utf8',
+      )
+      await writeFile(
+        join(rootDir, 'src', 'components.tsx'),
+        [
+          "import { forwardRef, memo } from 'react'",
+          '',
+          'export function Panel() {',
+          '  return (',
+          '    <section />',
+          '  )',
+          '}',
+          '',
+          'export const Toolbar = () => (',
+          '  <nav />',
+          ')',
+          '',
+          'export const MemoCard = memo(function MemoCard() {',
+          '  return (',
+          '    <article />',
+          '  )',
+          '})',
+          '',
+          'export const RefInput = forwardRef(function RefInput() {',
+          '  return (',
+          '    <input />',
+          '  )',
+          '})',
+          '',
+          'export function Utility() {',
+          '  const render = () => <span />',
+          '  return render',
+          '}',
+          '',
+        ].join('\n'),
+        'utf8',
+      )
+
+      const snapshot = await readProjectSnapshot({
+        rootDir,
+        analyzeCalls: false,
+        analyzeImports: true,
+        analyzeSymbols: true,
+      })
+
+      for (const name of ['Panel', 'Toolbar', 'MemoCard', 'RefInput']) {
+        expect(findSymbolByName(snapshot, name)).toEqual(
+          expect.objectContaining({
+            facets: expect.arrayContaining(['react:component']),
+            symbolKind: 'function',
+          }),
+        )
+      }
+
+      expect(findSymbolByName(snapshot, 'Utility')).toEqual(
+        expect.objectContaining({
+          facets: [],
+          symbolKind: 'function',
+        }),
+      )
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
 })
 
 function createSnapshot(input: {

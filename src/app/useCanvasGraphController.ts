@@ -23,6 +23,7 @@ import {
   type GraphLayerVisibility,
   type LayoutDraft,
   type LayoutSpec,
+  type ProjectNode,
   type TelemetryMode,
   type TelemetryWindow,
   type ViewportState,
@@ -379,6 +380,113 @@ export function useCanvasGraphController({
     }
   }, [flowInstance, nodes, snapshotOrNull])
 
+  const focusCanvasOnNode = useCallback((input: {
+    fallbackNodeIds?: string[]
+    nodeId: string
+  }) => {
+    if (!flowInstance || !snapshotOrNull) {
+      return
+    }
+
+    const visibleNodeIds = new Set(nodes.map((node) => node.id))
+    const candidates = [input.nodeId]
+    const snapshotNode = snapshotOrNull.nodes[input.nodeId]
+
+    if (snapshotNode && isSymbolNode(snapshotNode)) {
+      const cluster = symbolClusterState.clusterByNodeId[snapshotNode.id]
+
+      if (cluster) {
+        candidates.push(cluster.rootNodeId)
+      }
+
+      let parentSymbolId = snapshotNode.parentSymbolId
+
+      while (parentSymbolId) {
+        candidates.push(parentSymbolId)
+        const parentSymbol = snapshotOrNull.nodes[parentSymbolId]
+        parentSymbolId = parentSymbol && isSymbolNode(parentSymbol)
+          ? parentSymbol.parentSymbolId
+          : null
+      }
+
+      candidates.push(snapshotNode.fileId)
+    }
+
+    candidates.push(...(input.fallbackNodeIds ?? []))
+
+    const resolveVisibleAncestor = (nodeId: string) => {
+      let currentNode: ProjectNode | undefined = snapshotOrNull.nodes[nodeId]
+
+      while (currentNode) {
+        if (visibleNodeIds.has(currentNode.id)) {
+          return currentNode.id
+        }
+
+        const parentId: string | null = isSymbolNode(currentNode)
+          ? currentNode.parentSymbolId ?? currentNode.fileId
+          : currentNode.parentId
+
+        currentNode = parentId ? snapshotOrNull.nodes[parentId] : undefined
+      }
+
+      return null
+    }
+
+    let targetNodeId: string | null = null
+
+    for (const candidate of candidates) {
+      if (visibleNodeIds.has(candidate)) {
+        targetNodeId = candidate
+        break
+      }
+
+      const ancestorNodeId = resolveVisibleAncestor(candidate)
+
+      if (ancestorNodeId) {
+        targetNodeId = ancestorNodeId
+        break
+      }
+    }
+
+    if (!targetNodeId) {
+      return
+    }
+
+    const targetNode =
+      snapshotOrNull.nodes[targetNodeId] ??
+      snapshotOrNull.nodes[input.nodeId] ??
+      null
+    const bounds = flowInstance.getNodesBounds([targetNodeId])
+    const desiredZoom = getFollowTargetZoom({
+      isEdit: false,
+      mode: viewMode === 'symbols' ? 'symbols' : 'files',
+      node: targetNode,
+    })
+
+    if (bounds.width > 0 && bounds.height > 0) {
+      void flowInstance.setCenter(
+        bounds.x + bounds.width / 2,
+        bounds.y + bounds.height / 2,
+        {
+          duration: 240,
+          zoom: desiredZoom,
+        },
+      )
+      return
+    }
+
+    const nodesToFit = nodes.filter((node) => node.id === targetNodeId)
+
+    if (nodesToFit.length > 0) {
+      void flowInstance.fitView({
+        duration: 240,
+        maxZoom: desiredZoom,
+        nodes: nodesToFit,
+        padding: 0.18,
+      })
+    }
+  }, [flowInstance, nodes, snapshotOrNull, symbolClusterState, viewMode])
+
   useEffect(() => {
     if (!compareOverlayActive || !resolvedCompareOverlay || !flowInstance) {
       lastFittedCompareKeyRef.current = null
@@ -540,6 +648,7 @@ export function useCanvasGraphController({
     edges,
     flowInstance,
     focusCanvasOnFollowTarget,
+    focusCanvasOnNode,
     handleCanvasEdgeClick,
     handleCanvasMoveEnd,
     handleCanvasNodeClick,

@@ -19,9 +19,10 @@ interface UseWorkspaceBootstrapInput {
     snapshot: CodebaseSnapshot
     layoutState: LayoutStateResponse
     persistedContext: PreprocessedWorkspaceContext | null
-    workspaceSyncStatus: WorkspaceArtifactSyncStatus
+    workspaceSyncStatus: WorkspaceArtifactSyncStatus | null
   }) => void
   onLoadError: (message: string) => void
+  onWorkspaceSyncStatusReady?: (workspaceSyncStatus: WorkspaceArtifactSyncStatus) => void
   onReadyPersistedContext: (
     snapshot: CodebaseSnapshot,
     persistedContext: PreprocessedWorkspaceContext,
@@ -60,12 +61,10 @@ export function useWorkspaceBootstrap(input: UseWorkspaceBootstrapInput) {
       callbacksRef.current.onLoadStart()
 
       try {
-        const [{ layoutState, snapshot }, persistedContext, workspaceSyncStatus] =
-          await Promise.all([
-            fetchWorkspaceState(),
-            fetchPersistedPreprocessedWorkspaceContext(),
-            fetchWorkspaceSyncStatus(),
-          ])
+        const [{ layoutState, snapshot }, persistedContext] = await Promise.all([
+          fetchWorkspaceState(),
+          fetchPersistedPreprocessedWorkspaceContext(),
+        ])
 
         if (isCancelled) {
           return
@@ -79,12 +78,22 @@ export function useWorkspaceBootstrap(input: UseWorkspaceBootstrapInput) {
           snapshot,
           layoutState,
           persistedContext,
-          workspaceSyncStatus,
+          workspaceSyncStatus: null,
         })
 
         if (persistedContext?.isComplete) {
           callbacksRef.current.onReadyPersistedContext(snapshot, persistedContext)
         }
+
+        void fetchWorkspaceSyncStatus()
+          .then((workspaceSyncStatus) => {
+            if (!isCancelled) {
+              callbacksRef.current.onWorkspaceSyncStatusReady?.(workspaceSyncStatus)
+            }
+          })
+          .catch(() => {
+            // Sync status is advisory chrome; the workspace should remain usable if it fails.
+          })
       } catch (error) {
         if (isCancelled) {
           return

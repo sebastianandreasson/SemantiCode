@@ -17,6 +17,7 @@ import type {
   PreprocessingEmbeddingResponse,
   PreprocessingContextResponse,
   PreprocessingSummaryResponse,
+  SemanticLayoutResponse,
   UiPreferences,
   UiPreferencesResponse,
   TelemetryActivityResponse,
@@ -41,6 +42,7 @@ import {
   SEMANTICODE_PREPROCESSING_ROUTE,
   SEMANTICODE_PREPROCESSING_SUMMARY_ROUTE,
   SEMANTICODE_RUNS_ROUTE,
+  SEMANTICODE_SEMANTIC_LAYOUT_ROUTE,
   SEMANTICODE_ROUTE,
   SEMANTICODE_SYNC_ROUTE,
   SEMANTICODE_TELEMETRY_ACTIVITY_ROUTE,
@@ -94,6 +96,19 @@ export async function fetchLayoutState() {
   }
 
   return (await response.json()) as LayoutStateResponse
+}
+
+export async function fetchSemanticLayout() {
+  const response = await fetch(SEMANTICODE_SEMANTIC_LAYOUT_ROUTE)
+
+  if (!response.ok) {
+    throw new Error(await getResponseErrorMessage(
+      response,
+      `Semantic layout request failed with status ${response.status}.`,
+    ))
+  }
+
+  return (await response.json()) as SemanticLayoutResponse
 }
 
 export async function postAgentMessage(

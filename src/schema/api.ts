@@ -63,6 +63,11 @@ export interface LayoutStateResponse {
   activeDraftId: string | null
 }
 
+export interface SemanticLayoutResponse {
+  cached: boolean
+  layout: LayoutSpec
+}
+
 export interface PreprocessingContextResponse {
   context: PreprocessedWorkspaceContext | null
 }

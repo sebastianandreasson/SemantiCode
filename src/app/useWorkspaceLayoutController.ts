@@ -1,8 +1,9 @@
 import { useEffect, useMemo } from 'react'
 
+import { fetchSemanticLayout } from './apiClient'
 import { buildStructuralLayout } from '../layouts/structuralLayout'
 import { buildSymbolLayout } from '../layouts/symbolLayout'
-import { buildSemanticLayout } from '../semantic/semanticLayout'
+import { buildSemanticLayoutScaffold } from '../semantic/semanticLayout'
 import type {
   CanvasBaseScene,
   CodebaseSnapshot,
@@ -10,7 +11,6 @@ import type {
   LayoutCompareOverlayReference,
   LayoutSpec,
   OverlayFocusMode,
-  PreprocessedWorkspaceContext,
   VisualizerViewMode,
   WorkspaceArtifactSyncStatus,
   WorkspaceUiState,
@@ -23,6 +23,7 @@ import {
 import {
   areLayoutListsEquivalent,
   getPreferredViewModeForLayout,
+  mergeDefaultLayoutWithExisting,
   mergeLayoutsWithDefaults,
 } from '../visualizer/flowModel'
 
@@ -37,7 +38,6 @@ export interface UseWorkspaceLayoutControllerInput {
   onClearDraftActionError: () => void
   overlayFocusMode: OverlayFocusMode
   overlayVisibility: boolean
-  preprocessedWorkspaceContext: PreprocessedWorkspaceContext | null
   setActiveDraftId: (draftId: string | null) => void
   setActiveLayoutId: (layoutId: string | null) => void
   setBaseScene: (scene: CanvasBaseScene) => void
@@ -71,7 +71,6 @@ export function useWorkspaceLayoutController({
   onClearDraftActionError,
   overlayFocusMode,
   overlayVisibility,
-  preprocessedWorkspaceContext,
   setActiveDraftId,
   setActiveLayoutId,
   setBaseScene,
@@ -113,7 +112,12 @@ export function useWorkspaceLayoutController({
 
     const structuralLayout = buildStructuralLayout(snapshot)
     const symbolLayout = buildSymbolLayout(snapshot)
-    const semanticLayout = buildSemanticLayout(snapshot, preprocessedWorkspaceContext)
+    const semanticScaffold = buildSemanticLayoutScaffold(snapshot)
+    const semanticLayout = getCurrentSemanticLayoutOrScaffold(
+      layouts,
+      semanticScaffold,
+      snapshot,
+    )
     const nextLayouts = mergeLayoutsWithDefaults(layouts, [
       structuralLayout,
       symbolLayout,
@@ -196,7 +200,6 @@ export function useWorkspaceLayoutController({
     activeLayoutId,
     draftLayouts,
     layouts,
-    preprocessedWorkspaceContext,
     setActiveDraftId,
     setActiveLayoutId,
     setDraftLayouts,
@@ -224,6 +227,56 @@ export function useWorkspaceLayoutController({
     layouts.find((layout) => layout.id === activeLayoutId) ??
     layouts[0] ??
     null
+  const currentSemanticLayout =
+    layouts.find((layout) => layout.strategy === 'semantic') ?? null
+  const shouldResolveSemanticLayout = snapshot
+    ? (
+        activeLayout?.strategy === 'semantic' ||
+        baseScene.kind === 'semantic_projection'
+      ) &&
+      !isResolvedSemanticLayoutCurrent(currentSemanticLayout, snapshot)
+    : false
+
+  useEffect(() => {
+    if (!snapshot?.rootDir || !shouldResolveSemanticLayout) {
+      return
+    }
+
+    let cancelled = false
+
+    void fetchSemanticLayout()
+      .then(({ layout }) => {
+        if (cancelled) {
+          return
+        }
+
+        const nextLayouts = layouts.some((candidate) => candidate.id === layout.id)
+          ? layouts.map((candidate) =>
+              candidate.id === layout.id
+                ? isResolvedSemanticLayoutCurrent(candidate, snapshot)
+                  ? mergeDefaultLayoutWithExisting(layout, candidate)
+                  : layout
+                : candidate,
+            )
+          : [...layouts, layout]
+
+        if (!areLayoutListsEquivalent(layouts, nextLayouts)) {
+          setLayouts(nextLayouts)
+        }
+      })
+      .catch(() => {
+        // Keep the scaffold in place; semantic projection remains optional.
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [
+    layouts,
+    setLayouts,
+    shouldResolveSemanticLayout,
+    snapshot,
+  ])
   const layoutSyncById = useMemo(
     () =>
       new Map(
@@ -454,6 +507,34 @@ function formatLayoutOptionLabel(
 
   const issueCount = syncEntry.staleCount + syncEntry.missingCount
   return `${baseLabel} · outdated (${issueCount})`
+}
+
+function getCurrentSemanticLayoutOrScaffold(
+  layouts: LayoutSpec[],
+  scaffold: LayoutSpec,
+  snapshot: CodebaseSnapshot,
+) {
+  const currentSemanticLayout =
+    layouts.find((layout) => layout.id === scaffold.id && layout.strategy === 'semantic') ??
+    null
+
+  if (currentSemanticLayout && isResolvedSemanticLayoutCurrent(currentSemanticLayout, snapshot)) {
+    return currentSemanticLayout
+  }
+
+  return scaffold
+}
+
+function isResolvedSemanticLayoutCurrent(
+  layout: LayoutSpec | null,
+  snapshot: CodebaseSnapshot,
+) {
+  return Boolean(
+    layout &&
+      layout.strategy === 'semantic' &&
+      layout.updatedAt === snapshot.generatedAt &&
+      layout.description !== 'Experimental semantic symbol layout scaffold.',
+  )
 }
 
 function formatLayoutSyncLabel(

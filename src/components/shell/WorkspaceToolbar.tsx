@@ -1,3 +1,11 @@
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
+
 interface LayoutOption {
   label: string
   value: string
@@ -41,6 +49,16 @@ export function WorkspaceToolbar({
   workspaceName,
   workspaceRootDir,
 }: WorkspaceToolbarProps) {
+  const [layoutMenuOpen, setLayoutMenuOpen] = useState(false)
+  const layoutPickerRef = useRef<HTMLDivElement | null>(null)
+  const layoutMenuId = useId()
+  const selectedLayoutOption = useMemo(
+    () =>
+      layoutOptions.find((option) => option.value === selectedLayoutValue) ??
+      layoutOptions[0] ??
+      null,
+    [layoutOptions, selectedLayoutValue],
+  )
   const preprocessingTone =
     preprocessingStatus?.runState === 'error'
       ? 'error'
@@ -57,6 +75,35 @@ export function WorkspaceToolbar({
     preprocessingStatus?.workspaceSync?.isOutdated
       ? `${preprocessingStatus.title}\n\n${preprocessingStatus.workspaceSync.title}`
       : preprocessingStatus?.title ?? ''
+
+  useEffect(() => {
+    if (!layoutMenuOpen) {
+      return
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      if (
+        layoutPickerRef.current &&
+        !layoutPickerRef.current.contains(event.target as Node)
+      ) {
+        setLayoutMenuOpen(false)
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setLayoutMenuOpen(false)
+      }
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [layoutMenuOpen])
 
   return (
     <header className="cbv-toolbar">
@@ -91,20 +138,56 @@ export function WorkspaceToolbar({
 
       <div className="cbv-toolbar-center">
         <div className="cbv-layout-controls">
-          <div className="cbv-layout-picker">
-            <select
+          <div
+            className={`cbv-layout-picker${layoutMenuOpen ? ' is-open' : ''}`}
+            ref={layoutPickerRef}
+          >
+            <button
+              aria-controls={layoutMenuOpen ? layoutMenuId : undefined}
+              aria-expanded={layoutMenuOpen}
+              aria-haspopup="listbox"
               aria-label="Layout"
-              onChange={(event) => {
-                onSelectLayoutValue(event.target.value)
-              }}
-              value={selectedLayoutValue}
+              className="cbv-layout-trigger"
+              onClick={() => setLayoutMenuOpen((current) => !current)}
+              type="button"
             >
-              {layoutOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
+              <span aria-hidden="true" className="cbv-layout-trigger-dot" />
+              <span className="cbv-layout-trigger-label">
+                {selectedLayoutOption?.label ?? 'Select layout'}
+              </span>
+              <span aria-hidden="true" className="cbv-layout-trigger-caret">
+                ▾
+              </span>
+            </button>
+            {layoutMenuOpen ? (
+              <div
+                className="cbv-layout-menu"
+                id={layoutMenuId}
+                role="listbox"
+              >
+                {layoutOptions.map((option) => (
+                  <button
+                    aria-selected={option.value === selectedLayoutValue}
+                    className={`cbv-layout-option${
+                      option.value === selectedLayoutValue ? ' is-selected' : ''
+                    }`}
+                    key={option.value}
+                    onClick={() => {
+                      if (option.value !== selectedLayoutValue) {
+                        onSelectLayoutValue(option.value)
+                      }
+
+                      setLayoutMenuOpen(false)
+                    }}
+                    role="option"
+                    type="button"
+                  >
+                    <span aria-hidden="true" className="cbv-layout-option-dot" />
+                    <span className="cbv-layout-option-label">{option.label}</span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </div>
         </div>
       </div>

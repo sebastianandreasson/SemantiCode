@@ -225,13 +225,22 @@ export function WorkspaceSidebar({
                           {group.items.map((item) => (
                             <button
                               className={`cbv-outline-item${selectedNodeId === item.id ? ' is-active' : ''}`}
+                              aria-label={`${item.title}, ${item.subtitle}, ${item.metric ?? 0} LOC`}
                               key={item.id}
                               onClick={() => onSelectSymbol(item.id)}
                               type="button"
                             >
                               <span className="cbv-outline-item-main">
-                                <strong>{item.title}</strong>
-                                <span>{item.subtitle}</span>
+                                <strong title={item.title}>{item.title}</strong>
+                              </span>
+                              <span
+                                className="cbv-outline-item-loc"
+                                title={`${item.metric ?? 0} LOC`}
+                              >
+                                {item.metric ?? 0} loc
+                              </span>
+                              <span className="cbv-outline-item-subtitle" title={item.subtitle}>
+                                {item.subtitle}
                               </span>
                               <span className="cbv-outline-item-meta">
                                 {item.badge ? (
@@ -244,9 +253,6 @@ export function WorkspaceSidebar({
                                     }}
                                   />
                                 </span>
-                                {typeof item.metric === 'number' ? (
-                                  <span className="cbv-outline-item-loc">{item.metric}</span>
-                                ) : null}
                               </span>
                             </button>
                           ))}

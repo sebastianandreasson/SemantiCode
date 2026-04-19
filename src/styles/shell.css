@@ -99,12 +99,6 @@
   gap: 0.38rem;
 }
 
-.cbv-layout-picker select {
-  min-height: 2.7rem;
-  padding: 0.65rem 0.8rem;
-  font-size: 0.84rem;
-}
-
 .cbv-toolbar-button.is-active {
   background: color-mix(in oklch, var(--app-accent) 22%, var(--app-surface-soft-2));
   border-color: color-mix(in oklch, var(--app-accent) 44%, var(--app-border));
@@ -244,17 +238,6 @@
   display: grid;
   gap: 0.22rem;
   min-width: min(24rem, 42vw);
-}
-
-.cbv-layout-picker select {
-  min-width: 0;
-  width: 100%;
-  border: 1px solid var(--app-input-border);
-  border-radius: 0.72rem;
-  background: var(--app-input-bg);
-  color: var(--app-input-text);
-  padding: 0.42rem 0.7rem;
-  font-size: 0.84rem;
 }
 
 .cbv-draft-actions {
@@ -494,13 +477,6 @@
   gap: 0.125rem;
 }
 
-.cbv-layout-picker select {
-  min-height: 1.75rem;
-  padding: 0.25rem 0.5rem;
-  font-family: var(--cbv-font-mono);
-  font-size: 0.6875rem;
-}
-
 .cbv-toolbar-button.is-active {
   background: color-mix(in oklch, var(--app-accent) 16%, var(--app-surface-soft));
   border-color: var(--app-accent);
@@ -572,6 +548,8 @@
   gap: 0.75rem;
   min-height: 2.75rem;
   max-height: none;
+  position: relative;
+  z-index: 120;
   overflow: visible;
 }
 
@@ -679,14 +657,130 @@
   min-width: 0;
 }
 
-.cbv-layout-picker {
-  min-width: 0;
+.cbv-layout-controls {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-end;
+  width: 100%;
 }
 
-.cbv-layout-picker select {
-  min-height: 1.875rem;
-  height: 1.875rem;
-  padding: 0 2rem 0 0.625rem;
+.cbv-layout-picker {
+  position: relative;
+  min-width: 0;
+  width: min(16rem, 100%);
+}
+
+.cbv-layout-trigger {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+  min-height: 1.625rem;
+  padding: 0 0.35rem 0 0.45rem;
+  border: 1px solid var(--app-border);
+  border-radius: var(--cbv-radius-md);
+  background: var(--app-surface-soft);
+  color: var(--app-text-mid);
+  font-family: var(--cbv-font-mono);
+  font-size: 0.625rem;
+  letter-spacing: 0.02em;
+  text-align: left;
+}
+
+.cbv-layout-trigger:hover,
+.cbv-layout-trigger:focus-visible,
+.cbv-layout-picker.is-open .cbv-layout-trigger {
+  border-color: color-mix(in oklch, var(--app-accent) 32%, var(--app-border));
+  background: var(--app-surface-soft-2);
+  color: var(--app-text);
+}
+
+.cbv-layout-trigger-dot {
+  width: 0.3125rem;
+  height: 0.3125rem;
+  flex: 0 0 auto;
+  border-radius: 2px;
+  background: var(--app-accent);
+}
+
+.cbv-layout-trigger-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cbv-layout-trigger-caret {
+  display: inline-grid;
+  place-items: center;
+  min-width: 1rem;
+  margin-left: auto;
+  padding-left: 0.35rem;
+  color: var(--app-text-faint);
+  font-size: 0.625rem;
+}
+
+.cbv-layout-menu {
+  position: absolute;
+  top: calc(100% + 0.25rem);
+  right: 0;
+  z-index: 1000;
+  display: grid;
+  width: max(100%, 13rem);
+  max-height: min(22rem, calc(100vh - 5rem));
+  overflow: auto;
+  padding: 0.25rem;
+  border: 1px solid var(--app-border);
+  border-radius: var(--cbv-radius-lg);
+  background: var(--app-surface);
+  box-shadow: 0 16px 40px -12px rgba(0, 0, 0, 0.55);
+}
+
+.cbv-layout-option {
+  display: grid;
+  grid-template-columns: 0.5rem minmax(0, 1fr);
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 1.75rem;
+  padding: 0 0.45rem;
+  border: 0;
+  border-radius: var(--cbv-radius-md);
+  background: transparent;
+  color: var(--app-text-dim);
+  font-family: var(--cbv-font-mono);
+  font-size: 0.625rem;
+  letter-spacing: 0.02em;
+  text-align: left;
+}
+
+.cbv-layout-option:hover,
+.cbv-layout-option:focus-visible {
+  background: var(--app-surface-soft);
+  color: var(--app-text);
+}
+
+.cbv-layout-option.is-selected {
+  background: color-mix(in oklch, var(--app-accent) 12%, var(--app-surface-soft));
+  color: var(--app-text);
+}
+
+.cbv-layout-option-dot {
+  width: 0.3125rem;
+  height: 0.3125rem;
+  border-radius: 2px;
+  background: transparent;
+}
+
+.cbv-layout-option.is-selected .cbv-layout-option-dot {
+  background: var(--app-accent);
+}
+
+.cbv-layout-option-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .cbv-toolbar-right {
@@ -884,4 +978,3 @@
   align-content: start;
   grid-auto-rows: max-content;
 }
-

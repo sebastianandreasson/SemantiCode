@@ -578,10 +578,6 @@
 .cbv-layout-sync-note,
 .cbv-preprocessing-current,
 .cbv-preprocessing-error,
-.cbv-outline-item span,
-.cbv-outline-group-meta,
-.cbv-outline-item-loc,
-.cbv-outline-item-badge,
 .cbv-agent-strip-trail {
   color: var(--app-text-faint);
   font-size: 0.625rem;
@@ -1280,4 +1276,3 @@
   height: 100%;
   border-left: 0;
 }
-

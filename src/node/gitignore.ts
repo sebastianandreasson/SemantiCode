@@ -3,7 +3,24 @@ import { basename, join, relative } from 'node:path'
 
 import ignore, { type Ignore } from 'ignore'
 
-const ALWAYS_IGNORED_NAMES = new Set(['.git', '.semanticode'])
+const ALWAYS_IGNORED_NAMES = new Set([
+  '.cache',
+  '.git',
+  '.next',
+  '.nuxt',
+  '.parcel-cache',
+  '.semanticode',
+  '.svelte-kit',
+  '.turbo',
+  '.venv',
+  'build',
+  'coverage',
+  'dist',
+  'node_modules',
+  'out',
+  'target',
+  'venv',
+])
 
 interface IgnoreContext {
   basePath: string

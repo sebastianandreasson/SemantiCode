@@ -23,6 +23,7 @@ import {
 const DEFAULT_MAX_DEPTH = 12
 const DEFAULT_MAX_FILE_SIZE = 100_000
 const DEFAULT_MAX_FILES = 2_000
+const inFlightSnapshotReads = new Map<string, Promise<ProjectSnapshot>>()
 
 interface WalkState {
   filesSeen: number
@@ -39,6 +40,29 @@ interface WalkState {
 
 export async function readProjectSnapshot(
   options: ReadProjectSnapshotOptions = {},
+): Promise<ProjectSnapshot> {
+  const rootDir = options.rootDir ?? process.cwd()
+  const normalizedOptions = {
+    ...options,
+    rootDir,
+  }
+  const inFlightKey = getSnapshotReadDedupeKey(rootDir, normalizedOptions)
+  const inFlightSnapshot = inFlightSnapshotReads.get(inFlightKey)
+
+  if (inFlightSnapshot) {
+    return inFlightSnapshot
+  }
+
+  const snapshotPromise = readProjectSnapshotWithCache(normalizedOptions).finally(() => {
+    inFlightSnapshotReads.delete(inFlightKey)
+  })
+
+  inFlightSnapshotReads.set(inFlightKey, snapshotPromise)
+  return snapshotPromise
+}
+
+async function readProjectSnapshotWithCache(
+  options: ReadProjectSnapshotOptions,
 ): Promise<ProjectSnapshot> {
   const rootDir = options.rootDir ?? process.cwd()
   const cachedSnapshot = await readCachedProjectSnapshot({
@@ -62,6 +86,28 @@ export async function readProjectSnapshot(
   })
 
   return snapshot
+}
+
+function getSnapshotReadDedupeKey(
+  rootDir: string,
+  options: ReadProjectSnapshotOptions,
+) {
+  return JSON.stringify({
+    rootDir,
+    analyzeCalls: options.analyzeCalls ?? false,
+    analyzeImports: options.analyzeImports ?? false,
+    analyzeSymbols: options.analyzeSymbols ?? false,
+    ignoredNames: [...(options.ignoredNames ?? [])].sort(),
+    includeContents: options.includeContents ?? true,
+    maxDepth: options.maxDepth ?? DEFAULT_MAX_DEPTH,
+    maxFileSize: options.maxFileSize ?? DEFAULT_MAX_FILE_SIZE,
+    maxFiles: options.maxFiles ?? DEFAULT_MAX_FILES,
+    adapters: options.adapters?.map((adapter) => adapter.id).sort() ?? null,
+    projectPlugins:
+      options.projectPlugins
+        ?.map((projectPlugin) => `${projectPlugin.id}@${projectPlugin.version}`)
+        .sort() ?? null,
+  })
 }
 
 async function readProjectSnapshotFresh(

@@ -73,7 +73,6 @@
   border: 1px solid var(--app-code-border);
 }
 
-.cbv-toolbar,
 .cbv-inspector {
   border: 1px solid var(--app-border);
   border-radius: 1rem;
@@ -733,4 +732,3 @@
   height: 1.5rem;
   min-height: 1.5rem;
 }
-

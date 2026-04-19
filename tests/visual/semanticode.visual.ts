@@ -45,6 +45,15 @@ test.describe('Semanticode visual smoke harness', () => {
     await capture(page, 'workspace-switcher')
   })
 
+  test('captures the topbar layout dropdown above the canvas', async ({ page }) => {
+    await openHarness(page)
+
+    await page.locator('.cbv-layout-trigger').click()
+
+    await expect(page.locator('.cbv-layout-menu')).toBeVisible()
+    await capture(page, 'layout-dropdown')
+  })
+
   test('keeps the inspector close button visible when narrow', async ({ page }) => {
     await page.setViewportSize({ height: 860, width: 1_180 })
     await openHarness(page, 'narrow-inspector')

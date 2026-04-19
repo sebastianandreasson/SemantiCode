@@ -125,6 +125,7 @@ export type {
   LayoutListResponse,
   LayoutStateResponse,
   LayoutSummary,
+  SemanticLayoutResponse,
   SnapshotResponse,
   TelemetryActivityResponse,
   TelemetryHeatmapRequest,

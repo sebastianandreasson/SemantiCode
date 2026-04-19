@@ -105,6 +105,11 @@ export default function App() {
     onReadyPersistedContext: (snapshot, persistedContext) => {
       startBackgroundPreprocessing(snapshot, persistedContext, true)
     },
+    onWorkspaceSyncStatusReady: (workspaceSyncStatus) => {
+      startTransition(() => {
+        setWorkspaceSyncStatus(workspaceSyncStatus)
+      })
+    },
   })
 
   async function refreshWorkspaceState() {

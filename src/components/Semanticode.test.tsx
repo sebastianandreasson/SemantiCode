@@ -1,7 +1,7 @@
 import { act } from 'react'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { Semanticode } from './Semanticode'
 import { visualizerStore } from '../store/visualizerStore'
@@ -123,6 +123,24 @@ const featureDraft: LayoutDraft = {
   updatedAt: '2026-04-16T00:00:00.000Z',
 }
 
+const semanticLayout = {
+  id: 'layout:semantic:/tmp/repo',
+  title: 'Semantic symbols',
+  strategy: 'semantic' as const,
+  nodeScope: 'symbols' as const,
+  description: 'Experimental symbol layout based on semantic embeddings.',
+  placements: {
+    'symbol:entry': { nodeId: 'symbol:entry', x: 24, y: 24 },
+    'symbol:helper': { nodeId: 'symbol:helper', x: 180, y: 24 },
+  },
+  groups: [],
+  lanes: [],
+  annotations: [],
+  hiddenNodeIds: ['dir:src', 'file:feature'],
+  createdAt: '2026-04-16T00:00:00.000Z',
+  updatedAt: '2026-04-16T00:00:00.000Z',
+}
+
 const workspaceProfile: WorkspaceProfile = {
   rootDir: '/tmp/repo',
   generatedAt: '2026-04-16T00:00:00.000Z',
@@ -188,6 +206,31 @@ const preprocessingStatus: PreprocessingStatus = {
 
 describe('Semanticode semantic compare overlay', () => {
   beforeEach(() => {
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL) => {
+      const url = String(input)
+
+      if (url.includes('/__semanticode/layouts/semantic')) {
+        return new Response(
+          JSON.stringify({
+            cached: true,
+            layout: semanticLayout,
+          }),
+          {
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            status: 200,
+          },
+        )
+      }
+
+      return new Response(JSON.stringify({ message: 'Not found' }), {
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        status: 404,
+      })
+    })
     ;(globalThis as typeof globalThis & {
       ResizeObserver?: new (callback: ResizeObserverCallback) => ResizeObserver
     }).ResizeObserver = class ResizeObserver {
@@ -223,6 +266,10 @@ describe('Semanticode semantic compare overlay', () => {
     })
   })
 
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
   it('highlights draft symbols inside semantic view and dims non-members', async () => {
     const user = userEvent.setup()
 
@@ -253,11 +300,14 @@ describe('Semanticode semantic compare overlay', () => {
       expect(screen.getByRole('button', { name: 'Comparing semantic view' })).not.toBeNull()
     })
 
-    const entryNode = screen
-      .getAllByText('FeatureEntry')
-      .find((element) => element.closest('.cbv-node'))
-      ?.closest('.cbv-node')
-    expect(entryNode?.className).toContain('is-compare-highlighted')
-    expect(document.querySelector('.cbv-node.is-compare-highlighted')).not.toBeNull()
+    await waitFor(() => {
+      const entryNode = screen
+        .getAllByText('FeatureEntry')
+        .find((element) => element.closest('.cbv-node'))
+        ?.closest('.cbv-node')
+
+      expect(entryNode?.className).toContain('is-compare-highlighted')
+      expect(document.querySelector('.cbv-node.is-compare-highlighted')).not.toBeNull()
+    })
   })
 })

@@ -12,6 +12,7 @@ import {
 } from 'react'
 
 import {
+  isSymbolNode,
   type CodebaseSnapshot,
   type PreprocessedWorkspaceContext,
   type PreprocessingStatus,
@@ -283,7 +284,6 @@ export function Semanticode({
     onClearDraftActionError: () => setDraftActionError(null),
     overlayFocusMode,
     overlayVisibility,
-    preprocessedWorkspaceContext,
     setActiveDraftId,
     setActiveLayoutId,
     setBaseScene,
@@ -339,6 +339,7 @@ export function Semanticode({
     edges,
     flowInstance,
     focusCanvasOnFollowTarget,
+    focusCanvasOnNode,
     handleCanvasEdgeClick,
     handleCanvasMoveEnd,
     handleCanvasNodeClick,
@@ -620,6 +621,28 @@ export function Semanticode({
     void onSuggestLayout(layoutSuggestionText)
   }, [layoutSuggestionPending, layoutSuggestionText, onSuggestLayout])
 
+  const handleSelectSidebarSymbol = useCallback((nodeId: string) => {
+    if (!effectiveSnapshot) {
+      return
+    }
+
+    selectNode(nodeId)
+    setInspectorTab('file')
+    setInspectorOpen(true)
+
+    const selectedNode = effectiveSnapshot.nodes[nodeId]
+    const fallbackNodeIds = selectedNode && isSymbolNode(selectedNode)
+      ? [selectedNode.fileId]
+      : []
+
+    window.setTimeout(() => {
+      focusCanvasOnNode({
+        fallbackNodeIds,
+        nodeId,
+      })
+    }, 0)
+  }, [effectiveSnapshot, focusCanvasOnNode, selectNode, setInspectorOpen, setInspectorTab])
+
   if (!effectiveSnapshot) {
     return (
       <section className="cbv-shell">
@@ -721,11 +744,7 @@ export function Semanticode({
               onOpenWorkspace={() => {
                 void handleOpenAnotherWorkspace()
               }}
-              onSelectSymbol={(nodeId) => {
-                selectNode(nodeId)
-                setInspectorTab('file')
-                setInspectorOpen(true)
-              }}
+              onSelectSymbol={handleSelectSidebarSymbol}
               open={projectsSidebarOpen}
               recentProjects={recentProjects}
               selectedNodeId={selectedNodeId}
