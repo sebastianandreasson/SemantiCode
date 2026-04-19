@@ -19,10 +19,6 @@
   padding: 1rem;
 }
 
-.cbv-canvas-left-tools {
-  gap: 0.8rem;
-}
-
 .cbv-agent-heat-panel,
 .cbv-semantic-search,
 .cbv-canvas-layer-toggles,
@@ -174,14 +170,6 @@
   pointer-events: auto;
 }
 
-.cbv-canvas-left-tools {
-  display: grid;
-  gap: 0.55rem;
-  justify-items: start;
-  max-width: min(28rem, 62%);
-  pointer-events: auto;
-}
-
 .cbv-agent-heat-panel {
   display: grid;
   gap: 0.45rem;
@@ -218,13 +206,6 @@
   color: var(--app-input-text);
   padding: 0.42rem 0.55rem;
   font-size: 0.82rem;
-}
-
-.cbv-agent-heat-meta {
-  margin: 0;
-  color: var(--app-muted);
-  font-size: 0.78rem;
-  line-height: 1.35;
 }
 
 .cbv-agent-heat-follow-toggle {
@@ -575,11 +556,6 @@
   gap: 0.5rem;
 }
 
-.cbv-canvas-left-tools {
-  gap: 0.375rem;
-  max-width: min(18rem, 36vw);
-}
-
 .cbv-agent-heat-panel,
 .cbv-semantic-search,
 .cbv-canvas-layer-toggles,
@@ -602,7 +578,6 @@
 .cbv-agent-heat-controls span,
 .cbv-semantic-search-slider span,
 .cbv-semantic-search-slider strong,
-.cbv-agent-heat-meta,
 .cbv-agent-heat-follow-meta,
 .cbv-semantic-search-meta {
   font-size: 0.625rem;
@@ -929,4 +904,3 @@
   min-width: 0;
   white-space: nowrap;
 }
-

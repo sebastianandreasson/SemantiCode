@@ -15,7 +15,8 @@ import { memo, useState } from 'react'
 import { CodebaseAnnotationNode } from '../CodebaseAnnotationNode'
 import { CodebaseCanvasNode } from '../CodebaseCanvasNode'
 import { CodebaseSymbolNode } from '../CodebaseSymbolNode'
-import type { ThemeMode } from '../settings/GeneralSettingsPanel'
+import type { SemanticSearchMode } from '../../app/useSemanticSearchController'
+import type { ThemeMode } from '../../app/themeBootstrap'
 import type {
   FollowDebugState,
   GraphLayerKey,
@@ -24,8 +25,6 @@ import type {
   TelemetryWindow,
   VisualizerViewMode,
 } from '../../types'
-
-export type SemanticSearchMode = 'symbols' | 'groups'
 
 const SEMANTIC_SEARCH_MIN_LIMIT = 1
 const SEMANTIC_SEARCH_MAX_LIMIT = 60

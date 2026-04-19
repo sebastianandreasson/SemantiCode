@@ -8,9 +8,9 @@ import type { GroupPrototypeCacheSnapshot } from '../semantic/types'
 import type { GraphEdge, ProjectSnapshot } from './snapshot'
 import type { LayoutSpec } from './layout'
 import type {
-  LayoutQueryStats,
   LayoutSuggestionRequest,
 } from './layoutSuggestion'
+export type { LayoutSuggestionResponse } from './layoutSuggestion'
 import type {
   AutonomousRunDetail,
   AutonomousRunScope,
@@ -70,11 +70,6 @@ export interface LayoutStateResponse {
 export interface SemanticLayoutResponse {
   cached: boolean
   layout: LayoutSpec
-}
-
-export interface LayoutSuggestionResponse {
-  draft: LayoutDraft
-  queryStats: LayoutQueryStats
 }
 
 export type LayoutSuggestionPayload = LayoutSuggestionRequest

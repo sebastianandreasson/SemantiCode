@@ -58,11 +58,6 @@
   letter-spacing: 0.12em;
 }
 
-.cbv-code-preview-summary {
-  border-radius: var(--cbv-radius-md);
-  background: var(--app-surface-soft);
-}
-
 .cbv-code-editor,
 .cbv-code-editor .cm-editor {
   border-radius: var(--cbv-radius-lg);
@@ -392,7 +387,6 @@
   font-size: 0.85rem;
 }
 
-.cbv-workspace-summary strong,
 .cbv-panel-header-copy strong {
   font-family: var(--cbv-font-mono);
 }

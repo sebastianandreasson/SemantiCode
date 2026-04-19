@@ -1,7 +1,6 @@
 import { AgentPanel } from '../AgentPanel'
 import type { PreprocessedWorkspaceContext, WorkspaceProfile } from '../../types'
-
-export type ThemeMode = 'light' | 'dark'
+import type { ThemeMode } from '../../app/themeBootstrap'
 
 interface GeneralSettingsPanelProps {
   desktopHostAvailable?: boolean

@@ -35,12 +35,6 @@
   color: var(--app-muted);
 }
 
-.cbv-workspace-sidebar-actions {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.45rem;
-}
-
 .cbv-workspace-recents,
 .cbv-workspace-outline {
   display: grid;
@@ -205,106 +199,6 @@
   background: var(--app-surface-soft-2);
 }
 
-.cbv-projects-sidebar {
-  display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
-  gap: 0.75rem;
-  min-height: 0;
-  padding: 0.875rem;
-  border: 1px solid var(--app-border);
-  border-radius: 1rem;
-  background: var(--app-surface);
-  overflow: hidden;
-}
-
-.cbv-projects-sidebar.is-collapsed {
-  display: none;
-}
-
-.cbv-projects-sidebar-header {
-  display: flex;
-  align-items: start;
-  justify-content: space-between;
-  gap: 0.75rem;
-}
-
-.cbv-projects-sidebar-actions {
-  display: grid;
-  gap: 0.45rem;
-}
-
-.cbv-projects-sidebar-actions button {
-  border: 1px solid var(--app-border);
-  border-radius: 0.72rem;
-  background: var(--app-inverse-surface);
-  color: var(--app-inverse-text);
-  padding: 0.42rem 0.72rem;
-  font-size: 0.84rem;
-  cursor: pointer;
-  text-align: left;
-}
-
-.cbv-projects-sidebar-actions button.is-secondary {
-  background: var(--app-surface-soft-2);
-  color: var(--app-text);
-}
-
-.cbv-projects-sidebar-actions button:disabled {
-  opacity: 0.65;
-  cursor: wait;
-}
-
-.cbv-projects-list {
-  display: grid;
-  align-content: start;
-  grid-auto-rows: max-content;
-  gap: 0.55rem;
-  min-height: 0;
-  overflow: auto;
-  padding-right: 0.25rem;
-}
-
-.cbv-projects-item {
-  align-self: start;
-  display: grid;
-  gap: 0.22rem;
-  padding: 0.8rem 0.85rem;
-  border: 1px solid var(--app-input-border);
-  border-radius: 0.9rem;
-  background: var(--app-surface-soft);
-  color: var(--app-text);
-  text-align: left;
-  cursor: pointer;
-}
-
-.cbv-projects-item strong,
-.cbv-projects-item span,
-.cbv-projects-item small {
-  display: block;
-}
-
-.cbv-projects-item span {
-  color: var(--app-muted);
-  font-size: 0.8rem;
-  line-height: 1.35;
-  word-break: break-word;
-}
-
-.cbv-projects-item small {
-  color: var(--app-muted);
-  font-size: 0.72rem;
-}
-
-.cbv-projects-item.is-active {
-  border-color: var(--app-accent);
-  background: var(--app-accent-soft);
-}
-
-.cbv-projects-item:disabled {
-  cursor: default;
-  opacity: 1;
-}
-
 .cbv-projects-empty {
   margin: 0;
   color: var(--app-muted);
@@ -319,9 +213,7 @@
   border-right: 1px solid var(--app-border);
 }
 
-.cbv-workspace-sidebar-header,
 .cbv-sidebar-section-header,
-.cbv-workspace-sidebar-actions,
 .cbv-sidebar-filter {
   padding-left: 0.75rem;
   padding-right: 0.75rem;
@@ -388,32 +280,6 @@
   border: 0;
   background: transparent;
   padding: 0;
-}
-
-.cbv-workspace-sidebar-header {
-  align-items: start;
-}
-
-.cbv-workspace-sidebar-title {
-  display: grid;
-  gap: 0.08rem;
-  min-width: 0;
-}
-
-.cbv-workspace-sidebar-title strong {
-  font-family: var(--cbv-font-mono);
-  font-size: 0.71875rem;
-  font-weight: 500;
-  color: var(--app-text);
-}
-
-.cbv-workspace-sidebar-title span {
-  overflow: hidden;
-  color: var(--app-text-faint);
-  font-family: var(--cbv-font-mono);
-  font-size: 0.59375rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .cbv-sidebar-section.cbv-sidebar-outline {
@@ -519,7 +385,6 @@
 }
 
 .cbv-sidebar-section-header,
-.cbv-workspace-sidebar-actions,
 .cbv-sidebar-filter,
 .cbv-sidebar-outline-footer {
   padding-left: 0.75rem;
@@ -533,7 +398,6 @@
   z-index: 2;
 }
 
-.cbv-workspace-sidebar-title .cbv-eyebrow,
 .cbv-sidebar-section-header,
 .cbv-sidebar-section-header small,
 .cbv-sidebar-outline-footer {
@@ -542,41 +406,6 @@
   font-size: 0.59375rem;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-}
-
-.cbv-workspace-sidebar-title strong {
-  font-size: 0.75rem;
-  font-weight: 500;
-  letter-spacing: -0.01em;
-}
-
-.cbv-workspace-sidebar-title span {
-  font-size: 0.625rem;
-  line-height: 1.35;
-}
-
-.cbv-workspace-sidebar-actions {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.375rem;
-}
-
-.cbv-workspace-sidebar-actions button {
-  min-height: 1.5rem;
-  padding: 0.1875rem 0.375rem;
-  border: 1px solid var(--app-border);
-  border-radius: var(--cbv-radius-md);
-  background: var(--app-surface-soft);
-  color: var(--app-text);
-  font-family: var(--cbv-font-mono);
-  font-size: 0.625rem;
-  letter-spacing: 0.03em;
-  text-transform: lowercase;
-}
-
-.cbv-workspace-sidebar-actions button:hover,
-.cbv-workspace-sidebar-actions button:focus-visible {
-  background: var(--app-surface-soft-2);
 }
 
 .cbv-workspace-recents {
@@ -930,7 +759,6 @@
   color: var(--app-text);
 }
 
-.cbv-workspace-sidebar-title,
 .cbv-workspace-current-item,
 .cbv-workspace-recent-item {
   min-width: 0;
@@ -940,8 +768,6 @@
   width: 100%;
 }
 
-.cbv-workspace-sidebar-title strong,
-.cbv-workspace-sidebar-title span,
 .cbv-workspace-recent-item strong,
 .cbv-workspace-recent-item span {
   display: block;

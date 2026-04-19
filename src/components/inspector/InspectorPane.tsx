@@ -17,6 +17,10 @@ import { yaml } from '@codemirror/lang-yaml'
 
 import { type ResolvedCanvasOverlay } from '../../visualizer/canvasScene'
 import {
+  formatFacetLabel,
+  formatFileSize,
+} from '../../visualizer/flowModel'
+import {
   type WorkingSetState,
   type CodebaseFile,
   type GitFileDiff,
@@ -34,7 +38,7 @@ import {
 import { fetchGitFileDiff } from '../../app/apiClient'
 import { type AgentScopeContext } from '../AgentPanel'
 import { AgentContextPane } from '../agent/AgentContextPane'
-import type { ThemeMode } from '../settings/GeneralSettingsPanel'
+import type { ThemeMode } from '../../app/themeBootstrap'
 import type { GroupPrototypeRecord } from '../../semantic/groups/groupPrototypes'
 
 const MAX_VISIBLE_SELECTED_FILES = 8
@@ -350,16 +354,6 @@ function PluginSemanticsCard({
 
 function isPathWithinScope(path: string, scopeRoot: string) {
   return scopeRoot === '' || path === scopeRoot || path.startsWith(`${scopeRoot}/`)
-}
-
-function formatFacetLabel(facetId: string) {
-  const [, rawLabel = facetId] = facetId.split(':')
-
-  return rawLabel
-    .split(/[-_]/)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ')
 }
 
 function TelemetrySummaryCard({
@@ -1463,18 +1457,6 @@ function formatRange(range: SourceRange) {
   }
 
   return `${range.start.line}:${range.start.column}-${range.end.line}:${range.end.column}`
-}
-
-function formatFileSize(size: number) {
-  if (size < 1024) {
-    return `${size} B`
-  }
-
-  if (size < 1024 * 1024) {
-    return `${(size / 1024).toFixed(1)} KB`
-  }
-
-  return `${(size / (1024 * 1024)).toFixed(1)} MB`
 }
 
 function describeContentState(file: CodebaseFile) {

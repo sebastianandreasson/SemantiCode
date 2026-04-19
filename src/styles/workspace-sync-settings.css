@@ -2,15 +2,11 @@
 
 
 
-.cbv-toolbar-button,
-.cbv-draft-actions button,
-.cbv-preprocessing-action {
+.cbv-toolbar-button {
   min-height: 2.4rem;
 }
 
-.cbv-toolbar-button.is-secondary,
-.cbv-draft-actions button.is-danger,
-.cbv-preprocessing-action.is-secondary {
+.cbv-toolbar-button.is-secondary {
   background: var(--app-surface-soft-2);
 }
 
@@ -21,93 +17,6 @@
 
 .cbv-modal-header {
   border-bottom: 1px solid var(--app-border);
-}
-
-.cbv-preprocessing-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.42rem;
-  width: fit-content;
-  padding: 0.22rem 0.5rem;
-  border: 1px solid var(--app-border);
-  border-radius: 999px;
-  background: var(--app-surface-soft);
-  color: var(--app-muted);
-  font-size: 0.73rem;
-}
-
-.cbv-preprocessing-status-block {
-  display: grid;
-  gap: 0.28rem;
-  min-width: 0;
-}
-
-.cbv-preprocessing-inline {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  flex-wrap: wrap;
-}
-
-.cbv-preprocessing-status-dot {
-  width: 0.52rem;
-  height: 0.52rem;
-  border-radius: 999px;
-  background: var(--app-muted);
-  flex: 0 0 auto;
-}
-
-.cbv-preprocessing-status.is-building .cbv-preprocessing-status-dot,
-.cbv-preprocessing-status.is-stale .cbv-preprocessing-status-dot {
-  background: var(--app-warning);
-}
-
-.cbv-preprocessing-status.is-ready .cbv-preprocessing-status-dot {
-  background: var(--app-success);
-}
-
-.cbv-preprocessing-status.is-error .cbv-preprocessing-status-dot {
-  background: var(--app-danger);
-}
-
-.cbv-preprocessing-action {
-  width: fit-content;
-  border: 1px solid var(--app-border);
-  border-radius: 0.72rem;
-  background: var(--app-inverse-surface);
-  color: var(--app-inverse-text);
-  padding: 0.28rem 0.56rem;
-  font-size: 0.74rem;
-  cursor: pointer;
-}
-
-.cbv-preprocessing-action.is-secondary {
-  background: var(--app-surface-soft-2);
-  color: var(--app-text);
-}
-
-.cbv-preprocessing-action:disabled {
-  opacity: 0.7;
-  cursor: wait;
-}
-
-.cbv-preprocessing-error {
-  margin: 0;
-  max-width: min(28rem, 42vw);
-  color: var(--app-danger);
-  font-size: 0.72rem;
-  line-height: 1.35;
-}
-
-.cbv-preprocessing-current {
-  margin: 0;
-  max-width: min(28rem, 42vw);
-  color: var(--app-muted);
-  font-size: 0.72rem;
-  line-height: 1.35;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .cbv-render-error {
@@ -127,44 +36,6 @@
 .cbv-render-error p,
 .cbv-render-error strong {
   margin: 0;
-}
-
-.cbv-sync-summary {
-  margin: 0;
-  border: 0;
-  background: transparent;
-  padding: 0;
-  color: var(--app-muted);
-  font-size: 0.72rem;
-  line-height: 1.35;
-  text-align: left;
-}
-
-.cbv-sync-summary.is-outdated {
-  color: var(--app-warning);
-}
-
-.cbv-sync-summary {
-  cursor: pointer;
-}
-
-.cbv-sync-summary:hover {
-  text-decoration: underline;
-}
-
-.cbv-preprocessing-progress {
-  width: min(14rem, 28vw);
-  height: 0.34rem;
-  border-radius: 999px;
-  background: var(--app-surface-soft-3);
-  overflow: hidden;
-}
-
-.cbv-preprocessing-progress-bar {
-  height: 100%;
-  border-radius: inherit;
-  background: linear-gradient(90deg, color-mix(in srgb, var(--app-warning) 88%, white) 0%, var(--app-warning) 100%);
-  transition: width 140ms ease;
 }
 
 .cbv-modal-backdrop {
@@ -486,4 +357,3 @@
   width: 1rem;
   height: 1rem;
 }
-

@@ -3107,7 +3107,7 @@ export function getFlowEdgeData(edge: Edge) {
   return edge.data as FlowEdgeData | undefined
 }
 
-function formatFileSize(size: number) {
+export function formatFileSize(size: number) {
   if (size < 1_024) {
     return `${size} B`
   }

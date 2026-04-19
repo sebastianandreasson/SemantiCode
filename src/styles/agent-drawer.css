@@ -13,7 +13,6 @@
 }
 
 .cbv-eyebrow,
-.cbv-toolbar-path,
 .cbv-layout-picker span,
 .cbv-sidebar-section-header,
 .cbv-outline-group-header,
@@ -26,7 +25,6 @@
   font-family: var(--cbv-font-mono);
 }
 
-.cbv-workspace-summary strong,
 .cbv-panel-header-copy strong,
 .cbv-agent-context-card strong,
 .cbv-agent-meta strong,
@@ -52,10 +50,7 @@
 }
 
 .cbv-toolbar-button,
-.cbv-draft-actions button,
-.cbv-preprocessing-action,
 .cbv-agent-actions button,
-.cbv-workspace-sidebar-actions button,
 .cbv-agent-context-actions button,
 .cbv-agent-setup-prompt button {
   border-radius: var(--cbv-radius-md);
@@ -435,36 +430,6 @@
   color: var(--app-text);
 }
 
-.cbv-agent-working-set {
-  display: grid;
-  gap: 0.32rem;
-  padding: 0.8rem 0.9rem;
-  border: 1px solid var(--app-border);
-  border-radius: 0.95rem;
-  background: var(--app-surface-soft-2);
-}
-
-.cbv-agent-working-set-list {
-  display: grid;
-  gap: 0.2rem;
-  margin: 0;
-  padding-left: 1rem;
-  color: var(--app-muted);
-  font-size: 0.83rem;
-}
-
-.cbv-agent-working-set-list li {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.cbv-agent-working-set-more {
-  margin: 0;
-  color: var(--app-muted);
-  font-size: 0.82rem;
-}
-
 .cbv-agent-composer textarea {
   min-height: 6rem;
   resize: vertical;
@@ -500,57 +465,6 @@
   cursor: not-allowed;
 }
 
-.cbv-agent-activity-button {
-  position: fixed;
-  left: 1.2rem;
-  bottom: 1.2rem;
-  z-index: 18;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.65rem;
-  border: 1px solid color-mix(in srgb, var(--app-text) 12%, transparent);
-  border-radius: 999px;
-  background: var(--app-overlay-surface-strong);
-  color: var(--app-text);
-  padding: 0.6rem 0.9rem;
-  box-shadow: 0 12px 24px color-mix(in srgb, var(--app-shadow) 48%, transparent);
-  backdrop-filter: blur(10px);
-  cursor: pointer;
-}
-
-.cbv-agent-activity-spinner {
-  width: 0.9rem;
-  height: 0.9rem;
-  border-radius: 999px;
-  border: 2px solid color-mix(in srgb, var(--app-text) 16%, transparent);
-  border-top-color: var(--app-text);
-  animation: cbv-agent-spin 0.8s linear infinite;
-}
-
-.cbv-agent-activity-modal {
-  width: min(54rem, calc(100vw - 3rem));
-}
-
-.cbv-agent-activity-modal-body {
-  display: grid;
-  gap: 0.9rem;
-  padding: 1rem 1.25rem 1.25rem;
-}
-
-.cbv-agent-activity-messages {
-  max-height: min(60vh, 38rem);
-}
-
-@keyframes cbv-agent-spin {
-  from {
-    transform: rotate(0deg);
-  }
-
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 .cbv-toolbar,
 .cbv-workspace-sidebar,
 .cbv-inspector,
@@ -573,11 +487,6 @@
   background: var(--app-surface);
 }
 
-.cbv-toolbar-path,
-.cbv-sync-summary,
-.cbv-layout-sync-note,
-.cbv-preprocessing-current,
-.cbv-preprocessing-error,
 .cbv-agent-strip-trail {
   color: var(--app-text-faint);
   font-size: 0.625rem;
@@ -601,11 +510,8 @@
 
 .cbv-working-set-chip,
 .cbv-toolbar-button,
-.cbv-preprocessing-action,
-.cbv-draft-actions button,
 .cbv-agent-context-actions button,
 .cbv-agent-actions button,
-.cbv-workspace-sidebar-actions button,
 .cbv-agent-strip-submit,
 .cbv-agent-strip-toggle {
   border-radius: var(--cbv-radius-md);
@@ -617,11 +523,8 @@
 }
 
 .cbv-toolbar-button,
-.cbv-preprocessing-action,
-.cbv-draft-actions button,
 .cbv-agent-actions button,
 .cbv-agent-context-actions button,
-.cbv-workspace-sidebar-actions button,
 .cbv-agent-strip-submit,
 .cbv-agent-strip-toggle {
   min-height: 1.625rem;
@@ -770,7 +673,6 @@
 .cbv-multi-file-summary,
 .cbv-multi-file-list-card,
 .cbv-agent-context,
-.cbv-agent-working-set,
 .cbv-agent-context-card,
 .cbv-inspector-support-section {
   margin: 0;
@@ -787,7 +689,6 @@
 .cbv-multi-file-list span,
 .cbv-graph-card p,
 .cbv-agent-context p,
-.cbv-agent-working-set-list,
 .cbv-agent-context-list li span {
   color: var(--app-text-dim);
   font-size: 0.6875rem;
@@ -870,7 +771,6 @@
 }
 
 .cbv-agent-context,
-.cbv-agent-working-set,
 .cbv-agent-context-card,
 .cbv-agent-message,
 .cbv-agent-settings,
@@ -882,7 +782,6 @@
 }
 
 .cbv-agent-context,
-.cbv-agent-working-set,
 .cbv-agent-context-card,
 .cbv-agent-settings,
 .cbv-agent-setup-prompt {
@@ -896,9 +795,7 @@
 .cbv-agent-message header,
 .cbv-agent-context-list li span,
 .cbv-agent-context-copy,
-.cbv-agent-context-more,
-.cbv-agent-working-set-more,
-.cbv-agent-working-set-list {
+.cbv-agent-context-more {
   font-family: var(--cbv-font-mono);
   font-size: 0.625rem;
   letter-spacing: 0.03em;
@@ -1134,15 +1031,13 @@
   background: var(--app-code-bg);
 }
 
-.cbv-agent-context,
-.cbv-agent-working-set {
+.cbv-agent-context {
   background: color-mix(in oklch, var(--app-surface) 90%, var(--app-surface-soft));
 }
 
 .cbv-modal,
 .cbv-settings-modal,
-.cbv-sync-modal,
-.cbv-agent-activity-modal {
+.cbv-sync-modal {
   border-radius: var(--cbv-radius-xl);
   border: 1px solid var(--app-border);
   background: color-mix(in oklch, var(--app-surface) 96%, black 4%);

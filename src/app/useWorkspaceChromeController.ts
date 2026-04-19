@@ -19,7 +19,7 @@ import {
   THEME_STORAGE_KEY,
   UI_PREFERENCES_STORAGE_KEY,
 } from './themeBootstrap'
-import type { ThemeMode } from '../components/settings/GeneralSettingsPanel'
+import type { ThemeMode } from './themeBootstrap'
 import type {
   GraphLayerVisibility,
   UiPreferences,
