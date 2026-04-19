@@ -10,8 +10,11 @@ import type {
 import {
   applyFlowEdgePresentation,
   applyFlowNodePresentation,
+  buildFlowModel,
   buildUpdatedPlacementsForMovedNode,
   buildWorkspaceSidebarGroups,
+  mergeDefaultLayoutWithExisting,
+  type SymbolClusterState,
 } from './flowModel'
 
 describe('flowModel extracted helpers', () => {
@@ -88,7 +91,114 @@ describe('flowModel extracted helpers', () => {
     expect(presented[0]?.data).toMatchObject({ highlighted: true, dimmed: false })
     expect(presented[0]?.style).toMatchObject({ opacity: 1, strokeWidth: 2.4 })
     expect(presented[1]?.data).toMatchObject({ highlighted: false, dimmed: true })
-    expect(presented[1]?.style).toMatchObject({ opacity: 0.2 })
+    expect(presented[1]?.style).toMatchObject({ opacity: 0.08 })
+  })
+
+  it('reduces low-impact edge opacity while promoting aggregated call edges', () => {
+    const edges: Edge[] = [
+      {
+        id: 'low-call',
+        source: 'a',
+        target: 'b',
+        data: { count: 1, kind: 'calls' },
+      },
+      {
+        id: 'high-call',
+        source: 'a',
+        target: 'c',
+        data: { count: 10, kind: 'calls' },
+      },
+      {
+        id: 'contains',
+        source: 'a',
+        target: 'd',
+        data: { kind: 'contains' },
+      },
+    ]
+
+    const presented = applyFlowEdgePresentation(edges, {
+      active: false,
+      nodeIds: new Set(),
+    })
+
+    expect(presented[0]?.data).toMatchObject({ impact: 'low' })
+    expect(presented[1]?.data).toMatchObject({ impact: 'high' })
+    expect(presented[2]?.data).toMatchObject({ impact: 'low' })
+    expect(Number(presented[0]?.style?.opacity)).toBeLessThan(
+      Number(presented[1]?.style?.opacity),
+    )
+    expect(Number(presented[2]?.style?.opacity)).toBeLessThan(
+      Number(presented[0]?.style?.opacity),
+    )
+  })
+
+  it('renders fewer call edges and fewer labels in far overview zoom', () => {
+    const symbols = Array.from({ length: 180 }, (_, index) =>
+      symbol(`symbol${index}`, `symbol${index}`, null, 'function', index + 1, index + 2),
+    )
+    const snapshot = buildSnapshot(symbols)
+    snapshot.edges = symbols.slice(1).map((target, index) => ({
+      id: `call:${index}`,
+      kind: 'calls',
+      source: symbols[0]?.id ?? '',
+      target: target.id,
+    }))
+    const layout = buildSymbolLayout(symbols.map((item) => item.id))
+    const buildModel = (viewportZoom: number) =>
+      buildFlowModel(
+        snapshot,
+        layout,
+        { contains: false, imports: false, calls: true },
+        'symbols',
+        emptySymbolClusterState(),
+        new Set<string>(),
+        new Map(),
+        new Map(),
+        new Map(),
+        new Set<string>(),
+        () => {},
+        { viewportZoom },
+      )
+
+    const overview = buildModel(0.055)
+    const detail = buildModel(0.8)
+
+    expect(overview.edges.length).toBeLessThan(detail.edges.length)
+    expect(overview.edges.length).toBe(120)
+    expect(detail.edges.length).toBe(snapshot.edges.length)
+    expect(overview.edges.every((edge) => !edge.label)).toBe(true)
+  })
+
+  it('suppresses low-count call labels until the graph is zoomed in', () => {
+    const snapshot = buildSnapshot([
+      symbol('source', 'source', null, 'function', 1, 3),
+      symbol('target', 'target', null, 'function', 5, 7),
+    ])
+    snapshot.edges = Array.from({ length: 3 }, (_, index) => ({
+      id: `call:${index}`,
+      kind: 'calls',
+      source: 'source',
+      target: 'target',
+    }))
+    const layout = buildSymbolLayout(['source', 'target'])
+    const buildModel = (viewportZoom: number) =>
+      buildFlowModel(
+        snapshot,
+        layout,
+        { contains: false, imports: false, calls: true },
+        'symbols',
+        emptySymbolClusterState(),
+        new Set<string>(),
+        new Map(),
+        new Map(),
+        new Map(),
+        new Set<string>(),
+        () => {},
+        { viewportZoom },
+      )
+
+    expect(buildModel(0.13).edges[0]?.label).toBeUndefined()
+    expect(buildModel(0.8).edges[0]?.label).toBe('3 calls')
   })
 
   it('moves filesystem directory descendants with the dragged directory', () => {
@@ -119,7 +229,171 @@ describe('flowModel extracted helpers', () => {
     expect(placements.dir).toMatchObject({ x: 10, y: 15 })
     expect(placements.file).toMatchObject({ x: 30, y: 45 })
   })
+
+  it('scales symbol node dimensions based on LOC', () => {
+    const snapshot = buildSnapshot([
+      symbol('small', 'smallHelper', null, 'function', 1, 4),
+      symbol('large', 'largeWorkflow', null, 'function', 1, 120),
+    ])
+    const layout = buildSymbolLayout(['small', 'large'])
+
+    const model = buildFlowModel(
+      snapshot,
+      layout,
+      { contains: false, imports: false, calls: false },
+      'symbols',
+      { callerCounts: {}, clusterByNodeId: {}, clusters: [] },
+      new Set(),
+      new Map(),
+      new Map(),
+      new Map(),
+      new Set(),
+      () => {},
+    )
+    const small = model.nodes.find((node) => node.id === 'small')
+    const large = model.nodes.find((node) => node.id === 'large')
+
+    expect(small?.width).toBeLessThan(large?.width ?? 0)
+    expect(small?.height).toBeLessThan(large?.height ?? 0)
+    expect(large?.data).toMatchObject({ loc: 120 })
+  })
+
+  it('amplifies LOC scaling when zoomed out and damps it when zoomed in', () => {
+    const snapshot = buildSnapshot([
+      symbol('large', 'largeWorkflow', null, 'function', 1, 160),
+    ])
+    const layout = buildSymbolLayout(['large'])
+    const buildModel = (viewportZoom: number) =>
+      buildFlowModel(
+        snapshot,
+        layout,
+        { contains: false, imports: false, calls: false },
+        'symbols',
+        emptySymbolClusterState(),
+        new Set<string>(),
+        new Map(),
+        new Map(),
+        new Map(),
+        new Set<string>(),
+        () => {},
+        { viewportZoom },
+      )
+    const zoomedOut = buildModel(0.18)
+    const zoomedIn = buildModel(2.6)
+    const zoomedOutNode = zoomedOut.nodes.find((node) => node.id === 'large')
+    const zoomedInNode = zoomedIn.nodes.find((node) => node.id === 'large')
+
+    expect(zoomedOutNode?.width).toBeGreaterThan(zoomedInNode?.width ?? 0)
+    expect(zoomedOutNode?.height).toBeGreaterThan(zoomedInNode?.height ?? 0)
+    expect(getLocScale(zoomedOutNode)).toBeGreaterThan(getLocScale(zoomedInNode))
+    expect(getContentScale(zoomedOutNode)).toBeGreaterThan(
+      getContentScale(zoomedInNode),
+    )
+    expect(getContentScale(zoomedOutNode)).toBeGreaterThan(4)
+  })
+
+  it('keeps scaled symbol nodes wide enough for long names', () => {
+    const snapshot = buildSnapshot([
+      symbol(
+        'large',
+        'processExtremelyLargeWorkspaceTelemetryActivityBatch',
+        null,
+        'function',
+        1,
+        180,
+      ),
+    ])
+    const layout = buildSymbolLayout(['large'])
+
+    const model = buildFlowModel(
+      snapshot,
+      layout,
+      { contains: false, imports: false, calls: false },
+      'symbols',
+      emptySymbolClusterState(),
+      new Set<string>(),
+      new Map(),
+      new Map(),
+      new Map(),
+      new Set<string>(),
+      () => {},
+      { viewportZoom: 0.25 },
+    )
+    const large = model.nodes.find((node) => node.id === 'large')
+
+    expect(large?.width).toBeGreaterThan(800)
+    expect(large?.data).toMatchObject({
+      title: 'processExtremelyLargeWorkspaceTelemetryActivityBatch',
+    })
+  })
+
+  it('does not promote tiny constants to large-symbol size when zoomed out', () => {
+    const snapshot = buildSnapshot([
+      symbol('tinyConstant', 'MAX_RETRIES', null, 'constant', 1, 1),
+      symbol('largeWorkflow', 'largeWorkflow', null, 'function', 1, 180),
+    ])
+    const layout = buildSymbolLayout(['tinyConstant', 'largeWorkflow'])
+
+    const model = buildFlowModel(
+      snapshot,
+      layout,
+      { contains: false, imports: false, calls: false },
+      'symbols',
+      emptySymbolClusterState(),
+      new Set<string>(),
+      new Map(),
+      new Map(),
+      new Map(),
+      new Set<string>(),
+      () => {},
+      { viewportZoom: 0.18 },
+    )
+    const tinyConstant = model.nodes.find((node) => node.id === 'tinyConstant')
+    const largeWorkflow = model.nodes.find((node) => node.id === 'largeWorkflow')
+
+    expect(tinyConstant?.width).toBeLessThan((largeWorkflow?.width ?? 0) * 0.5)
+    expect(tinyConstant?.height).toBeLessThan((largeWorkflow?.height ?? 0) * 0.5)
+    expect(getContentScale(tinyConstant)).toBeLessThan(1.2)
+    expect(getContentScale(largeWorkflow)).toBeGreaterThan(4)
+  })
+
+  it('refreshes old built-in default layout coordinates when spacing versions change', () => {
+    const generated = {
+      ...buildSymbolLayout(['symbol']),
+      description: 'Default symbol-only layout. symbol-spacing-v2',
+      placements: {
+        symbol: { nodeId: 'symbol', x: 480, y: 320 },
+      },
+    }
+    const existing = {
+      ...buildSymbolLayout(['symbol']),
+      annotations: [{ id: 'note', label: 'Keep note', x: 10, y: 20 }],
+      description: 'Default symbol-only layout.',
+      placements: {
+        symbol: { nodeId: 'symbol', x: 12, y: 16 },
+      },
+    }
+
+    const merged = mergeDefaultLayoutWithExisting(generated, existing)
+
+    expect(merged.placements.symbol).toMatchObject({ x: 480, y: 320 })
+    expect(merged.annotations).toEqual(existing.annotations)
+  })
 })
+
+function emptySymbolClusterState(): SymbolClusterState {
+  return { callerCounts: {}, clusterByNodeId: {}, clusters: [] }
+}
+
+function getLocScale(node: Node | undefined): number {
+  return Number((node?.data as { locScale?: number } | undefined)?.locScale ?? 0)
+}
+
+function getContentScale(node: Node | undefined): number {
+  return Number(
+    (node?.data as { contentScale?: number } | undefined)?.contentScale ?? 0,
+  )
+}
 
 function symbol(
   id: string,

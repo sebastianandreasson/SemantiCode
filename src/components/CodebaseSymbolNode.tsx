@@ -12,6 +12,9 @@ type CodebaseSymbolNodeData = Record<string, unknown> & {
   heatPulse?: boolean
   heatWeight?: number
   highlighted?: boolean
+  loc?: number
+  locScale?: number
+  contentScale?: number
   clusterSize?: number
   sharedCallerCount?: number
   clusterExpanded?: boolean
@@ -25,7 +28,45 @@ export const CodebaseSymbolNode = memo(function CodebaseSymbolNode({
 }: NodeProps) {
   const nodeData = data as CodebaseSymbolNodeData
   const kindTag = formatSymbolKindTag(nodeData.kindClass ?? nodeData.kind)
-  const tags = nodeData.tags.filter((tag) => !matchesKindTag(tag, nodeData.kindClass ?? nodeData.kind))
+  const tags = nodeData.tags.filter(
+    (tag) => !matchesKindTag(tag, nodeData.kindClass ?? nodeData.kind),
+  )
+  const locScale = Math.max(0.56, Math.min(7.2, nodeData.locScale ?? 1))
+  const contentScale = Math.max(
+    0.56,
+    Math.min(6.2, nodeData.contentScale ?? locScale),
+  )
+  const compact = Boolean(nodeData.compact)
+  const nodeStyle = {
+    '--cbv-symbol-scale': `${locScale}`,
+    '--cbv-symbol-content-scale': `${contentScale}`,
+    '--cbv-symbol-pad-y': `${(compact ? 0.375 : 0.4375) * contentScale}rem`,
+    '--cbv-symbol-pad-x': `${0.625 * contentScale}rem`,
+    '--cbv-symbol-pad-left': `${0.75 * contentScale}rem`,
+    '--cbv-symbol-meta-gap': `${0.25 * contentScale}rem`,
+    '--cbv-symbol-meta-margin': `${0.3125 * contentScale}rem`,
+    '--cbv-symbol-chip-font-size': `${0.59375 * contentScale}rem`,
+    '--cbv-symbol-chip-min-height': `${1 * contentScale}rem`,
+    '--cbv-symbol-chip-pad-y': `${0.0625 * contentScale}rem`,
+    '--cbv-symbol-chip-pad-x': `${0.3125 * contentScale}rem`,
+    '--cbv-symbol-title-font-size': `${
+      (compact ? 0.6875 : 0.71875) * contentScale
+    }rem`,
+    '--cbv-symbol-subtitle-font-size': `${
+      (compact ? 0.59375 : 0.625) * contentScale
+    }rem`,
+    '--cbv-symbol-subtitle-margin': `${0.125 * contentScale}rem`,
+    '--cbv-symbol-handle-size': `${0.375 * contentScale}rem`,
+    '--cbv-symbol-stripe-width': `${Math.max(2, 2 * locScale)}px`,
+    ...((nodeData.heatWeight ?? 0) > 0
+      ? {
+          '--cbv-agent-heat-strength': `${Math.max(
+            0.28,
+            Math.min(1, nodeData.heatWeight ?? 0),
+          )}`,
+        }
+      : {}),
+  } as CSSProperties
 
   return (
     <div
@@ -36,6 +77,7 @@ export const CodebaseSymbolNode = memo(function CodebaseSymbolNode({
         nodeData.contained ? 'is-contained' : '',
         nodeData.clusterExpanded ? 'is-cluster-expanded' : '',
         nodeData.compact ? 'is-compact' : '',
+        locScale > 1.08 ? 'is-loc-scaled' : '',
         selected ? 'is-selected' : '',
         nodeData.dimmed ? 'is-dimmed' : '',
         nodeData.highlighted ? 'is-compare-highlighted' : '',
@@ -44,13 +86,7 @@ export const CodebaseSymbolNode = memo(function CodebaseSymbolNode({
       ]
         .filter(Boolean)
         .join(' ')}
-      style={
-        (nodeData.heatWeight ?? 0) > 0
-          ? ({
-              '--cbv-agent-heat-strength': `${Math.max(0.28, Math.min(1, nodeData.heatWeight ?? 0))}`,
-            } as CSSProperties)
-          : undefined
-      }
+      style={nodeStyle}
     >
       <Handle
         className="cbv-node-handle"
@@ -64,6 +100,11 @@ export const CodebaseSymbolNode = memo(function CodebaseSymbolNode({
             {tag}
           </span>
         ))}
+        {nodeData.loc ? (
+          <span className="cbv-node-tag is-loc">
+            {nodeData.loc} loc
+          </span>
+        ) : null}
         {nodeData.sharedCallerCount && nodeData.sharedCallerCount > 1 ? (
           <span className="cbv-node-tag is-shared">
             {nodeData.sharedCallerCount} callers

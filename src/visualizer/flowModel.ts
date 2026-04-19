@@ -33,6 +33,7 @@ export type FlowEdgeData = Record<string, unknown> & {
   count?: number
   dimmed?: boolean
   highlighted?: boolean
+  impact?: 'low' | 'medium' | 'high'
 }
 
 const DEFAULT_CALL_EDGE_RENDER_LIMIT = 700
@@ -40,6 +41,7 @@ const DEFAULT_CALL_EDGE_RENDER_LIMIT = 700
 export interface FlowModelOptions {
   callEdgeRenderLimit?: number
   selectedNodeIds?: Set<string>
+  viewportZoom?: number
 }
 
 export interface GraphSummary {
@@ -96,6 +98,8 @@ export interface LayoutGroupContainer {
 interface NodeDimensions {
   width: number
   height: number
+  scale: number
+  contentScale: number
   compact: boolean
 }
 
@@ -122,6 +126,10 @@ const DEFAULT_NODE_WIDTH = 240
 const DEFAULT_NODE_HEIGHT = 108
 const COMPACT_SYMBOL_NODE_WIDTH = 164
 const COMPACT_SYMBOL_NODE_HEIGHT = 74
+const LOC_SCALED_SYMBOL_MIN_WIDTH = 176
+const LOC_SCALED_SYMBOL_MAX_WIDTH = 1_620
+const LOC_SCALED_SYMBOL_MIN_HEIGHT = 64
+const LOC_SCALED_SYMBOL_MAX_HEIGHT = 1_080
 const FILESYSTEM_CONTAINER_PADDING_RIGHT = 18
 const FILESYSTEM_CONTAINER_PADDING_BOTTOM = 18
 const LAYOUT_GROUP_PADDING_X = 22
@@ -305,6 +313,7 @@ export function buildFlowModel(
         layoutGroupContainers,
         collapsedDirectoryIds,
         toggleCollapsedDirectory,
+        options,
       ),
     )
   const nodes = [...annotationNodes, ...groupNodes, ...codeNodes]
@@ -353,6 +362,12 @@ export function buildFlowModel(
   }
 
   if (graphLayers.calls) {
+    const callEdgeRenderLimit =
+      options.callEdgeRenderLimit ??
+      getZoomAwareCallEdgeRenderLimit(
+        options.viewportZoom ?? 1,
+        options.selectedNodeIds?.size ?? 0,
+      )
     const callEdges = viewMode === 'symbols'
       ? aggregateSymbolEdges(
           snapshot,
@@ -360,8 +375,9 @@ export function buildFlowModel(
           visibleNodeIds,
           symbolClusterState,
           expandedClusterIds,
+          options.viewportZoom ?? 1,
         )
-      : aggregateFileEdges(snapshot, 'calls').filter(
+      : aggregateFileEdges(snapshot, 'calls', options.viewportZoom ?? 1).filter(
           (edge) =>
             visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target),
         )
@@ -370,7 +386,7 @@ export function buildFlowModel(
       ...prioritizeCallEdgesForRendering(
         callEdges,
         options.selectedNodeIds ?? new Set(),
-        options.callEdgeRenderLimit ?? DEFAULT_CALL_EDGE_RENDER_LIMIT,
+        callEdgeRenderLimit,
       ),
     )
   }
@@ -456,14 +472,26 @@ export function applyFlowEdgePresentation(
     const currentHighlighted = Boolean(data?.highlighted)
     const currentDimmed = Boolean(data?.dimmed)
     const kind = data?.kind ?? 'contains'
-    const strokeWidth = highlighted ? 2.4 : kind === 'contains' ? 1.2 : 1.8
-    const currentOpacity = edge.style?.opacity ?? 1
-    const currentStrokeWidth = edge.style?.strokeWidth ?? (kind === 'contains' ? 1.2 : 1.8)
+    const selected = Boolean(edge.selected)
+    const edgePresentation = getEdgeImpactPresentation(kind, data?.count ?? 1)
+    const strokeWidth = highlighted || selected
+      ? 2.4
+      : edgePresentation.strokeWidth
+    const opacity = dimmed
+      ? 0.08
+      : highlighted || selected
+        ? 1
+        : edgePresentation.opacity
+    const currentOpacity = edge.style?.opacity ?? edgePresentation.opacity
+    const currentStrokeWidth =
+      edge.style?.strokeWidth ?? edgePresentation.strokeWidth
+    const currentImpact = data?.impact
 
     if (
       currentHighlighted === highlighted &&
       currentDimmed === dimmed &&
-      currentOpacity === (dimmed ? 0.2 : 1) &&
+      currentImpact === edgePresentation.impact &&
+      currentOpacity === opacity &&
       currentStrokeWidth === strokeWidth
     ) {
       return edge
@@ -477,11 +505,12 @@ export function applyFlowEdgePresentation(
             ...data,
             dimmed,
             highlighted,
+            impact: edgePresentation.impact,
           }
         : edge.data,
       style: {
         ...edge.style,
-        opacity: dimmed ? 0.2 : 1,
+        opacity,
         strokeWidth,
       },
     }
@@ -531,6 +560,7 @@ function buildFlowNode(
   layoutGroupContainers: Map<string, LayoutGroupContainer>,
   collapsedDirectoryIds: Set<string>,
   toggleCollapsedDirectory: (nodeId: string) => void,
+  options: FlowModelOptions,
 ): Node {
   if (viewMode === 'symbols' && isSymbolNode(node)) {
     const cluster = symbolClusterState.clusterByNodeId[node.id]
@@ -543,12 +573,22 @@ function buildFlowNode(
       !isClusterRoot &&
       expandedClusterIds.has(cluster?.id ?? '')
     const containedPlacement = cluster ? clusterLayout?.childPlacements[node.id] : undefined
+    const loc = getSymbolLoc(node)
     const symbolDimensions = getSymbolNodeDimensions(
       node,
       placement,
       isContainedNode,
       containedPlacement,
+      options.viewportZoom,
     )
+    const width =
+      isContainedNode
+        ? symbolDimensions.width
+        : (clusterLayout?.width ?? symbolDimensions.width)
+    const height =
+      isContainedNode
+        ? symbolDimensions.height
+        : (clusterLayout?.height ?? symbolDimensions.height)
 
     return {
       id: node.id,
@@ -559,14 +599,12 @@ function buildFlowNode(
       },
       sourcePosition: Position.Right,
       targetPosition: Position.Left,
-      width:
-        isContainedNode
-          ? symbolDimensions.width
-          : (clusterLayout?.width ?? symbolDimensions.width),
-      height:
-        isContainedNode
-          ? symbolDimensions.height
-          : (clusterLayout?.height ?? symbolDimensions.height),
+      width,
+      height,
+      style: {
+        width,
+        height,
+      },
       draggable: true,
       parentId: isContainedNode && cluster ? cluster.rootNodeId : undefined,
       extent: isContainedNode ? 'parent' : undefined,
@@ -576,6 +614,9 @@ function buildFlowNode(
         kind: node.symbolKind,
         kindClass: getSymbolVisualKindClass(node),
         tags: getNodeBadgeLabels(node, snapshot),
+        loc,
+        locScale: symbolDimensions.scale,
+        contentScale: symbolDimensions.contentScale,
         clusterSize,
         clusterExpanded:
           clusterSize > 0 && cluster ? expandedClusterIds.has(cluster.id) : undefined,
@@ -888,6 +929,7 @@ function buildFlowEdge(
   data?: FlowEdgeData,
 ): Edge {
   const stroke = getEdgeColor(kind)
+  const edgePresentation = getEdgeImpactPresentation(kind, data?.count ?? 1)
 
   return {
     id,
@@ -907,16 +949,55 @@ function buildFlowEdge(
       color: stroke,
     },
     style: {
-      opacity: 1,
+      opacity: edgePresentation.opacity,
       stroke,
-      strokeWidth: kind === 'contains' ? 1.2 : 1.8,
+      strokeWidth: edgePresentation.strokeWidth,
     },
+  }
+}
+
+function getEdgeImpactPresentation(kind: GraphEdgeKind, count: number) {
+  if (kind === 'contains') {
+    return {
+      impact: 'low' as const,
+      opacity: 0.12,
+      strokeWidth: 1,
+    }
+  }
+
+  if (kind === 'imports') {
+    return {
+      impact: 'low' as const,
+      opacity: 0.18,
+      strokeWidth: 1.1,
+    }
+  }
+
+  if (kind !== 'calls') {
+    return {
+      impact: 'medium' as const,
+      opacity: 0.28,
+      strokeWidth: 1.3,
+    }
+  }
+
+  const safeCount = Math.max(1, count)
+  const impactScore = Math.log2(safeCount + 1)
+  const opacity = clamp(0.12 + impactScore * 0.12, 0.14, 0.78)
+  const strokeWidth = clamp(0.85 + impactScore * 0.28, 1, 3)
+
+  return {
+    impact:
+      safeCount >= 6 ? 'high' as const : safeCount >= 2 ? 'medium' as const : 'low' as const,
+    opacity,
+    strokeWidth,
   }
 }
 
 function aggregateFileEdges(
   snapshot: CodebaseSnapshot,
   kind: GraphEdgeKind,
+  viewportZoom = 1,
 ) {
   const edges = new Map<string, Edge>()
 
@@ -945,7 +1026,7 @@ function aggregateFileEdges(
           kind,
           count: nextCount,
         },
-        label: formatCallEdgeLabel(nextCount),
+        label: formatCallEdgeLabel(nextCount, viewportZoom),
       })
       continue
     }
@@ -968,6 +1049,7 @@ function aggregateSymbolEdges(
   visibleNodeIds: Set<string>,
   symbolClusterState: SymbolClusterState,
   expandedClusterIds: Set<string>,
+  viewportZoom = 1,
 ) {
   const edges = new Map<string, Edge>()
 
@@ -1026,7 +1108,7 @@ function aggregateSymbolEdges(
         kind,
         count: nextCount,
       },
-      label: formatCallEdgeLabel(nextCount),
+      label: formatCallEdgeLabel(nextCount, viewportZoom),
     })
   }
 
@@ -1039,13 +1121,62 @@ function aggregateSymbolEdges(
 
     return {
       ...edge,
-      label: formatCallEdgeLabel(count),
+      label: formatCallEdgeLabel(count, viewportZoom),
     }
   })
 }
 
-function formatCallEdgeLabel(count: number) {
-  return count > 1 ? `${count} calls` : undefined
+function formatCallEdgeLabel(count: number, viewportZoom = 1) {
+  if (count <= 1) {
+    return undefined
+  }
+
+  if (viewportZoom < 0.22 && count < 8) {
+    return undefined
+  }
+
+  if (viewportZoom < 0.38 && count < 4) {
+    return undefined
+  }
+
+  return `${count} calls`
+}
+
+function getZoomAwareCallEdgeRenderLimit(
+  viewportZoom: number,
+  selectedNodeCount: number,
+) {
+  if (selectedNodeCount > 0) {
+    return DEFAULT_CALL_EDGE_RENDER_LIMIT
+  }
+
+  const zoom = Number.isFinite(viewportZoom) ? viewportZoom : 1
+
+  if (zoom <= 0.055) {
+    return 120
+  }
+
+  if (zoom <= 0.085) {
+    return 170
+  }
+
+  if (zoom <= 0.13) {
+    return 230
+  }
+
+  if (zoom <= 0.2) {
+    return 320
+  }
+
+  if (zoom <= 0.32) {
+    return 460
+  }
+
+  if (zoom <= 0.52) {
+    return 580
+  }
+
+  return DEFAULT_CALL_EDGE_RENDER_LIMIT
 }
 
 function prioritizeCallEdgesForRendering(
@@ -1401,28 +1532,153 @@ function getSymbolNodeDimensions(
   placement: LayoutSpec['placements'][string] | undefined,
   contained: boolean,
   containedPlacement?: ExpandedClusterLayout['childPlacements'][string],
+  viewportZoom = 1,
 ): NodeDimensions {
   if (containedPlacement) {
     return {
       width: containedPlacement.width,
       height: containedPlacement.height,
+      scale: 1,
+      contentScale: 1,
       compact: containedPlacement.width <= COMPACT_SYMBOL_NODE_WIDTH,
     }
   }
 
   if (symbol.symbolKind === 'constant') {
+    const baseWidth = contained ? COMPACT_SYMBOL_NODE_WIDTH - 12 : COMPACT_SYMBOL_NODE_WIDTH
+    const baseHeight = contained ? COMPACT_SYMBOL_NODE_HEIGHT - 6 : COMPACT_SYMBOL_NODE_HEIGHT
+    const scaledDimensions = getLocScaledSymbolDimensions(
+      symbol,
+      baseWidth,
+      baseHeight,
+      viewportZoom,
+    )
+
     return {
-      width: contained ? COMPACT_SYMBOL_NODE_WIDTH - 12 : COMPACT_SYMBOL_NODE_WIDTH,
-      height: contained ? COMPACT_SYMBOL_NODE_HEIGHT - 6 : COMPACT_SYMBOL_NODE_HEIGHT,
-      compact: true,
+      ...scaledDimensions,
+      compact: scaledDimensions.scale < 1.12,
     }
   }
 
+  const baseWidth = placement?.width ?? DEFAULT_NODE_WIDTH
+  const baseHeight = placement?.height ?? DEFAULT_NODE_HEIGHT
+
   return {
-    width: placement?.width ?? DEFAULT_NODE_WIDTH,
-    height: placement?.height ?? DEFAULT_NODE_HEIGHT,
+    ...getLocScaledSymbolDimensions(symbol, baseWidth, baseHeight, viewportZoom),
     compact: false,
   }
+}
+
+function getLocScaledSymbolDimensions(
+  symbol: SymbolNode,
+  baseWidth: number,
+  baseHeight: number,
+  viewportZoom: number,
+) {
+  const loc = getSymbolLoc(symbol)
+
+  if (!loc) {
+    return {
+      width: baseWidth,
+      height: baseHeight,
+      scale: 1,
+      contentScale: 1,
+    }
+  }
+
+  const logLoc = Math.log10(loc + 1)
+  const highLocWeight = clamp((logLoc - 2.1) / 0.9, 0, 1)
+  const baseScale = clamp(
+    0.72 +
+      Math.pow(logLoc, 1.65) * 0.38 +
+      Math.pow(highLocWeight, 1.4) * 0.95,
+    0.72,
+    4.1,
+  )
+  const scale = getViewportAdjustedSymbolScale(baseScale, viewportZoom)
+  const contentScale = getSymbolContentScale(scale, viewportZoom, loc)
+  const scaledWidth = baseWidth * scale
+  const titleWidth = getSymbolTitleWidth(symbol.name, contentScale)
+  const width = Math.round(
+    clamp(
+      Math.max(scaledWidth, titleWidth),
+      LOC_SCALED_SYMBOL_MIN_WIDTH,
+      LOC_SCALED_SYMBOL_MAX_WIDTH,
+    ),
+  )
+  const heightScale = Math.max(scale, contentScale * 0.9)
+
+  return {
+    width,
+    height: Math.round(
+      clamp(
+        baseHeight * heightScale,
+        LOC_SCALED_SYMBOL_MIN_HEIGHT,
+        LOC_SCALED_SYMBOL_MAX_HEIGHT,
+      ),
+    ),
+    scale,
+    contentScale,
+  }
+}
+
+function getViewportAdjustedSymbolScale(baseScale: number, viewportZoom: number) {
+  const zoom = Number.isFinite(viewportZoom) ? clamp(viewportZoom, 0.1, 4) : 1
+
+  if (zoom < 1) {
+    const zoomOutFactor = clamp((1 - zoom) / 0.9, 0, 1)
+    return clamp(1 + (baseScale - 1) * (1 + zoomOutFactor * 2.15), 0.56, 7.2)
+  }
+
+  const zoomInFactor = clamp(Math.log2(zoom) / 2, 0, 1)
+
+  return clamp(1 + (baseScale - 1) * (1 - zoomInFactor * 0.76), 0.82, 3.2)
+}
+
+function getSymbolContentScale(
+  nodeScale: number,
+  viewportZoom: number,
+  loc: number,
+) {
+  const zoom = Number.isFinite(viewportZoom) ? clamp(viewportZoom, 0.1, 4) : 1
+
+  if (zoom < 1) {
+    const readableAtViewportScale = 1 / zoom
+    const locWeight = clamp((Math.log10(loc + 1) - 1) / 1.2, 0, 1)
+    const locWeightedReadableScale =
+      1 + (readableAtViewportScale * 1.08 - 1) * locWeight
+
+    return clamp(
+      Math.max(nodeScale * 0.92, locWeightedReadableScale),
+      0.72,
+      6.2,
+    )
+  }
+
+  if (nodeScale <= 1) {
+    return clamp(nodeScale, 0.78, 1)
+  }
+
+  return clamp(1 + (nodeScale - 1) * 0.62, 1, 3.4)
+}
+
+function getSymbolTitleWidth(title: string, contentScale: number) {
+  const estimatedMonoCharacterWidth = 7.5 * contentScale
+  const horizontalChrome = 44 * contentScale
+
+  return Math.ceil(title.length * estimatedMonoCharacterWidth + horizontalChrome)
+}
+
+function getSymbolLoc(symbol: SymbolNode) {
+  if (!symbol.range) {
+    return null
+  }
+
+  return Math.max(1, symbol.range.end.line - symbol.range.start.line + 1)
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value))
 }
 
 export function getSymbolVisualKindClass(symbol: SymbolNode) {
@@ -2681,6 +2937,7 @@ export function areLayoutListsEquivalent(
     return (
       layout.id === rightLayout?.id &&
       layout.updatedAt === rightLayout?.updatedAt &&
+      layout.description === rightLayout?.description &&
       getLayoutNodeScope(layout) === getLayoutNodeScope(rightLayout) &&
       Object.keys(layout.placements).length === Object.keys(rightLayout?.placements ?? {}).length &&
       layout.annotations.length === (rightLayout?.annotations.length ?? 0) &&
@@ -2719,6 +2976,16 @@ export function mergeDefaultLayoutWithExisting(
     return generatedLayout
   }
 
+  if (shouldRefreshGeneratedDefaultLayout(generatedLayout, existingLayout)) {
+    return {
+      ...generatedLayout,
+      annotations: existingLayout.annotations,
+      hiddenNodeIds: existingLayout.hiddenNodeIds.filter((nodeId) =>
+        Boolean(generatedLayout.placements[nodeId]),
+      ),
+    }
+  }
+
   const mergedPlacements = { ...generatedLayout.placements }
 
   for (const [nodeId, placement] of Object.entries(existingLayout.placements)) {
@@ -2745,6 +3012,21 @@ export function mergeDefaultLayoutWithExisting(
         ? generatedLayout.updatedAt
         : existingLayout.updatedAt,
   }
+}
+
+function shouldRefreshGeneratedDefaultLayout(
+  generatedLayout: LayoutSpec,
+  existingLayout: LayoutSpec,
+) {
+  const generatedDescription = generatedLayout.description ?? ''
+  const existingDescription = existingLayout.description ?? ''
+  const versionMarkers = ['symbol-spacing-v2', 'semantic-spacing-v2']
+
+  return versionMarkers.some(
+    (marker) =>
+      generatedDescription.includes(marker) &&
+      !existingDescription.includes(marker),
+  )
 }
 
 export function layoutsDifferMeaningfully(

@@ -732,3 +732,59 @@
   height: 1.5rem;
   min-height: 1.5rem;
 }
+
+.cbv-inspector-body--loading {
+  align-content: start;
+  padding-top: 0.75rem;
+}
+
+.cbv-inspector-loading {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.5rem;
+  align-items: start;
+  padding: 0.625rem;
+  border: 1px solid var(--app-border-soft);
+  border-radius: var(--cbv-radius-lg);
+  background: var(--app-code-bg);
+  color: var(--app-text-faint);
+  font-family: var(--cbv-font-mono);
+}
+
+.cbv-inspector-loading-dot {
+  width: 0.375rem;
+  height: 0.375rem;
+  margin-top: 0.375rem;
+  border-radius: var(--cbv-radius-sm);
+  background: var(--app-accent);
+}
+
+.cbv-inspector-loading-copy {
+  display: grid;
+  min-width: 0;
+  gap: 0.125rem;
+}
+
+.cbv-inspector-loading-copy .cbv-eyebrow {
+  margin: 0;
+}
+
+.cbv-inspector-loading-copy strong {
+  overflow: hidden;
+  color: var(--app-text);
+  font-size: 0.71875rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-overflow: ellipsis;
+  text-transform: lowercase;
+  white-space: nowrap;
+}
+
+.cbv-inspector-loading-copy span {
+  overflow: hidden;
+  color: var(--app-text-dim);
+  font-size: 0.625rem;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

@@ -20,6 +20,7 @@ import type { PreprocessedWorkspaceContext } from '../preprocessing/types'
 const SEMANTIC_SYMBOL_NODE_WIDTH = 248
 const SEMANTIC_SYMBOL_NODE_HEIGHT = 82
 const SEMANTIC_PROJECTION_SEED = 17
+const SEMANTIC_LAYOUT_COORDINATE_VERSION = 'semantic-spacing-v2'
 
 const SUPPORTED_SYMBOL_KINDS = new Set<SymbolKind>([
   'class',
@@ -53,7 +54,7 @@ export function buildSemanticLayout(
 
   return refineSemanticLayout(projection, {
     baseLayout,
-    minimumSpacing: 96,
+    minimumSpacing: 220,
   })
 }
 
@@ -63,7 +64,7 @@ export function buildSemanticLayoutScaffold(snapshot: ProjectSnapshot): LayoutSp
     title: 'Semantic symbols',
     strategy: 'semantic',
     nodeScope: 'symbols',
-    description: 'Experimental semantic symbol layout scaffold.',
+    description: `Experimental semantic symbol layout scaffold. ${SEMANTIC_LAYOUT_COORDINATE_VERSION}`,
     placements: {},
     groups: [],
     lanes: [],
@@ -97,7 +98,7 @@ export function buildSemanticLayoutFromProjection(
     title: 'Semantic symbols',
     strategy: 'semantic',
     nodeScope: 'symbols',
-    description: 'Experimental symbol layout based on semantic embeddings.',
+    description: `Experimental symbol layout based on semantic embeddings. ${SEMANTIC_LAYOUT_COORDINATE_VERSION}`,
     placements,
     groups: [],
     lanes: [],

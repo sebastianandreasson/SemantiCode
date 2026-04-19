@@ -379,6 +379,7 @@ export function Semanticode({
     toggleCollapsedDirectory,
     toggleSymbolCluster,
     viewMode,
+    viewport,
   })
   const {
     cameraCommand: followCameraCommand,
@@ -991,9 +992,15 @@ function InspectorFallback({
           ×
         </button>
       </div>
-      <div className="cbv-empty">
-        <h2>Loading inspector…</h2>
-        <p>Preparing the code and agent tools for this selection.</p>
+      <div className="cbv-inspector-body cbv-inspector-body--loading">
+        <div aria-live="polite" className="cbv-inspector-loading" role="status">
+          <span aria-hidden="true" className="cbv-inspector-loading-dot" />
+          <div className="cbv-inspector-loading-copy">
+            <p className="cbv-eyebrow">code view</p>
+            <strong>loading selection</strong>
+            <span>preparing code and agent context</span>
+          </div>
+        </div>
       </div>
     </aside>
   )

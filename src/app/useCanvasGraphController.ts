@@ -78,6 +78,7 @@ export interface UseCanvasGraphControllerInput {
   selectEdge: (edgeId: string | null) => void
   selectNode: (nodeId: string | null, options?: { additive?: boolean }) => void
   viewMode: VisualizerViewMode
+  viewport: ViewportState
   layouts: LayoutSpec[]
 }
 
@@ -110,6 +111,7 @@ export function useCanvasGraphController({
   toggleCollapsedDirectory,
   toggleSymbolCluster,
   viewMode,
+  viewport,
 }: UseCanvasGraphControllerInput) {
   const [flowInstance, setFlowInstance] = useState<ReactFlowInstance<Node, Edge> | null>(null)
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
@@ -164,6 +166,10 @@ export function useCanvasGraphController({
       ),
     [resolvedScene, snapshotOrNull, viewMode],
   )
+  const modelViewportZoom = useMemo(
+    () => getFlowModelViewportZoomBucket(viewport.zoom),
+    [viewport.zoom],
+  )
 
   const baseFlowModel = useMemo<FlowModel | null>(() => {
     if (!snapshotOrNull || !resolvedScene) {
@@ -184,6 +190,7 @@ export function useCanvasGraphController({
       toggleCollapsedDirectory,
       {
         selectedNodeIds: selectedNodeIdSet,
+        viewportZoom: modelViewportZoom,
       },
     )
   }, [
@@ -199,6 +206,7 @@ export function useCanvasGraphController({
     symbolClusterState,
     toggleCollapsedDirectory,
     viewMode,
+    modelViewportZoom,
   ])
   const telemetryHeatByNodeId = useMemo(() => {
     const recentCutoff = telemetryObservedAt - 10_000
@@ -665,4 +673,56 @@ export function useCanvasGraphController({
     setFlowInstance,
     symbolClusterState,
   }
+}
+
+function getFlowModelViewportZoomBucket(zoom: number) {
+  if (!Number.isFinite(zoom)) {
+    return 1
+  }
+
+  if (zoom <= 0.04) {
+    return 0.035
+  }
+
+  if (zoom <= 0.065) {
+    return 0.055
+  }
+
+  if (zoom <= 0.1) {
+    return 0.085
+  }
+
+  if (zoom <= 0.16) {
+    return 0.13
+  }
+
+  if (zoom <= 0.25) {
+    return 0.2
+  }
+
+  if (zoom <= 0.4) {
+    return 0.32
+  }
+
+  if (zoom <= 0.65) {
+    return 0.52
+  }
+
+  if (zoom <= 0.95) {
+    return 0.8
+  }
+
+  if (zoom <= 1.35) {
+    return 1.1
+  }
+
+  if (zoom <= 2) {
+    return 1.65
+  }
+
+  if (zoom <= 3) {
+    return 2.45
+  }
+
+  return 3.5
 }

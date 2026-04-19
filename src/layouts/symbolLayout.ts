@@ -9,11 +9,16 @@ import type {
 
 const SYMBOL_NODE_WIDTH = 248
 const SYMBOL_NODE_HEIGHT = 82
-const COMPONENT_COLUMN_WIDTH = 320
-const COMPONENT_ROW_HEIGHT = 106
-const ISOLATED_GRID_COLUMN_WIDTH = 276
-const ISOLATED_GRID_ROW_HEIGHT = 100
-const ISOLATED_GRID_COLUMNS = 3
+const COMPONENT_GAP_X = 220
+const COMPONENT_GAP_Y = 82
+const ISOLATED_GAP_X = 130
+const ISOLATED_GAP_Y = 96
+const ISOLATED_SHELF_WIDTH = 4_400
+const MIN_SYMBOL_SLOT_WIDTH = 340
+const MAX_SYMBOL_SLOT_WIDTH = 1_560
+const MIN_SYMBOL_SLOT_HEIGHT = 150
+const MAX_SYMBOL_SLOT_HEIGHT = 860
+const SYMBOL_LAYOUT_COORDINATE_VERSION = 'symbol-spacing-v2'
 
 const SUPPORTED_SYMBOL_KINDS = new Set<SymbolKind>([
   'class',
@@ -44,34 +49,65 @@ export function buildSymbolLayout(snapshot: ProjectSnapshot): LayoutSpec {
     .flat()
     .sort(compareSymbols)
 
+  let componentCursorX = 0
+
   connectedComponents
     .sort((left, right) => compareComponents(left, right, adjacency))
-    .forEach((component, componentIndex) => {
+    .forEach((component) => {
       const sortedComponent = [...component].sort((left, right) =>
         compareSymbolsByDegree(left, right, adjacency),
       )
+      const componentSlots = sortedComponent.map(getSymbolLayoutSlot)
+      const componentWidth = Math.max(
+        ...componentSlots.map((slot) => slot.width),
+        MIN_SYMBOL_SLOT_WIDTH,
+      )
+      let componentCursorY = 0
 
       sortedComponent.forEach((symbol, rowIndex) => {
+        const slot = componentSlots[rowIndex] ?? getSymbolLayoutSlot(symbol)
         placements[symbol.id] = {
           nodeId: symbol.id,
-          x: componentIndex * COMPONENT_COLUMN_WIDTH,
-          y: rowIndex * COMPONENT_ROW_HEIGHT,
+          x: componentCursorX,
+          y: componentCursorY,
           width: SYMBOL_NODE_WIDTH,
           height: SYMBOL_NODE_HEIGHT,
         }
+
+        componentCursorY += slot.height + COMPONENT_GAP_Y
       })
+
+      componentCursorX += componentWidth + COMPONENT_GAP_X
     })
 
-  const isolatedBaseX = connectedComponents.length * COMPONENT_COLUMN_WIDTH
+  const isolatedBaseX = componentCursorX
+  const isolatedMaxX = isolatedBaseX + ISOLATED_SHELF_WIDTH
+  let isolatedCursorX = isolatedBaseX
+  let isolatedCursorY = 0
+  let isolatedRowHeight = 0
 
-  isolatedSymbols.forEach((symbol, index) => {
+  isolatedSymbols.forEach((symbol) => {
+    const slot = getSymbolLayoutSlot(symbol)
+
+    if (
+      isolatedCursorX > isolatedBaseX &&
+      isolatedCursorX + slot.width > isolatedMaxX
+    ) {
+      isolatedCursorX = isolatedBaseX
+      isolatedCursorY += isolatedRowHeight + ISOLATED_GAP_Y
+      isolatedRowHeight = 0
+    }
+
     placements[symbol.id] = {
       nodeId: symbol.id,
-      x: isolatedBaseX + (index % ISOLATED_GRID_COLUMNS) * ISOLATED_GRID_COLUMN_WIDTH,
-      y: Math.floor(index / ISOLATED_GRID_COLUMNS) * ISOLATED_GRID_ROW_HEIGHT,
+      x: isolatedCursorX,
+      y: isolatedCursorY,
       width: SYMBOL_NODE_WIDTH,
       height: SYMBOL_NODE_HEIGHT,
     }
+
+    isolatedCursorX += slot.width + ISOLATED_GAP_X
+    isolatedRowHeight = Math.max(isolatedRowHeight, slot.height)
   })
 
   return {
@@ -79,7 +115,7 @@ export function buildSymbolLayout(snapshot: ProjectSnapshot): LayoutSpec {
     title: 'Code symbols',
     strategy: 'structural',
     nodeScope: 'symbols',
-    description: 'Default symbol-only layout grouped by connected symbol components.',
+    description: `Default symbol-only layout grouped by connected symbol components. ${SYMBOL_LAYOUT_COORDINATE_VERSION}`,
     placements,
     groups: [],
     lanes: [],
@@ -90,6 +126,44 @@ export function buildSymbolLayout(snapshot: ProjectSnapshot): LayoutSpec {
     createdAt: snapshot.generatedAt,
     updatedAt: snapshot.generatedAt,
   }
+}
+
+function getSymbolLayoutSlot(symbol: SymbolNode) {
+  const loc = getSymbolLoc(symbol)
+  const logLoc = Math.log10(loc + 1)
+  const highLocWeight = Math.max(0, Math.min(1, (logLoc - 2.1) / 0.9))
+  const locScale = Math.max(
+    1,
+    Math.min(
+      5.4,
+      1 +
+        Math.pow(logLoc, 1.45) * 0.58 +
+        Math.pow(highLocWeight, 1.35) * 1.55,
+    ),
+  )
+
+  return {
+    width: Math.round(
+      Math.max(
+        MIN_SYMBOL_SLOT_WIDTH,
+        Math.min(MAX_SYMBOL_SLOT_WIDTH, SYMBOL_NODE_WIDTH * locScale + 96),
+      ),
+    ),
+    height: Math.round(
+      Math.max(
+        MIN_SYMBOL_SLOT_HEIGHT,
+        Math.min(MAX_SYMBOL_SLOT_HEIGHT, SYMBOL_NODE_HEIGHT * locScale + 170),
+      ),
+    ),
+  }
+}
+
+function getSymbolLoc(symbol: SymbolNode) {
+  if (!symbol.range) {
+    return 1
+  }
+
+  return Math.max(1, symbol.range.end.line - symbol.range.start.line + 1)
 }
 
 function buildSymbolAdjacency(

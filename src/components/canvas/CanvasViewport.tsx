@@ -460,7 +460,7 @@ export const CanvasViewport = memo(function CanvasViewport({
         edges={edges}
         fitView
         maxZoom={4}
-        minZoom={0.1}
+        minZoom={0.03}
         nodeTypes={nodeTypes}
         nodes={nodes}
         onlyRenderVisibleElements
