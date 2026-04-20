@@ -406,7 +406,7 @@ function AgentEventFeedInspector({
         </div>
         <p>
           {latestTarget
-            ? `${latestTarget.intent} · ${latestTarget.kind} · ${latestTarget.path}`
+            ? `${latestTarget.intent} · ${latestTarget.kind} · ${latestTarget.confidence} · ${latestTarget.path}`
             : 'No resolved target'}
         </p>
         <div className="cbv-agent-event-summary-grid">

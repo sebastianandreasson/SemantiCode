@@ -642,7 +642,7 @@ export function Semanticode({
     inspectorCommand: followInspectorCommand,
     onLiveWorkspaceRefresh,
     refreshCommand: followRefreshCommand,
-    selectFileNode: selectNode,
+    selectFollowNode: selectNode,
     setInspectorOpen,
     setInspectorTabToFile,
     setRefreshStatus,

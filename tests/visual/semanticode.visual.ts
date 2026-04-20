@@ -86,4 +86,21 @@ test.describe('Semanticode visual smoke harness', () => {
     await expect(page.locator('.cbv-canvas-utility-popover')).toBeVisible()
     await capture(page, 'canvas-utility-menu')
   })
+
+  test('follows exact hidden symbol edits without switching layouts', async ({ page }) => {
+    await openHarness(page, 'follow-hidden-symbol')
+
+    const selectedLayoutLabel = await page.locator('.cbv-layout-trigger-label').textContent()
+
+    await page.locator('.cbv-canvas-utility-trigger').click()
+    await page.getByRole('button', { name: 'Follow active agent' }).click()
+    await page.getByRole('button', { name: 'Show follow debug' }).click()
+
+    await expect(page.locator('.cbv-agent-heat-debug')).toContainText(
+      'Target: symbol · src/components/ProjectDashboard.tsx · exact_symbol',
+    )
+    await expect(page.locator('.cbv-layout-trigger-label')).toHaveText(selectedLayoutLabel ?? '')
+    await expect(page.locator('.react-flow__node.selected')).toContainText('useProject')
+    await capture(page, 'follow-hidden-symbol')
+  })
 })

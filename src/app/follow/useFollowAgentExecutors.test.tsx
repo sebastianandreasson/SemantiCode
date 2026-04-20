@@ -21,7 +21,7 @@ describe('useFollowAgentExecutors', () => {
     const inspectorCommand = createInspectorCommand(cameraCommand)
     const acknowledgeCameraCommand = vi.fn()
     const acknowledgeInspectorCommand = vi.fn()
-    const selectFileNode = vi.fn()
+    const selectFollowNode = vi.fn()
     const setInspectorOpen = vi.fn()
     const setInspectorTabToFile = vi.fn()
     let resolveFocus: (() => void) | null = null
@@ -39,7 +39,7 @@ describe('useFollowAgentExecutors', () => {
         cameraCommand={cameraCommand}
         focusCanvasOnFollowTarget={focusCanvasOnFollowTarget}
         inspectorCommand={inspectorCommand}
-        selectFileNode={selectFileNode}
+        selectFollowNode={selectFollowNode}
         setInspectorOpen={setInspectorOpen}
         setInspectorTabToFile={setInspectorTabToFile}
       />,
@@ -50,9 +50,9 @@ describe('useFollowAgentExecutors', () => {
     })
 
     expect(focusCanvasOnFollowTarget).toHaveBeenCalledOnce()
-    expect(selectFileNode).toHaveBeenCalledWith(cameraCommand.target.fileNodeId)
-    expect(setInspectorTabToFile).toHaveBeenCalledOnce()
-    expect(setInspectorOpen).toHaveBeenCalledWith(true)
+    expect(selectFollowNode).not.toHaveBeenCalled()
+    expect(setInspectorTabToFile).not.toHaveBeenCalled()
+    expect(setInspectorOpen).not.toHaveBeenCalled()
     expect(acknowledgeInspectorCommand).not.toHaveBeenCalled()
 
     await act(async () => {
@@ -66,6 +66,10 @@ describe('useFollowAgentExecutors', () => {
       resolveFocus?.()
       await Promise.resolve()
     })
+
+    expect(selectFollowNode).toHaveBeenCalledWith(cameraCommand.target.primaryNodeId)
+    expect(setInspectorTabToFile).toHaveBeenCalledOnce()
+    expect(setInspectorOpen).toHaveBeenCalledWith(true)
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(FOLLOW_AGENT_TARGET_LINGER_MS - 1)
@@ -87,6 +91,110 @@ describe('useFollowAgentExecutors', () => {
       pendingPath: inspectorCommand.pendingPath,
     })
   })
+
+  it('selects and focuses exact symbol follow targets', async () => {
+    vi.useFakeTimers()
+
+    const cameraCommand = createSymbolCameraCommand()
+    const inspectorCommand = createInspectorCommand(cameraCommand)
+    const selectFollowNode = vi.fn()
+    const focusCanvasOnFollowTarget = vi.fn()
+
+    render(
+      <ExecutorProbe
+        acknowledgeCameraCommand={() => undefined}
+        cameraCommand={cameraCommand}
+        focusCanvasOnFollowTarget={focusCanvasOnFollowTarget}
+        inspectorCommand={inspectorCommand}
+        selectFollowNode={selectFollowNode}
+      />,
+    )
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+      await Promise.resolve()
+    })
+
+    expect(selectFollowNode).toHaveBeenCalledWith('symbol:createPRNG')
+    expect(focusCanvasOnFollowTarget).toHaveBeenCalledWith({
+      fileNodeId: 'file:debug',
+      isEdit: true,
+      mode: 'symbols',
+      nodeIds: ['symbol:createPRNG', 'symbol:helper'],
+    })
+  })
+
+  it('runs a pending camera command after the current command finishes lingering', async () => {
+    vi.useFakeTimers()
+
+    const firstCameraCommand = createCameraCommand()
+    const firstInspectorCommand = createInspectorCommand(firstCameraCommand)
+    const nextCameraCommand = createSymbolCameraCommand()
+    const nextInspectorCommand = createInspectorCommand(nextCameraCommand)
+    const acknowledgeCameraCommand = vi.fn()
+    const focusResolvers: Array<() => void> = []
+    const focusCanvasOnFollowTarget = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          focusResolvers.push(resolve)
+        }),
+    )
+
+    const { rerender } = render(
+      <ExecutorProbe
+        acknowledgeCameraCommand={acknowledgeCameraCommand}
+        cameraCommand={firstCameraCommand}
+        focusCanvasOnFollowTarget={focusCanvasOnFollowTarget}
+        inspectorCommand={firstInspectorCommand}
+      />,
+    )
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+
+    expect(focusCanvasOnFollowTarget).toHaveBeenCalledTimes(1)
+
+    rerender(
+      <ExecutorProbe
+        acknowledgeCameraCommand={acknowledgeCameraCommand}
+        cameraCommand={nextCameraCommand}
+        focusCanvasOnFollowTarget={focusCanvasOnFollowTarget}
+        inspectorCommand={nextInspectorCommand}
+      />,
+    )
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+
+    expect(focusCanvasOnFollowTarget).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      focusResolvers[0]?.()
+      await Promise.resolve()
+    })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(FOLLOW_AGENT_TARGET_LINGER_MS)
+      await Promise.resolve()
+    })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+      await Promise.resolve()
+    })
+
+    expect(acknowledgeCameraCommand).toHaveBeenCalledWith({
+      commandId: firstCameraCommand.id,
+      intent: 'activity',
+    })
+    expect(focusCanvasOnFollowTarget).toHaveBeenCalledTimes(2)
+    expect(focusCanvasOnFollowTarget).toHaveBeenLastCalledWith({
+      fileNodeId: 'file:debug',
+      isEdit: true,
+      mode: 'symbols',
+      nodeIds: ['symbol:createPRNG', 'symbol:helper'],
+    })
+  })
 })
 
 function ExecutorProbe(input: {
@@ -101,7 +209,7 @@ function ExecutorProbe(input: {
   cameraCommand: FollowCameraCommand | null
   focusCanvasOnFollowTarget: () => Promise<void> | void
   inspectorCommand?: FollowInspectorCommand | null
-  selectFileNode?: (nodeId: string) => void
+  selectFollowNode?: (nodeId: string) => void
   setInspectorOpen?: (open: boolean) => void
   setInspectorTabToFile?: () => void
 }) {
@@ -116,7 +224,7 @@ function ExecutorProbe(input: {
     inspectorCommand: input.inspectorCommand ?? null,
     onLiveWorkspaceRefresh: null,
     refreshCommand: null,
-    selectFileNode: input.selectFileNode ?? (() => undefined),
+    selectFollowNode: input.selectFollowNode ?? (() => undefined),
     setInspectorOpen: input.setInspectorOpen ?? (() => undefined),
     setInspectorTabToFile: input.setInspectorTabToFile ?? (() => undefined),
     setRefreshStatus: () => undefined,
@@ -151,5 +259,25 @@ function createInspectorCommand(cameraCommand: FollowCameraCommand): FollowInspe
     pendingPath: null,
     scrollToDiffRequestKey: null,
     target: cameraCommand.target,
+  }
+}
+
+function createSymbolCameraCommand(): FollowCameraCommand {
+  return {
+    id: 'camera:edit:operation:write:debug:symbol:createPRNG:exact_symbol',
+    target: {
+      confidence: 'exact_symbol',
+      eventKey: 'operation:write:debug',
+      fileNodeId: 'file:debug',
+      intent: 'edit',
+      kind: 'symbol',
+      path: 'debug_brute.js',
+      primaryNodeId: 'symbol:createPRNG',
+      requiresSnapshotRefresh: true,
+      shouldOpenInspector: true,
+      symbolNodeIds: ['symbol:createPRNG', 'symbol:helper'],
+      timestamp: '2026-04-18T10:00:01.000Z',
+      toolNames: ['replaceSymbolRange'],
+    },
   }
 }

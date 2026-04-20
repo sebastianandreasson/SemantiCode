@@ -194,6 +194,14 @@ function compareFollowEventOrder(
 ) {
   if (left.timestampMs !== right.timestampMs) {
     const timestampDeltaMs = Math.abs(right.timestampMs - left.timestampMs)
+    if (timestampDeltaMs <= FOLLOW_AGENT_EVENT_PRIORITY_WINDOW_MS) {
+      const explicitSymbolOrder = compareExplicitSymbolReferences(left, right)
+
+      if (explicitSymbolOrder !== 0) {
+        return explicitSymbolOrder
+      }
+    }
+
     if (
       timestampDeltaMs <= FOLLOW_AGENT_EVENT_PRIORITY_WINDOW_MS &&
       left.sourcePriority !== right.sourcePriority
@@ -202,6 +210,12 @@ function compareFollowEventOrder(
     }
 
     return timestampDirection * (left.timestampMs - right.timestampMs)
+  }
+
+  const explicitSymbolOrder = compareExplicitSymbolReferences(left, right)
+
+  if (explicitSymbolOrder !== 0) {
+    return explicitSymbolOrder
   }
 
   if (left.sourcePriority !== right.sourcePriority) {
@@ -213,6 +227,17 @@ function compareFollowEventOrder(
   }
 
   return timestampDirection * left.eventKey.localeCompare(right.eventKey)
+}
+
+function compareExplicitSymbolReferences(left: FollowFileEvent, right: FollowFileEvent) {
+  const leftHasExplicitSymbols = (left.symbolNodeIds?.length ?? 0) > 0
+  const rightHasExplicitSymbols = (right.symbolNodeIds?.length ?? 0) > 0
+
+  if (leftHasExplicitSymbols === rightHasExplicitSymbols) {
+    return 0
+  }
+
+  return leftHasExplicitSymbols ? -1 : 1
 }
 
 function getOperationPathSequence(operation: AgentFileOperation) {

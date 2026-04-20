@@ -8,7 +8,9 @@ import { applyInitialThemeMode } from '../app/themeBootstrap'
 import { Semanticode } from '../components/Semanticode'
 import { visualizerStore } from '../store/visualizerStore'
 import type {
+  AgentEvent,
   AgentMessage,
+  AgentFileOperation,
   AgentSettingsState,
   AgentSessionSummary,
   AgentTimelineItem,
@@ -35,7 +37,7 @@ type VisualDesktopBridge = {
   initialUiPreferences: UiPreferences
   isAvailable: boolean
   isDesktop: boolean
-  onEvent: () => () => void
+  onEvent: (listener: (event: AgentEvent) => void) => () => void
   openWorkspaceDialog: () => Promise<boolean>
   openWorkspaceRootDir: () => Promise<boolean>
   removeWorkspaceHistoryEntry: (rootDir: string) => Promise<WorkspaceHistoryPayload>
@@ -354,7 +356,7 @@ const snapshot: ProjectSnapshot = {
 const visualLayout: LayoutSpec = {
   annotations: [],
   groups: [],
-  hiddenNodeIds: [],
+  hiddenNodeIds: scenario === 'follow-hidden-symbol' ? ['symbol:use-project'] : [],
   id: 'layout:visual',
   lanes: [],
   nodeScope: 'symbols',
@@ -483,34 +485,51 @@ const activeRun: AutonomousRunSummary = {
 
 const runDetail: AutonomousRunDetail = {
   ...activeRun,
-  fileOperations: [
-    {
-      confidence: 'exact',
-      id: 'agent-file-operation:run-visual:read-dashboard:file_read:0:src%2Fcomponents%2FProjectDashboard.tsx',
-      kind: 'file_read',
-      path: 'src/components/ProjectDashboard.tsx',
-      paths: ['src/components/ProjectDashboard.tsx'],
-      sessionId: 'run-visual',
-      source: 'request-telemetry',
-      status: 'completed',
-      timestamp: '2026-04-18T08:18:00.000Z',
-      toolCallId: 'read-dashboard',
-      toolName: 'read',
-    },
-    {
-      confidence: 'exact',
-      id: 'agent-file-operation:run-visual:edit-dashboard:file_write:0:src%2Fcomponents%2FProjectDashboard.tsx',
-      kind: 'file_write',
-      path: 'src/components/ProjectDashboard.tsx',
-      paths: ['src/components/ProjectDashboard.tsx'],
-      sessionId: 'run-visual',
-      source: 'request-telemetry',
-      status: 'completed',
-      timestamp: '2026-04-18T08:19:00.000Z',
-      toolCallId: 'edit-dashboard',
-      toolName: 'edit',
-    },
-  ],
+  fileOperations: scenario === 'follow-hidden-symbol'
+    ? [
+        {
+          confidence: 'exact',
+          id: 'agent-file-operation:run-visual:read-dashboard:file_read:0:src%2Fcomponents%2FProjectDashboard.tsx',
+          kind: 'file_read',
+          path: 'src/components/ProjectDashboard.tsx',
+          paths: ['src/components/ProjectDashboard.tsx'],
+          sessionId: 'run-visual',
+          source: 'request-telemetry',
+          status: 'completed',
+          timestamp: '2026-04-18T08:18:00.000Z',
+          toolCallId: 'read-dashboard',
+          toolName: 'read',
+        },
+        ...getVisualAgentFileOperations(),
+      ]
+    : [
+        {
+          confidence: 'exact',
+          id: 'agent-file-operation:run-visual:read-dashboard:file_read:0:src%2Fcomponents%2FProjectDashboard.tsx',
+          kind: 'file_read',
+          path: 'src/components/ProjectDashboard.tsx',
+          paths: ['src/components/ProjectDashboard.tsx'],
+          sessionId: 'run-visual',
+          source: 'request-telemetry',
+          status: 'completed',
+          timestamp: '2026-04-18T08:18:00.000Z',
+          toolCallId: 'read-dashboard',
+          toolName: 'read',
+        },
+        {
+          confidence: 'exact',
+          id: 'agent-file-operation:run-visual:edit-dashboard:file_write:0:src%2Fcomponents%2FProjectDashboard.tsx',
+          kind: 'file_write',
+          path: 'src/components/ProjectDashboard.tsx',
+          paths: ['src/components/ProjectDashboard.tsx'],
+          sessionId: 'run-visual',
+          source: 'request-telemetry',
+          status: 'completed',
+          timestamp: '2026-04-18T08:19:00.000Z',
+          toolCallId: 'edit-dashboard',
+          toolName: 'edit',
+        },
+      ],
   lastOutputExcerpt: 'Updated ProjectDashboard.tsx and verified the drawer visual state.',
   liveFeed: [
     {
@@ -737,6 +756,38 @@ const agentTimeline: AgentTimelineItem[] = [
   },
 ]
 
+function getVisualAgentFileOperations(): AgentFileOperation[] {
+  if (scenario !== 'follow-hidden-symbol') {
+    return []
+  }
+
+  return [
+    {
+      confidence: 'exact',
+      id: 'agent-file-operation:visual-agent-session:replace-use-project:file_write:0:src%2Fcomponents%2FProjectDashboard.tsx',
+      kind: 'file_write',
+      path: 'src/components/ProjectDashboard.tsx',
+      paths: ['src/components/ProjectDashboard.tsx'],
+      resultPreview: JSON.stringify({
+        ok: true,
+        result: {
+          file: {
+            path: 'src/components/ProjectDashboard.tsx',
+          },
+          symbolNodeIds: ['symbol:use-project'],
+        },
+      }),
+      sessionId: 'visual-agent-session',
+      source: 'pi-sdk',
+      status: 'completed',
+      symbolNodeIds: ['symbol:use-project'],
+      timestamp: new Date().toISOString(),
+      toolCallId: 'replace-use-project',
+      toolName: 'replaceSymbolRange',
+    },
+  ]
+}
+
 const agentSettings: AgentSettingsState = {
   authMode: 'api_key',
   availableModelsByProvider: {
@@ -810,7 +861,28 @@ window.semanticodeDesktop = {
   initialUiPreferences: currentPreferences,
   isAvailable: true,
   isDesktop: true,
-  onEvent: () => () => undefined,
+  onEvent: (listener) => {
+    if (scenario !== 'follow-hidden-symbol') {
+      return () => undefined
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      const operation = getVisualAgentFileOperations()[0]
+      if (!operation) {
+        return
+      }
+
+      listener({
+        operation,
+        sessionId: operation.sessionId,
+        type: 'file_operation',
+      })
+    }, 25)
+
+    return () => {
+      window.clearTimeout(timeoutId)
+    }
+  },
   openWorkspaceDialog: async () => true,
   openWorkspaceRootDir: async () => true,
   removeWorkspaceHistoryEntry: async (rootToRemove) => ({
@@ -961,23 +1033,48 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   }
 
   if (path === '/__semanticode/agent/session') {
-    return jsonResponse({ messages: agentMessages, session: agentSession, timeline: agentTimeline })
+    return jsonResponse({
+      fileOperations: getVisualAgentFileOperations(),
+      messages: agentMessages,
+      session: agentSession,
+      timeline: agentTimeline,
+    })
   }
 
   if (path === '/__semanticode/agent/message') {
-    return jsonResponse({ messages: agentMessages, session: agentSession, timeline: agentTimeline })
+    return jsonResponse({
+      fileOperations: getVisualAgentFileOperations(),
+      messages: agentMessages,
+      session: agentSession,
+      timeline: agentTimeline,
+    })
   }
 
   if (path === '/__semanticode/agent/cancel') {
-    return jsonResponse({ messages: agentMessages, session: agentSession, timeline: agentTimeline })
+    return jsonResponse({
+      fileOperations: getVisualAgentFileOperations(),
+      messages: agentMessages,
+      session: agentSession,
+      timeline: agentTimeline,
+    })
   }
 
   if (path === '/__semanticode/agent/thinking') {
-    return jsonResponse({ messages: agentMessages, session: agentSession, timeline: agentTimeline })
+    return jsonResponse({
+      fileOperations: getVisualAgentFileOperations(),
+      messages: agentMessages,
+      session: agentSession,
+      timeline: agentTimeline,
+    })
   }
 
   if (path === '/__semanticode/agent/compact') {
-    return jsonResponse({ messages: agentMessages, session: agentSession, timeline: agentTimeline })
+    return jsonResponse({
+      fileOperations: getVisualAgentFileOperations(),
+      messages: agentMessages,
+      session: agentSession,
+      timeline: agentTimeline,
+    })
   }
 
   if (path === '/__semanticode/agent/sessions') {
@@ -997,7 +1094,12 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   }
 
   if (path === '/__semanticode/agent/session/new' || path === '/__semanticode/agent/session/resume') {
-    return jsonResponse({ messages: agentMessages, session: agentSession, timeline: agentTimeline })
+    return jsonResponse({
+      fileOperations: getVisualAgentFileOperations(),
+      messages: agentMessages,
+      session: agentSession,
+      timeline: agentTimeline,
+    })
   }
 
   if (path === '/__semanticode/agent/settings') {

@@ -453,11 +453,10 @@ function resolveFollowTargetFromEvent(input: {
     return null
   }
 
-  const explicitSymbolIds = getVisibleExplicitSymbolIds({
+  const explicitSymbolIds = getValidExplicitSymbolIds({
     fileNodeId,
     snapshot: input.snapshot,
     symbolNodeIds: input.sourceEvent.symbolNodeIds ?? [],
-    visibleNodeIdSet,
   })
 
   if (explicitSymbolIds.length > 0 && input.mode === 'symbols') {
@@ -543,11 +542,10 @@ function resolveFollowTargetFromEvent(input: {
   }
 }
 
-function getVisibleExplicitSymbolIds(input: {
+function getValidExplicitSymbolIds(input: {
   fileNodeId: string
   snapshot: ProjectSnapshot
   symbolNodeIds: string[]
-  visibleNodeIdSet: ReadonlySet<string>
 }) {
   return [...new Set(input.symbolNodeIds)]
     .filter((nodeId) => {
@@ -556,8 +554,7 @@ function getVisibleExplicitSymbolIds(input: {
       return Boolean(
         node &&
         isSymbolNode(node) &&
-        node.fileId === input.fileNodeId &&
-        input.visibleNodeIdSet.has(nodeId),
+        node.fileId === input.fileNodeId,
       )
     })
 }

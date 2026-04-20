@@ -51,13 +51,13 @@ slices before falling back to bounded file windows.
 
 ## Phase 4: Layout and follow parity
 
-- [ ] Emit symbol IDs from all symbol tools and symbol edits.
-- [ ] Extend follow debug state to distinguish exact symbol hits from file
+- [x] Emit symbol IDs from all symbol tools and symbol edits.
+- [x] Extend follow debug state to distinguish exact symbol hits from file
   fallbacks.
-- [ ] Highlight exact symbol nodes in semantic/custom layouts.
-- [ ] If a touched symbol is hidden, offer reveal-neighborhood behavior instead
+- [x] Highlight exact symbol nodes in semantic/custom layouts.
+- [x] If a touched symbol is hidden, offer reveal-neighborhood behavior instead
   of switching layouts.
-- [ ] Add visual/e2e coverage for follow-agent in symbol layouts.
+- [x] Add visual/e2e coverage for follow-agent in symbol layouts.
 
 ## First success metrics
 

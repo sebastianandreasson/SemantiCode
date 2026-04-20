@@ -435,6 +435,36 @@ export function useCanvasGraphController({
       snapshotOrNull,
       collapsedDirectoryIdSet,
     )
+    const revealedHiddenSymbolIds =
+      input.mode === 'symbols'
+        ? revealHiddenFollowSymbols({
+            activeDraft: editableDraftLayout,
+            activeLayout: editableLayout,
+            draftLayouts,
+            layout: resolvedScene?.layoutSpec ?? null,
+            layouts,
+            nodeIds: targetNodeIds,
+            setDraftLayouts,
+            setLayouts,
+          })
+        : []
+    const followClusterLayout =
+      input.mode === 'symbols' && resolvedScene?.layoutSpec
+        ? createFollowVisibleLayout(resolvedScene.layoutSpec, targetNodeIds)
+        : null
+    const followSymbolClusterState =
+      followClusterLayout
+        ? deriveSymbolClusterState(snapshotOrNull, followClusterLayout, viewMode)
+        : symbolClusterState
+    const expandedFollowClusterIds =
+      input.mode === 'symbols'
+        ? expandFollowSymbolClusters({
+            expandedClusterIds,
+            nodeIds: targetNodeIds,
+            symbolClusterState: followSymbolClusterState,
+            toggleSymbolCluster,
+          })
+        : []
     const focusTarget = () =>
       focusFlowOnNode({
         duration: input.isEdit ? 260 : 220,
@@ -446,7 +476,11 @@ export function useCanvasGraphController({
         targetNodeIds,
       })
 
-    if (collapsedAncestorIds.length > 0) {
+    if (
+      collapsedAncestorIds.length > 0 ||
+      revealedHiddenSymbolIds.length > 0 ||
+      expandedFollowClusterIds.length > 0
+    ) {
       for (const directoryId of collapsedAncestorIds) {
         toggleCollapsedDirectory(directoryId)
       }
@@ -458,9 +492,20 @@ export function useCanvasGraphController({
     await focusTarget()
   }, [
     collapsedDirectoryIdSet,
+    draftLayouts,
+    editableDraftLayout,
+    editableLayout,
+    expandedClusterIds,
     flowInstance,
+    layouts,
+    resolvedScene,
+    setDraftLayouts,
+    setLayouts,
     snapshotOrNull,
+    symbolClusterState,
     toggleCollapsedDirectory,
+    toggleSymbolCluster,
+    viewMode,
   ])
 
   const focusCanvasOnNode = useCallback((input: {
@@ -802,6 +847,98 @@ function getCollapsedFilesystemAncestorIds(
   }
 
   return collapsedAncestorIds.reverse()
+}
+
+function revealHiddenFollowSymbols(input: {
+  activeDraft: LayoutDraft | null
+  activeLayout: LayoutSpec | null
+  draftLayouts: LayoutDraft[]
+  layout: LayoutSpec | null
+  layouts: LayoutSpec[]
+  nodeIds: string[]
+  setDraftLayouts: (draftLayouts: LayoutDraft[]) => void
+  setLayouts: (layouts: LayoutSpec[]) => void
+}) {
+  if (!input.layout) {
+    return []
+  }
+
+  const hiddenNodeIds = new Set(input.layout.hiddenNodeIds)
+  const revealNodeIds = [...new Set(input.nodeIds)]
+    .filter((nodeId) => hiddenNodeIds.has(nodeId) && Boolean(input.layout?.placements[nodeId]))
+
+  if (revealNodeIds.length === 0) {
+    return []
+  }
+
+  const revealNodeIdSet = new Set(revealNodeIds)
+  const revealLayout = (layout: LayoutSpec) => ({
+    ...layout,
+    hiddenNodeIds: layout.hiddenNodeIds.filter((nodeId) => !revealNodeIdSet.has(nodeId)),
+    updatedAt: new Date().toISOString(),
+  })
+
+  if (input.activeDraft?.layout) {
+    input.setDraftLayouts(input.draftLayouts.map((draft) =>
+      draft.id === input.activeDraft?.id && draft.layout
+        ? {
+            ...draft,
+            layout: revealLayout(draft.layout),
+            updatedAt: new Date().toISOString(),
+          }
+        : draft,
+    ))
+    return revealNodeIds
+  }
+
+  if (input.activeLayout) {
+    input.setLayouts(input.layouts.map((layout) =>
+      layout.id === input.activeLayout?.id ? revealLayout(layout) : layout,
+    ))
+  }
+
+  return revealNodeIds
+}
+
+function createFollowVisibleLayout(layout: LayoutSpec, nodeIds: string[]) {
+  const revealNodeIdSet = new Set(nodeIds)
+  const hiddenNodeIds = layout.hiddenNodeIds.filter((nodeId) => !revealNodeIdSet.has(nodeId))
+
+  if (hiddenNodeIds.length === layout.hiddenNodeIds.length) {
+    return layout
+  }
+
+  return {
+    ...layout,
+    hiddenNodeIds,
+  }
+}
+
+function expandFollowSymbolClusters(input: {
+  expandedClusterIds: Set<string>
+  nodeIds: string[]
+  symbolClusterState: ReturnType<typeof deriveSymbolClusterState>
+  toggleSymbolCluster: (clusterId: string) => void
+}) {
+  const clusterIds = [...new Set(input.nodeIds.flatMap((nodeId) => {
+    const cluster = input.symbolClusterState.clusterByNodeId[nodeId]
+
+    if (
+      !cluster ||
+      cluster.rootNodeId === nodeId ||
+      input.expandedClusterIds.has(cluster.id)
+    ) {
+      return []
+    }
+
+    return [cluster.id]
+  }))]
+
+  for (const clusterId of clusterIds) {
+    input.toggleSymbolCluster(clusterId)
+  }
+
+  return clusterIds
 }
 
 function getFlowModelViewportZoomBucket(zoom: number) {

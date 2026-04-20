@@ -35,7 +35,7 @@ interface UseFollowAgentExecutorsOptions {
   inspectorCommand: FollowInspectorCommand | null
   onLiveWorkspaceRefresh?: (() => Promise<void>) | null
   refreshCommand: FollowRefreshCommand | null
-  selectFileNode: (nodeId: string) => void
+  selectFollowNode: (nodeId: string) => void
   setInspectorOpen: (open: boolean) => void
   setInspectorTabToFile: () => void
   setRefreshStatus: (status: 'idle' | 'in_flight') => void
@@ -52,11 +52,12 @@ export function useFollowAgentExecutors({
   inspectorCommand,
   onLiveWorkspaceRefresh,
   refreshCommand,
-  selectFileNode,
+  selectFollowNode,
   setInspectorOpen,
   setInspectorTabToFile,
   setRefreshStatus,
 }: UseFollowAgentExecutorsOptions) {
+  const [cameraExecutorWakeup, setCameraExecutorWakeup] = useState(0)
   const [followedEditDiffRequestKey, setFollowedEditDiffRequestKey] = useState<string | null>(null)
   const acknowledgeCameraCommandRef = useRef(acknowledgeCameraCommand)
   const acknowledgeInspectorCommandRef = useRef(acknowledgeInspectorCommand)
@@ -69,7 +70,7 @@ export function useFollowAgentExecutors({
   const runningCameraCommandIdRef = useRef<string | null>(null)
   const refreshExecutorTimeoutRef = useRef<number | null>(null)
   const lastRefreshExecutorAtRef = useRef(0)
-  const selectFileNodeRef = useRef(selectFileNode)
+  const selectFollowNodeRef = useRef(selectFollowNode)
   const setInspectorOpenRef = useRef(setInspectorOpen)
   const setInspectorTabToFileRef = useRef(setInspectorTabToFile)
 
@@ -94,8 +95,8 @@ export function useFollowAgentExecutors({
   }, [inspectorCommand])
 
   useEffect(() => {
-    selectFileNodeRef.current = selectFileNode
-  }, [selectFileNode])
+    selectFollowNodeRef.current = selectFollowNode
+  }, [selectFollowNode])
 
   useEffect(() => {
     setInspectorOpenRef.current = setInspectorOpen
@@ -173,17 +174,12 @@ export function useFollowAgentExecutors({
       return
     }
 
-    const pairedInspectorCommand = getPairedInspectorCommand(
-      command,
-      inspectorCommandRef.current,
-    )
     const cameraRunToken = cameraRunTokenRef.current + 1
     cameraRunTokenRef.current = cameraRunToken
     runningCameraCommandIdRef.current = command.id
 
     cameraExecutorTimeoutRef.current = window.setTimeout(() => {
       cameraExecutorTimeoutRef.current = null
-      runInspectorFollowStep(pairedInspectorCommand)
 
       void Promise.resolve(focusCanvasOnFollowTargetRef.current({
         fileNodeId: command.target.fileNodeId,
@@ -191,7 +187,9 @@ export function useFollowAgentExecutors({
         mode: getTargetTelemetryMode(command.target),
         nodeIds:
           command.target.kind === 'symbol'
-            ? [command.target.primaryNodeId]
+            ? command.target.symbolNodeIds.length > 0
+              ? command.target.symbolNodeIds
+              : [command.target.primaryNodeId]
             : [command.target.fileNodeId],
       })).finally(() => {
         if (
@@ -201,6 +199,12 @@ export function useFollowAgentExecutors({
         ) {
           return
         }
+
+        const pairedInspectorCommand = getPairedInspectorCommand(
+          command,
+          inspectorCommandRef.current,
+        )
+        runInspectorFollowStep(pairedInspectorCommand, command.target)
 
         cameraLingerTimeoutRef.current = window.setTimeout(() => {
           cameraLingerTimeoutRef.current = null
@@ -224,6 +228,7 @@ export function useFollowAgentExecutors({
               pendingPath: pairedInspectorCommand.pendingPath,
             })
           }
+          setCameraExecutorWakeup((current) => current + 1)
         }, FOLLOW_AGENT_TARGET_LINGER_MS)
       })
     }, 0)
@@ -242,6 +247,7 @@ export function useFollowAgentExecutors({
   }, [
     active,
     cameraCommand?.id,
+    cameraExecutorWakeup,
     canMoveCamera,
     inspectorCommand?.id,
   ])
@@ -298,15 +304,20 @@ export function useFollowAgentExecutors({
     followedEditDiffRequestKey,
   }
 
-  function runInspectorFollowStep(command: FollowInspectorCommand | null) {
-    if (!command) {
+  function runInspectorFollowStep(
+    command: FollowInspectorCommand | null,
+    fallbackTarget?: FollowCameraCommand['target'],
+  ) {
+    const target = command?.target ?? fallbackTarget
+
+    if (!target) {
       return
     }
 
-    selectFileNodeRef.current(command.target.fileNodeId)
+    selectFollowNodeRef.current(target.primaryNodeId)
     setInspectorTabToFileRef.current()
     setInspectorOpenRef.current(true)
-    setFollowedEditDiffRequestKey(command.scrollToDiffRequestKey)
+    setFollowedEditDiffRequestKey(command?.scrollToDiffRequestKey ?? null)
   }
 }
 

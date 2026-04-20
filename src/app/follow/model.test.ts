@@ -149,6 +149,94 @@ describe('follow model', () => {
     )
   })
 
+  it('keeps explicit symbol ids exact even when the touched symbol is hidden', () => {
+    const snapshot = createSnapshot()
+    const state = reduceFollowState([
+      { type: 'FOLLOW_TOGGLED', enabled: true, nowMs: 1_580 },
+      { type: 'VIEW_MODE_CHANGED', mode: 'symbols', nowMs: 1_590, viewMode: 'symbols' },
+      {
+        type: 'SNAPSHOT_CONTEXT_UPDATED',
+        nowMs: 1_600,
+        snapshot,
+        visibleNodeIds: ['symbol:getSpawnCell'],
+      },
+      {
+        type: 'FILE_OPERATIONS_UPDATED',
+        fileOperations: [
+          createFileOperation({
+            id: 'operation:write:hidden-symbol',
+            kind: 'file_write',
+            path: 'debug_brute.js',
+            symbolNodeIds: ['symbol:createPRNG'],
+            timestamp: '2026-04-18T10:00:01.000Z',
+            toolName: 'replaceSymbolRange',
+          }),
+        ],
+        nowMs: 1_610,
+      },
+    ])
+
+    expect(state.latestResolvedEditTarget).toEqual(
+      expect.objectContaining({
+        confidence: 'exact_symbol',
+        kind: 'symbol',
+        primaryNodeId: 'symbol:createPRNG',
+        symbolNodeIds: ['symbol:createPRNG'],
+      }),
+    )
+    expect(state.currentCameraCommand?.target.primaryNodeId).toBe('symbol:createPRNG')
+  })
+
+  it('keeps exact symbol operations ahead of nearby dirty-file fallbacks', () => {
+    const snapshot = createSnapshot()
+    const dirtyChangedAtMs = new Date('2026-04-18T10:00:03.000Z').getTime()
+    const state = reduceFollowState([
+      { type: 'FOLLOW_TOGGLED', enabled: true, nowMs: 1_620 },
+      { type: 'VIEW_MODE_CHANGED', mode: 'symbols', nowMs: 1_630, viewMode: 'symbols' },
+      {
+        type: 'SNAPSHOT_CONTEXT_UPDATED',
+        nowMs: 1_640,
+        snapshot,
+        visibleNodeIds: ['symbol:anon'],
+      },
+      {
+        type: 'FILE_OPERATIONS_UPDATED',
+        fileOperations: [
+          createFileOperation({
+            id: 'operation:write:hidden-symbol',
+            kind: 'file_write',
+            path: 'debug_brute.js',
+            symbolNodeIds: ['symbol:createPRNG'],
+            timestamp: '2026-04-18T10:00:01.000Z',
+            toolName: 'replaceSymbolRange',
+          }),
+        ],
+        nowMs: 1_650,
+      },
+      {
+        type: 'DIRTY_FILE_SIGNALS_UPDATED',
+        nowMs: 1_660,
+        signals: [
+          createDirtySignal({
+            changedAtMs: dirtyChangedAtMs,
+            fingerprint: 'after-symbol-edit',
+            path: 'debug_brute.js',
+          }),
+        ],
+      },
+    ])
+
+    expect(state.latestResolvedEditTarget).toEqual(
+      expect.objectContaining({
+        confidence: 'exact_symbol',
+        eventKey: 'operation:write:hidden-symbol',
+        kind: 'symbol',
+        primaryNodeId: 'symbol:createPRNG',
+        symbolNodeIds: ['symbol:createPRNG'],
+      }),
+    )
+  })
+
   it('keeps the primary path first for same-timestamp multi-path operations', () => {
     const snapshot = createSnapshot()
     const state = reduceFollowState([
