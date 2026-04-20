@@ -1,3 +1,6 @@
+import { writeFile } from 'node:fs/promises'
+import { isAbsolute, relative, resolve } from 'node:path'
+
 import type { ToolDefinition } from '@mariozechner/pi-coding-agent'
 
 import {
@@ -6,6 +9,7 @@ import {
   type SymbolQuerySessionInput,
 } from '../../agent/symbolQuery'
 import { readProjectSnapshot } from '../../node/readProjectSnapshot'
+import { clearProjectSnapshotMemoryCache } from '../../node/projectSnapshotCache'
 
 export const SEMANTICODE_SYMBOL_TOOL_NAMES = [
   'getSymbolWorkspaceSummary',
@@ -13,14 +17,17 @@ export const SEMANTICODE_SYMBOL_TOOL_NAMES = [
   'getSymbolOutline',
   'getSymbolNeighborhood',
   'readSymbolSlice',
+  'replaceSymbolRange',
   'readFileWindow',
+  'replaceFileWindow',
 ] as const satisfies readonly SymbolQueryOperation[]
 
 const SYMBOL_TOOL_GUIDELINES = [
   'Use Semanticode symbol tools before broad file reads when exploring source code.',
   'For top-N symbol requests, pass the requested limit and an explicit sortBy value such as loc, degree, name, path, or kind.',
   'For descriptions of large or multiple symbols, call getSymbolOutline first, then page through readSymbolSlice with startLine or relativeStartLine only when details are needed.',
-  'Prefer readSymbolSlice for implementation bodies; use readFileWindow only for imports, module headers, configs, tests, or non-symbol code, and include the required reason.',
+  'For edits inside one symbol, call readSymbolSlice first and then replaceSymbolRange with the returned sliceHash as expectedSliceHash.',
+  'Prefer readSymbolSlice for implementation bodies; use readFileWindow and replaceFileWindow only for imports, module headers, configs, tests, multi-symbol edits, or non-symbol code, and include the required reason.',
 ]
 
 const SYMBOL_TOOL_SPECS: Record<
@@ -58,13 +65,25 @@ const SYMBOL_TOOL_SPECS: Record<
     description:
       'Read a bounded line window from a file path or fileId when symbol slices are insufficient. The reason argument is required.',
     promptSnippet:
-      'Read a bounded file line window as a fallback for imports, module headers, configs, tests, or non-symbol code. Always pass reason.',
+      'Read a bounded file line window as a fallback for imports, module headers, configs, tests, multi-symbol edits, or non-symbol code. Always pass reason.',
   },
   readSymbolSlice: {
     description:
       'Read a bounded source slice for a symbolId/symbolNodeId/nodeId/symbolPath/path/filePath. Supports maxLines, beforeLines, afterLines, startLine, endLine, relativeStartLine, and relativeEndLine for paging large symbols.',
     promptSnippet:
       'Read a bounded source slice for a symbol. If the result has hasMoreAfter, call again with nextStartLine or nextRelativeStartLine.',
+  },
+  replaceSymbolRange: {
+    description:
+      'Replace the current whole-line source range for one symbol. Requires symbolId/symbolNodeId/nodeId/symbolPath/path/filePath, expectedSliceHash from readSymbolSlice, and replacementText. Rejects stale edits when the current slice hash differs.',
+    promptSnippet:
+      'Edit one symbol by replacing its source range. First readSymbolSlice, then pass expectedSliceHash and replacementText.',
+  },
+  replaceFileWindow: {
+    description:
+      'Replace a bounded file line window when a change cannot be represented as one symbol, such as imports, module headers, configs, tests, or multi-symbol edits. Requires path/filePath, startLine, endLine, reason, expectedWindowHash from readFileWindow, and replacementText.',
+    promptSnippet:
+      'Edit a bounded non-symbol file window. First readFileWindow, then pass startLine, endLine, reason, expectedWindowHash, and replacementText.',
   },
 }
 
@@ -77,9 +96,15 @@ export function createSymbolQueryToolDefinitions(
       analyzeSymbols: true,
       rootDir,
     }),
+  fileWriter: SymbolQuerySessionInput['fileWriter'] = (filePath, content) =>
+    writeWorkspaceFile(rootDir, filePath, content),
+  snapshotInvalidator: SymbolQuerySessionInput['snapshotInvalidator'] = () =>
+    clearProjectSnapshotMemoryCache(rootDir),
 ): ToolDefinition[] {
   const querySession = createSymbolQuerySession({
+    fileWriter,
     rootDir,
+    snapshotInvalidator,
     snapshotProvider,
   })
 
@@ -169,7 +194,11 @@ function normalizeObjectArgs(
       return { ...normalizeFindSymbolsStringArgs(query), ...params }
     case 'getSymbolOutline':
     case 'readSymbolSlice':
+    case 'replaceSymbolRange':
       return { ...normalizeSymbolTargetStringArgs(query), ...params }
+    case 'readFileWindow':
+    case 'replaceFileWindow':
+      return { path: query, ...params }
     default:
       return params
   }
@@ -267,8 +296,10 @@ function normalizeArrayArgs(
     case 'getSymbolNeighborhood':
       return { seedSymbolIds: stringParams }
     case 'readFileWindow':
+    case 'replaceFileWindow':
       return { path: stringParams[0] }
     case 'readSymbolSlice':
+    case 'replaceSymbolRange':
       return { symbolId: stringParams[0] }
     case 'getSymbolWorkspaceSummary':
       return {}
@@ -293,8 +324,10 @@ function normalizeStringArgs(
     case 'getSymbolNeighborhood':
       return { seedSymbolIds: [trimmed] }
     case 'readFileWindow':
+    case 'replaceFileWindow':
       return { path: trimmed }
     case 'readSymbolSlice':
+    case 'replaceSymbolRange':
       return normalizeSymbolTargetStringArgs(trimmed)
     case 'getSymbolWorkspaceSummary':
       return {}
@@ -336,4 +369,15 @@ function getStringParam(params: Record<string, unknown>, key: string) {
   const value = params[key]
 
   return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+async function writeWorkspaceFile(rootDir: string, filePath: string, content: string) {
+  const targetPath = resolve(rootDir, filePath)
+  const relativePath = relative(rootDir, targetPath)
+
+  if (relativePath.startsWith('..') || isAbsolute(relativePath)) {
+    throw new Error(`Refusing to write outside workspace root: ${filePath}`)
+  }
+
+  await writeFile(targetPath, content, 'utf8')
 }

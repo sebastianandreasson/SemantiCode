@@ -37,6 +37,8 @@ export type SymbolQueryOperation =
   | 'getSymbolWorkspaceSummary'
   | 'readFileWindow'
   | 'readSymbolSlice'
+  | 'replaceFileWindow'
+  | 'replaceSymbolRange'
 
 export type SymbolQuerySortBy = 'degree' | 'kind' | 'loc' | 'name' | 'path'
 export type SymbolQuerySortDirection = 'asc' | 'desc'
@@ -47,7 +49,9 @@ export interface SymbolQueryCommand {
 }
 
 export interface SymbolQuerySessionInput {
+  fileWriter?: (filePath: string, content: string) => Promise<void>
   rootDir: string
+  snapshotInvalidator?: () => Promise<void> | void
   snapshotProvider: () => Promise<ProjectSnapshot>
 }
 
@@ -107,6 +111,10 @@ export class SymbolQuerySession {
           return this.readSymbolSlice(snapshot, command.args ?? {})
         case 'readFileWindow':
           return this.readFileWindow(snapshot, command.args ?? {})
+        case 'replaceFileWindow':
+          return this.replaceFileWindow(snapshot, command.args ?? {})
+        case 'replaceSymbolRange':
+          return this.replaceSymbolRange(snapshot, command.args ?? {})
         default:
           return {
             ok: false,
@@ -486,9 +494,230 @@ export class SymbolQuerySession {
       text: truncatedText,
       totalLines: lines.length,
       truncated,
+      windowHash: hashText(text),
     }, {
       returnedNodeCount: 1,
       truncatedResultCount: truncated ? 1 : 0,
+    })
+  }
+
+  private async replaceFileWindow(snapshot: ProjectSnapshot, args: Record<string, unknown>) {
+    if (!this.input.fileWriter) {
+      return {
+        ok: false,
+        warning: 'replaceFileWindow is unavailable because no file writer is configured.',
+      }
+    }
+
+    const reason = typeof args.reason === 'string' ? args.reason.trim() : ''
+
+    if (!reason) {
+      return {
+        ok: false,
+        warning: 'replaceFileWindow requires a reason explaining why symbol replacement is insufficient.',
+      }
+    }
+
+    const expectedWindowHash = getStringArg(args, 'expectedWindowHash') ??
+      getStringArg(args, 'windowHash')
+
+    if (!expectedWindowHash) {
+      return {
+        ok: false,
+        warning: 'replaceFileWindow requires expectedWindowHash from a current readFileWindow result.',
+      }
+    }
+
+    const replacementText = getStringArgAllowEmpty(args, 'replacementText') ??
+      getStringArgAllowEmpty(args, 'text')
+
+    if (replacementText === null) {
+      return {
+        ok: false,
+        warning: 'replaceFileWindow requires replacementText.',
+      }
+    }
+
+    const startLineArg = args.startLine ?? args.line
+    const endLineArg = args.endLine ?? args.toLine
+
+    if (startLineArg === undefined || endLineArg === undefined) {
+      return {
+        ok: false,
+        warning: 'replaceFileWindow requires startLine and endLine from a current readFileWindow result.',
+      }
+    }
+
+    const file = resolveFile(snapshot, args, this.input.rootDir)
+
+    if (!file) {
+      return {
+        ok: false,
+        warning: 'A valid path, filePath, or fileId is required.',
+      }
+    }
+
+    if (!file.content) {
+      return {
+        ok: false,
+        warning: `File content is unavailable for ${file.path}.`,
+      }
+    }
+
+    const lines = splitLines(file.content)
+    const startLine = clampInteger(startLineArg, 1, Math.max(1, lines.length))
+    const endLine = clampInteger(
+      endLineArg,
+      startLine,
+      Math.min(lines.length, startLine + MAX_FILE_WINDOW_LINES - 1),
+    )
+    const currentText = lines.slice(startLine - 1, endLine).join('\n')
+    const currentWindowHash = hashText(currentText)
+
+    if (currentWindowHash !== expectedWindowHash) {
+      return {
+        ok: false,
+        warning:
+          `File window ${file.path}:${startLine}-${endLine} changed since it was read. Re-read the window and retry with the current windowHash.`,
+        result: {
+          currentWindowHash,
+          expectedWindowHash,
+        },
+      }
+    }
+
+    const nextLines = [
+      ...lines.slice(0, startLine - 1),
+      ...splitReplacementLines(replacementText),
+      ...lines.slice(endLine),
+    ]
+    const nextContent = nextLines.join('\n')
+
+    await this.input.fileWriter(file.path, nextContent)
+    await this.input.snapshotInvalidator?.()
+
+    return this.prepareResult({
+      file: toFileRef({
+        ...file,
+        content: nextContent,
+        size: nextContent.length,
+      }),
+      previousWindowHash: currentWindowHash,
+      reason,
+      replacedRange: {
+        end: { column: 1, line: endLine },
+        start: { column: 1, line: startLine },
+      },
+      replacementHash: hashText(replacementText),
+      replacementLineCount: splitReplacementLines(replacementText).length,
+    }, {
+      returnedNodeCount: 1,
+    })
+  }
+
+  private async replaceSymbolRange(snapshot: ProjectSnapshot, args: Record<string, unknown>) {
+    if (!this.input.fileWriter) {
+      return {
+        ok: false,
+        warning: 'replaceSymbolRange is unavailable because no file writer is configured.',
+      }
+    }
+
+    const symbol = resolveSymbol(snapshot, args, this.input.rootDir)
+
+    if (!symbol) {
+      return {
+        ok: false,
+        warning: 'A valid symbolId, symbolNodeId, nodeId, symbolPath, path, or filePath is required.',
+      }
+    }
+
+    if (!symbol.range) {
+      return {
+        ok: false,
+        warning: `Symbol ${symbol.id} does not have a source range.`,
+      }
+    }
+
+    const expectedSliceHash = getStringArg(args, 'expectedSliceHash') ??
+      getStringArg(args, 'sliceHash')
+
+    if (!expectedSliceHash) {
+      return {
+        ok: false,
+        warning: 'replaceSymbolRange requires expectedSliceHash from a current readSymbolSlice result.',
+      }
+    }
+
+    const replacementText = getStringArgAllowEmpty(args, 'replacementText') ??
+      getStringArgAllowEmpty(args, 'text')
+
+    if (replacementText === null) {
+      return {
+        ok: false,
+        warning: 'replaceSymbolRange requires replacementText.',
+      }
+    }
+
+    const file = snapshot.nodes[symbol.fileId]
+
+    if (!file || !isFileNode(file)) {
+      return {
+        ok: false,
+        warning: `Symbol ${symbol.id} points to missing file ${symbol.fileId}.`,
+      }
+    }
+
+    if (!file.content) {
+      return {
+        ok: false,
+        warning: `File content is unavailable for ${file.path}.`,
+      }
+    }
+
+    const lines = splitLines(file.content)
+    const exactStartLine = clampInteger(symbol.range.start.line, 1, lines.length)
+    const exactEndLine = clampInteger(symbol.range.end.line, exactStartLine, lines.length)
+    const currentText = lines.slice(exactStartLine - 1, exactEndLine).join('\n')
+    const currentSliceHash = hashText(currentText)
+
+    if (currentSliceHash !== expectedSliceHash) {
+      return {
+        ok: false,
+        warning:
+          `Symbol ${symbol.id} changed since it was read. Re-read the symbol and retry with the current sliceHash.`,
+        result: {
+          currentSliceHash,
+          expectedSliceHash,
+          symbolNodeIds: [symbol.id],
+        },
+      }
+    }
+
+    const nextLines = [
+      ...lines.slice(0, exactStartLine - 1),
+      ...splitReplacementLines(replacementText),
+      ...lines.slice(exactEndLine),
+    ]
+    const nextContent = nextLines.join('\n')
+
+    await this.input.fileWriter(file.path, nextContent)
+    await this.input.snapshotInvalidator?.()
+
+    return this.prepareResult({
+      file: toFileRef({
+        ...file,
+        content: nextContent,
+        size: nextContent.length,
+      }),
+      previousSliceHash: currentSliceHash,
+      replacementHash: hashText(replacementText),
+      replacedRange: symbol.range,
+      replacementLineCount: splitReplacementLines(replacementText).length,
+      symbol: toSymbolRef(snapshot, symbol, getNodeDegree(snapshot.edges, symbol.id)),
+      symbolNodeIds: [symbol.id],
+    }, {
+      returnedNodeCount: 1,
     })
   }
 
@@ -1073,6 +1302,12 @@ function getStringArg(args: Record<string, unknown>, key: string) {
   return typeof value === 'string' && value.trim() ? value.trim() : null
 }
 
+function getStringArgAllowEmpty(args: Record<string, unknown>, key: string) {
+  const value = args[key]
+
+  return typeof value === 'string' ? value : null
+}
+
 function getNumberArg(args: Record<string, unknown>, key: string) {
   const value = args[key]
   const numberValue = Number(value)
@@ -1355,6 +1590,10 @@ function getFileLoc(file: FileNode) {
 
 function splitLines(value: string) {
   return value.split(/\r?\n/)
+}
+
+function splitReplacementLines(value: string) {
+  return value.replace(/\r\n/g, '\n').split('\n')
 }
 
 function truncateText(value: string) {

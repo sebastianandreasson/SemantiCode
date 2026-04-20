@@ -211,6 +211,85 @@ describe('agent file operation normalization', () => {
       },
     ])
   })
+
+  it('tracks symbol range replacements as exact followable writes', () => {
+    const symbolNodeId = 'symbol:src/agent/foo.ts:runAgent:10:0-22:1'
+    const operations = createFileOperationsFromToolInvocation({
+      invocation: createInvocation({
+        args: {
+          expectedSliceHash: 'old-hash',
+          symbolId: symbolNodeId,
+        },
+        endedAt: '2026-04-18T10:00:02.000Z',
+        resultPreview: JSON.stringify({
+          ok: true,
+          result: {
+            file: {
+              path: 'src/agent/foo.ts',
+            },
+            symbolNodeIds: [symbolNodeId],
+          },
+        }),
+        toolName: 'replaceSymbolRange',
+      }),
+      sessionId: 'session-1',
+      source: 'pi-sdk',
+      workspaceRootDir: '/workspace',
+    })
+
+    expect(operations).toMatchObject([
+      {
+        confidence: 'exact',
+        kind: 'file_write',
+        nodeIds: [symbolNodeId],
+        path: 'src/agent/foo.ts',
+        paths: ['src/agent/foo.ts'],
+        source: 'pi-sdk',
+        status: 'completed',
+        symbolNodeIds: [symbolNodeId],
+        toolName: 'replaceSymbolRange',
+      },
+    ])
+  })
+
+  it('tracks file window replacements as followable fallback writes', () => {
+    const operations = createFileOperationsFromToolInvocation({
+      invocation: createInvocation({
+        args: {
+          expectedWindowHash: 'old-hash',
+          path: 'src/agent/foo.ts',
+          reason: 'Need to update imports.',
+          startLine: 1,
+          endLine: 2,
+        },
+        endedAt: '2026-04-18T10:00:02.000Z',
+        resultPreview: JSON.stringify({
+          ok: true,
+          result: {
+            file: {
+              path: 'src/agent/foo.ts',
+            },
+          },
+        }),
+        toolName: 'replaceFileWindow',
+      }),
+      sessionId: 'session-1',
+      source: 'pi-sdk',
+      workspaceRootDir: '/workspace',
+    })
+
+    expect(operations).toMatchObject([
+      {
+        confidence: 'exact',
+        kind: 'file_write',
+        path: 'src/agent/foo.ts',
+        paths: ['src/agent/foo.ts'],
+        source: 'pi-sdk',
+        status: 'completed',
+        toolName: 'replaceFileWindow',
+      },
+    ])
+  })
 })
 
 function createInvocation(

@@ -104,6 +104,19 @@ export async function writeCachedProjectSnapshot(input: {
   setSnapshotMemoryCacheEntry(memoryKey, cachePayload)
 }
 
+export function clearProjectSnapshotMemoryCache(rootDir?: string) {
+  if (!rootDir) {
+    snapshotMemoryCache.clear()
+    return
+  }
+
+  for (const key of snapshotMemoryCache.keys()) {
+    if (key.startsWith(`${rootDir}::`)) {
+      snapshotMemoryCache.delete(key)
+    }
+  }
+}
+
 function canUseProjectSnapshotCache(options: ReadProjectSnapshotOptions) {
   return !options.adapters?.length && !options.projectPlugins?.length
 }

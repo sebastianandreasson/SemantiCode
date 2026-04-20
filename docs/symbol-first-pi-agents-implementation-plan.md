@@ -42,12 +42,12 @@ slices before falling back to bounded file windows.
 
 ## Phase 3: Symbol editing
 
-- [ ] Add range-hash validation for symbol slices.
-- [ ] Add `applySymbolPatch` or `replaceSymbolRange`.
-- [ ] Refresh the snapshot after successful symbol edits.
-- [ ] Detect when edits affect imports, module headers, or multiple symbols and
+- [x] Add range-hash validation for symbol slices.
+- [x] Add `applySymbolPatch` or `replaceSymbolRange`.
+- [x] Refresh the snapshot after successful symbol edits.
+- [x] Detect when edits affect imports, module headers, or multiple symbols and
   route those changes through a bounded file patch fallback.
-- [ ] Add tests for range drift and snapshot refresh behavior.
+- [x] Add tests for range drift and snapshot refresh behavior.
 
 ## Phase 4: Layout and follow parity
 

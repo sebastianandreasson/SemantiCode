@@ -251,6 +251,7 @@ describe('symbol query session', () => {
         end: { line: 2 },
       },
       reason: 'Need import and function header.',
+      windowHash: expect.any(String),
     })
     expect((result as { text: string }).text).toBe([
       "import { helper } from './helper'",
@@ -272,13 +273,208 @@ describe('symbol query session', () => {
       warning: 'readFileWindow requires a reason explaining why symbol slices are insufficient.',
     })
   })
+
+  it('replaces a bounded file window when the expected window hash matches', async () => {
+    const writes: Array<{ content: string; filePath: string }> = []
+    let invalidationCount = 0
+    const session = createTestSession({
+      fileWriter: async (filePath, content) => {
+        writes.push({ content, filePath })
+      },
+      snapshotInvalidator: () => {
+        invalidationCount += 1
+      },
+    })
+    const window = unwrap(await session.execute({
+      args: {
+        maxLines: 1,
+        path: 'src/agent.ts',
+        reason: 'Need to update an import outside any symbol.',
+        startLine: 1,
+      },
+      operation: 'readFileWindow',
+    }))
+    const replacementText = "import { helper, normalize } from './helper'"
+    const result = unwrap(await session.execute({
+      args: {
+        endLine: 1,
+        expectedWindowHash: window.windowHash,
+        path: 'src/agent.ts',
+        reason: 'Need to update an import outside any symbol.',
+        replacementText,
+        startLine: 1,
+      },
+      operation: 'replaceFileWindow',
+    }))
+
+    expect(result).toMatchObject({
+      file: {
+        path: 'src/agent.ts',
+      },
+      previousWindowHash: window.windowHash,
+      reason: 'Need to update an import outside any symbol.',
+      replacedRange: {
+        start: { line: 1 },
+        end: { line: 1 },
+      },
+      replacementLineCount: 1,
+    })
+    expect(writes).toEqual([
+      {
+        filePath: 'src/agent.ts',
+        content: [
+          replacementText,
+          '',
+          'export function runAgent(input: string) {',
+          '  const normalized = input.trim()',
+          '  return helper(normalized)',
+          '}',
+          '',
+          'export const agentName = "semanticode"',
+        ].join('\n'),
+      },
+    ])
+    expect(invalidationCount).toBe(1)
+  })
+
+  it('rejects stale file window edits when the window hash changed', async () => {
+    const writes: Array<{ content: string; filePath: string }> = []
+    const session = createTestSession({
+      fileWriter: async (filePath, content) => {
+        writes.push({ content, filePath })
+      },
+    })
+    const result = await session.execute({
+      args: {
+        endLine: 1,
+        expectedWindowHash: 'stale-hash',
+        path: 'src/agent.ts',
+        reason: 'Need to update an import outside any symbol.',
+        replacementText: "import { helper, normalize } from './helper'",
+        startLine: 1,
+      },
+      operation: 'replaceFileWindow',
+    })
+
+    expect(result).toMatchObject({
+      ok: false,
+      result: {
+        expectedWindowHash: 'stale-hash',
+      },
+      warning: expect.stringContaining('changed since it was read'),
+    })
+    expect(writes).toEqual([])
+  })
+
+  it('replaces a symbol range when the expected slice hash matches', async () => {
+    const writes: Array<{ content: string; filePath: string }> = []
+    let invalidationCount = 0
+    const session = createTestSession({
+      fileWriter: async (filePath, content) => {
+        writes.push({ content, filePath })
+      },
+      snapshotInvalidator: () => {
+        invalidationCount += 1
+      },
+    })
+    const slice = unwrap(await session.execute({
+      args: {
+        symbolId: 'symbol:agent',
+      },
+      operation: 'readSymbolSlice',
+    }))
+    const replacementText = [
+      'export function runAgent(input: string) {',
+      '  return helper(input.trim().toUpperCase())',
+      '}',
+    ].join('\n')
+    const result = unwrap(await session.execute({
+      args: {
+        expectedSliceHash: slice.sliceHash,
+        replacementText,
+        symbolId: 'symbol:agent',
+      },
+      operation: 'replaceSymbolRange',
+    }))
+
+    expect(result).toMatchObject({
+      file: {
+        path: 'src/agent.ts',
+      },
+      previousSliceHash: slice.sliceHash,
+      replacementLineCount: 3,
+      symbolNodeIds: ['symbol:agent'],
+    })
+    expect(writes).toEqual([
+      {
+        filePath: 'src/agent.ts',
+        content: [
+          "import { helper } from './helper'",
+          '',
+          replacementText,
+          '',
+          'export const agentName = "semanticode"',
+        ].join('\n'),
+      },
+    ])
+    expect(invalidationCount).toBe(1)
+  })
+
+  it('rejects stale symbol edits when the slice hash changed', async () => {
+    const writes: Array<{ content: string; filePath: string }> = []
+    const session = createTestSession({
+      fileWriter: async (filePath, content) => {
+        writes.push({ content, filePath })
+      },
+    })
+    const result = await session.execute({
+      args: {
+        expectedSliceHash: 'stale-hash',
+        replacementText: 'export function runAgent() {}',
+        symbolId: 'symbol:agent',
+      },
+      operation: 'replaceSymbolRange',
+    })
+
+    expect(result).toMatchObject({
+      ok: false,
+      result: {
+        expectedSliceHash: 'stale-hash',
+        symbolNodeIds: ['symbol:agent'],
+      },
+      warning: expect.stringContaining('changed since it was read'),
+    })
+    expect(writes).toEqual([])
+  })
+
+  it('requires a configured file writer for symbol edits', async () => {
+    const session = createTestSession()
+    const result = await session.execute({
+      args: {
+        expectedSliceHash: 'hash',
+        replacementText: 'export function runAgent() {}',
+        symbolId: 'symbol:agent',
+      },
+      operation: 'replaceSymbolRange',
+    })
+
+    expect(result).toMatchObject({
+      ok: false,
+      warning: 'replaceSymbolRange is unavailable because no file writer is configured.',
+    })
+  })
 })
 
-function createTestSession() {
+function createTestSession(input: {
+  fileWriter?: (filePath: string, content: string) => Promise<void>
+  snapshotInvalidator?: () => void
+} = {}) {
   const snapshot = createSnapshot()
 
   return createSymbolQuerySession({
+    fileWriter: input.fileWriter,
     rootDir: '/workspace',
+    snapshotInvalidator: input.snapshotInvalidator,
     snapshotProvider: async () => snapshot,
   })
 }

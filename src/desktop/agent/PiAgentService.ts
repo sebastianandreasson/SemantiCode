@@ -3306,7 +3306,8 @@ function buildWorkspaceSystemPrompt(workspaceRootDir: string) {
     `The active workspace root is: ${workspaceRootDir}`,
     'Prefer reasoning about the active repository and use tools rather than making assumptions about the workspace state.',
     'When symbol query tools are available, use getSymbolWorkspaceSummary, findSymbols, getSymbolOutline, getSymbolNeighborhood, and readSymbolSlice before broad file reads.',
-    'Use readFileWindow as a bounded fallback for imports, module headers, configs, tests, or other code that cannot be represented as one symbol, and always include a reason.',
+    'For single-symbol edits, call readSymbolSlice first and then use replaceSymbolRange with the returned sliceHash as expectedSliceHash.',
+    'Use readFileWindow and replaceFileWindow as bounded fallbacks for imports, module headers, configs, tests, multi-symbol edits, or other code that cannot be represented as one symbol, and always include a reason.',
   ].join('\n')
 }
 

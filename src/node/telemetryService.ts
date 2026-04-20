@@ -556,6 +556,7 @@ const SYMBOL_QUERY_TOOL_NAMES = new Set([
   'getSymbolOutline',
   'getSymbolWorkspaceSummary',
   'readSymbolSlice',
+  'replaceSymbolRange',
 ])
 
 const FILE_FALLBACK_TOOL_NAMES = new Set([
@@ -565,6 +566,7 @@ const FILE_FALLBACK_TOOL_NAMES = new Set([
   'ls',
   'read',
   'readFileWindow',
+  'replaceFileWindow',
 ])
 
 function summarizeInteractiveToolProfile(

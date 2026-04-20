@@ -154,6 +154,150 @@ describe('Semanticode symbol PI tools', () => {
       },
     })
   })
+
+  it('executes symbol range replacements through SDK custom tool definitions', async () => {
+    const writes: Array<{ content: string; filePath: string }> = []
+    let invalidationCount = 0
+    const tools = createSymbolQueryToolDefinitions(
+      '/workspace',
+      async () => createSnapshot(),
+      async (filePath, content) => {
+        writes.push({ content, filePath })
+      },
+      () => {
+        invalidationCount += 1
+      },
+    )
+    const readSymbolSlice = tools.find((tool) => tool.name === 'readSymbolSlice')
+    const replaceSymbolRange = tools.find((tool) => tool.name === 'replaceSymbolRange')
+
+    expect(readSymbolSlice).toBeDefined()
+    expect(replaceSymbolRange).toBeDefined()
+
+    const sliceResult = await readSymbolSlice!.execute(
+      'call-1',
+      { symbolId: 'symbol:agent' } as never,
+      undefined,
+      undefined,
+      {} as never,
+    )
+    const sliceParsed = JSON.parse(
+      sliceResult.content.find((entry) => entry.type === 'text')?.text ?? '{}',
+    )
+    const editResult = await replaceSymbolRange!.execute(
+      'call-2',
+      {
+        expectedSliceHash: sliceParsed.result.sliceHash,
+        replacementText: [
+          'export function runAgent() {',
+          '  return false',
+          '}',
+        ].join('\n'),
+        symbolId: 'symbol:agent',
+      } as never,
+      undefined,
+      undefined,
+      {} as never,
+    )
+    const editParsed = JSON.parse(
+      editResult.content.find((entry) => entry.type === 'text')?.text ?? '{}',
+    )
+
+    expect(editParsed).toMatchObject({
+      ok: true,
+      result: {
+        file: {
+          path: 'src/agent.ts',
+        },
+        symbolNodeIds: ['symbol:agent'],
+      },
+    })
+    expect(writes).toEqual([
+      {
+        filePath: 'src/agent.ts',
+        content: [
+          'export function runAgent() {',
+          '  return false',
+          '}',
+        ].join('\n'),
+      },
+    ])
+    expect(invalidationCount).toBe(1)
+  })
+
+  it('executes bounded file window replacements through SDK custom tool definitions', async () => {
+    const writes: Array<{ content: string; filePath: string }> = []
+    let invalidationCount = 0
+    const tools = createSymbolQueryToolDefinitions(
+      '/workspace',
+      async () => createSnapshot(),
+      async (filePath, content) => {
+        writes.push({ content, filePath })
+      },
+      () => {
+        invalidationCount += 1
+      },
+    )
+    const readFileWindow = tools.find((tool) => tool.name === 'readFileWindow')
+    const replaceFileWindow = tools.find((tool) => tool.name === 'replaceFileWindow')
+
+    expect(readFileWindow).toBeDefined()
+    expect(replaceFileWindow).toBeDefined()
+
+    const windowResult = await readFileWindow!.execute(
+      'call-1',
+      {
+        endLine: 1,
+        path: 'src/agent.ts',
+        reason: 'Need to update a file header.',
+        startLine: 1,
+      } as never,
+      undefined,
+      undefined,
+      {} as never,
+    )
+    const windowParsed = JSON.parse(
+      windowResult.content.find((entry) => entry.type === 'text')?.text ?? '{}',
+    )
+    const editResult = await replaceFileWindow!.execute(
+      'call-2',
+      {
+        endLine: 1,
+        expectedWindowHash: windowParsed.result.windowHash,
+        path: 'src/agent.ts',
+        reason: 'Need to update a file header.',
+        replacementText: 'export function runAgent() {',
+        startLine: 1,
+      } as never,
+      undefined,
+      undefined,
+      {} as never,
+    )
+    const editParsed = JSON.parse(
+      editResult.content.find((entry) => entry.type === 'text')?.text ?? '{}',
+    )
+
+    expect(editParsed).toMatchObject({
+      ok: true,
+      result: {
+        file: {
+          path: 'src/agent.ts',
+        },
+        previousWindowHash: windowParsed.result.windowHash,
+      },
+    })
+    expect(writes).toEqual([
+      {
+        filePath: 'src/agent.ts',
+        content: [
+          'export function runAgent() {',
+          '  return true',
+          '}',
+        ].join('\n'),
+      },
+    ])
+    expect(invalidationCount).toBe(1)
+  })
 })
 
 function createSnapshot(): ProjectSnapshot {
