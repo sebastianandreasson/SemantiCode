@@ -29,7 +29,7 @@ import {
   type ViewportState,
   type VisualizerViewMode,
 } from '../types'
-import { getPreferredFollowSymbolIdsForFile } from './agentFollowModel'
+import { getPreferredFollowSymbolIdsForFile } from './follow'
 import type {
   ResolvedCanvasOverlay,
   ResolvedCanvasScene,

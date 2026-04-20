@@ -2,7 +2,7 @@ import { act } from 'react'
 import { cleanup, render } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { FollowCameraCommand, FollowInspectorCommand } from '../types'
+import type { FollowCameraCommand, FollowInspectorCommand } from '../../types'
 import {
   FOLLOW_AGENT_TARGET_LINGER_MS,
   useFollowAgentExecutors,

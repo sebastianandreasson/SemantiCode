@@ -1,25 +1,25 @@
 import type { Node } from '@xyflow/react'
 import { useCallback, useEffect, useReducer } from 'react'
 
+import {
+  createInitialFollowControllerState,
+  followControllerReducer,
+} from './model'
 import type {
   DirtyFileEditSignal,
   FollowCameraCommand,
   FollowDebugState,
   FollowInspectorCommand,
+  FollowIntent,
   FollowRefreshCommand,
-} from './agentFollowModel'
-import {
-  createInitialFollowControllerState,
-  followControllerReducer,
-  type FollowIntent,
-} from './agentFollowModel'
+} from './types'
 import type {
   AgentFileOperation,
   ProjectSnapshot,
   TelemetryActivityEvent,
   TelemetryMode,
   VisualizerViewMode,
-} from '../types'
+} from '../../types'
 
 interface UseAgentFollowControllerInput {
   dirtyFileEditSignals: DirtyFileEditSignal[]

@@ -4,11 +4,11 @@ import {
   computePendingEditedPaths,
   createInitialFollowControllerState,
   followControllerReducer,
-  getPreferredFollowSymbolIdsForFile,
-} from './agentFollowModel'
-import type { AgentFileOperation, ProjectSnapshot, TelemetryActivityEvent } from '../types'
+} from './model'
+import { getPreferredFollowSymbolIdsForFile } from './snapshot'
+import type { AgentFileOperation, ProjectSnapshot, TelemetryActivityEvent } from '../../types'
 
-describe('agentFollowModel', () => {
+describe('follow model', () => {
   it('prefers edit targets over generic activity targets', () => {
     const snapshot = createSnapshot()
     const state = reduceFollowState([

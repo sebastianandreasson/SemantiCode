@@ -5,7 +5,7 @@ import type {
   FollowInspectorCommand,
   FollowRefreshCommand,
   TelemetryMode,
-} from '../types'
+} from '../../types'
 
 const LIVE_SNAPSHOT_REFRESH_DEBOUNCE_MS = 500
 const LIVE_SNAPSHOT_REFRESH_MIN_INTERVAL_MS = 1800

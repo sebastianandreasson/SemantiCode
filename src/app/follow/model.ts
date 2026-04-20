@@ -1,214 +1,45 @@
+import type { VisualizerViewMode } from '../../schema/layout'
+import type { ProjectSnapshot } from '../../schema/snapshot'
+import type { TelemetryActivityEvent, TelemetryMode } from '../../schema/telemetry'
 import {
-  isFileNode,
-  isSymbolNode,
-  type AgentFileOperation,
-  type ProjectSnapshot,
-  type SymbolNode,
-  type TelemetryActivityEvent,
-  type TelemetryMode,
-  type VisualizerViewMode,
-} from '../types'
-
-export const FOLLOW_AGENT_EDIT_CAMERA_LOCK_MS = 1400
-const FOLLOW_AGENT_EVENT_PRIORITY_WINDOW_MS = 30_000
-const MAX_ACKNOWLEDGED_CAMERA_COMMAND_IDS = 300
-
-export type FollowTargetKind = 'symbol' | 'file'
-export type FollowTargetConfidence =
-  | 'exact_symbol'
-  | 'best_named_symbol'
-  | 'file_fallback'
-  | 'dirty_file_fallback'
-export type FollowIntent = 'activity' | 'edit'
-
-export interface DirtyFileEditSignal {
-  changedAt: string
-  changedAtMs: number
-  fingerprint: string
-  path: string
-}
-
-export type FollowDomainEvent =
-  | {
-      type: 'file_touched' | 'file_edited'
-      key: string
-      eventKey: string
-      path: string
-      timestamp: string
-      timestampMs: number
-      toolNames: string[]
-      sourcePriority: number
-      sourceSequence: number
-    }
-  | {
-      type: 'snapshot_refreshed' | 'symbols_available'
-      key: string
-      timestamp: string
-      timestampMs: number
-    }
-  | {
-      type: 'follow_enabled' | 'follow_disabled'
-      key: string
-      timestamp: string
-      timestampMs: number
-    }
-  | {
-      type: 'view_changed'
-      key: string
-      mode: TelemetryMode
-      timestamp: string
-      timestampMs: number
-    }
-
-export interface FollowTarget {
-  kind: FollowTargetKind
-  path: string
-  fileNodeId: string
-  symbolNodeIds: string[]
-  primaryNodeId: string
-  intent: FollowIntent
-  confidence: FollowTargetConfidence
-  eventKey: string
-  toolNames: string[]
-  timestamp: string
-  requiresSnapshotRefresh: boolean
-  shouldOpenInspector: boolean
-}
-
-export interface FollowCameraCommand {
-  id: string
-  target: FollowTarget
-}
-
-export interface FollowInspectorCommand {
-  id: string
-  pendingPath: string | null
-  scrollToDiffRequestKey: string | null
-  target: FollowTarget
-}
-
-export interface FollowRefreshCommand {
-  id: string
-  target: FollowTarget
-}
-
-export interface FollowDebugState {
-  cameraLockActive: boolean
-  cameraLockUntilMs: number
-  currentMode: FollowIntent | 'idle'
-  currentTarget: FollowTarget | null
-  latestEvent: FollowDomainEvent | null
-  queueLength: number
-  refreshInFlight: boolean
-  refreshPending: boolean
-}
-
-export interface FollowControllerState {
-  enabled: boolean
-  telemetryEnabled: boolean
-  telemetryMode: TelemetryMode
-  viewMode: VisualizerViewMode
-  snapshot: ProjectSnapshot | null
-  snapshotSignature: string | null
-  symbolCount: number
-  visibleNodeIds: string[]
-  fileOperations: AgentFileOperation[]
-  telemetryActivityEvents: TelemetryActivityEvent[]
-  liveChangedFiles: string[]
-  dirtyFileEditSignals: DirtyFileEditSignal[]
-  pendingDirtyPaths: string[]
-  knownChangedPaths: string[]
-  latestNormalizedEvent: FollowDomainEvent | null
-  latestResolvedActivityTarget: FollowTarget | null
-  latestResolvedEditTarget: FollowTarget | null
-  cameraLockUntilMs: number
-  refreshPending: boolean
-  refreshInFlight: boolean
-  refreshRequestedAtMs: number | null
-  acknowledgedCameraCommandIds: string[]
-  acknowledgedInspectorCommandIds: string[]
-  lastAcknowledgedCameraCommandId: string | null
-  lastAcknowledgedInspectorCommandId: string | null
-  lastAcknowledgedRefreshCommandId: string | null
-  currentCameraCommand: FollowCameraCommand | null
-  currentInspectorCommand: FollowInspectorCommand | null
-  currentRefreshCommand: FollowRefreshCommand | null
-  debug: FollowDebugState
-  nowMs: number
-}
-
-export type FollowControllerAction =
-  | {
-      type: 'FOLLOW_TOGGLED'
-      enabled: boolean
-      nowMs: number
-    }
-  | {
-      type: 'TELEMETRY_BATCH_UPDATED'
-      nowMs: number
-      telemetryActivityEvents: TelemetryActivityEvent[]
-      telemetryEnabled: boolean
-    }
-  | {
-      type: 'FILE_OPERATIONS_UPDATED'
-      fileOperations: AgentFileOperation[]
-      nowMs: number
-    }
-  | {
-      type: 'DIRTY_FILES_UPDATED'
-      liveChangedFiles: string[]
-      nowMs: number
-    }
-  | {
-      type: 'DIRTY_FILE_SIGNALS_UPDATED'
-      signals: DirtyFileEditSignal[]
-      nowMs: number
-    }
-  | {
-      type: 'SNAPSHOT_CONTEXT_UPDATED'
-      nowMs: number
-      snapshot: ProjectSnapshot | null
-      visibleNodeIds: string[]
-    }
-  | {
-      type: 'VIEW_MODE_CHANGED'
-      mode: TelemetryMode
-      nowMs: number
-      viewMode: VisualizerViewMode
-    }
-  | {
-      type: 'COMMAND_ACKNOWLEDGED'
-      commandId: string
-      commandType: 'camera' | 'inspector' | 'refresh'
-      intent?: FollowIntent
-      nowMs: number
-      pendingPath?: string | null
-    }
-  | {
-      type: 'REFRESH_STATUS_CHANGED'
-      nowMs: number
-      status: 'idle' | 'in_flight'
-    }
-  | {
-      type: 'CLOCK_TICKED'
-      nowMs: number
-    }
-
-type FollowFileEvent = Extract<
+  appendAcknowledgedCommandId,
+  buildCameraCommand,
+  buildFollowDebugState,
+  buildInspectorCommand,
+  buildRefreshCommand,
+  countQueuedCameraTargets,
+  createCameraCommandId,
+  FOLLOW_AGENT_EDIT_CAMERA_LOCK_MS,
+  pruneAcknowledgedCameraCommandIds,
+  pruneAcknowledgedInspectorCommandIds,
+} from './commands'
+import {
+  compareFollowEventsDescending,
+  compareFollowEventsForPlayback,
+  createDirtyFileFollowEvent,
+  createDirtySignalFollowEvent,
+  createFileOperationFollowEvent,
+  createTelemetryFollowEvent,
+  getChangedDirtySignalPaths,
+  getChangedFileOperationPaths,
+  shouldUseTelemetryEventForFollow,
+} from './events'
+import {
+  buildFollowIndexes,
+  buildSnapshotSignature,
+  countSnapshotSymbols,
+  getPreferredFollowSymbolIdsForFile,
+} from './snapshot'
+import type {
+  FollowControllerAction,
+  FollowControllerState,
   FollowDomainEvent,
-  { type: 'file_touched' | 'file_edited' }
->
-
-interface FollowIndexes {
-  fileIdsByPath: Map<string, string>
-  symbolIdsByFileId: Map<string, string[]>
-}
-
-interface ResolvedFollowTarget {
-  pendingPath: string | null
-  sourceEvent: FollowFileEvent
-  target: FollowTarget
-}
+  FollowFileEvent,
+  FollowIndexes,
+  FollowIntent,
+  FollowTargetConfidence,
+  ResolvedFollowTarget,
+} from './types'
 
 export function createInitialFollowControllerState(): FollowControllerState {
   const nowMs = Date.now()
@@ -519,42 +350,6 @@ export function computePendingEditedPaths(input: {
   return nextPending
 }
 
-export function getPreferredFollowSymbolIdsForFile(input: {
-  fileId: string
-  snapshot: ProjectSnapshot
-  symbolIdsByFileId: Map<string, string[]>
-}) {
-  const symbolIds = input.symbolIdsByFileId.get(input.fileId) ?? []
-  const symbols = symbolIds
-    .map((symbolId) => input.snapshot.nodes[symbolId])
-    .filter(isSymbolNode)
-
-  if (symbols.length === 0) {
-    return []
-  }
-
-  const preferredSymbols = symbols.filter(isPreferredFollowSymbolNode)
-  const candidates = preferredSymbols.length > 0 ? preferredSymbols : symbols
-
-  return [...candidates]
-    .sort(compareSymbolsForFollow)
-    .map((symbol) => symbol.id)
-}
-
-export function isEditTelemetryEvent(toolNames: string[]) {
-  return toolNames.some((toolName) => {
-    const normalizedToolName = toolName.trim().toLowerCase()
-
-    return (
-      normalizedToolName.includes('apply') ||
-      normalizedToolName.includes('write') ||
-      normalizedToolName.includes('edit') ||
-      normalizedToolName.includes('patch') ||
-      normalizedToolName.includes('replace')
-    )
-  })
-}
-
 function deriveFollowControllerState(
   state: FollowControllerState,
 ): FollowControllerState {
@@ -624,21 +419,18 @@ function deriveFollowControllerState(
     visibleNodeIds: state.visibleNodeIds,
   })
   const latestResolvedActivity = resolvedActivityQueue[0] ?? null
-  const acknowledgedCameraCommandIds = pruneAcknowledgedCameraCommandIds({
-    acknowledgedCommandIds: state.acknowledgedCameraCommandIds,
-    candidateTargets: [
-      ...(latestResolvedEdit ? [latestResolvedEdit.target] : []),
-      ...resolvedActivityQueue.map((resolvedTarget) => resolvedTarget.target),
-    ],
-    currentCommand: state.currentCameraCommand,
-  })
-  const inspectorCandidateTargets = [
+  const candidateTargets = [
     ...(latestResolvedEdit ? [latestResolvedEdit.target] : []),
     ...resolvedActivityQueue.map((resolvedTarget) => resolvedTarget.target),
   ]
+  const acknowledgedCameraCommandIds = pruneAcknowledgedCameraCommandIds({
+    acknowledgedCommandIds: state.acknowledgedCameraCommandIds,
+    candidateTargets,
+    currentCommand: state.currentCameraCommand,
+  })
   const acknowledgedInspectorCommandIds = pruneAcknowledgedInspectorCommandIds({
     acknowledgedCommandIds: state.acknowledgedInspectorCommandIds,
-    candidateTargets: inspectorCandidateTargets,
+    candidateTargets,
     currentCommand: state.currentInspectorCommand,
   })
   const latestNormalizedEvent =
@@ -659,18 +451,14 @@ function deriveFollowControllerState(
     latestResolvedActivity?.target ??
     null
   const currentMode: FollowIntent | 'idle' = currentTarget?.intent ?? 'idle'
-  const inspectorTarget = currentCameraCommand?.target ??
-    latestResolvedEdit?.target ??
-    latestResolvedActivity?.target ??
-    null
   const currentInspectorCommand = buildInspectorCommand({
     acknowledgedCommandIds: acknowledgedInspectorCommandIds,
     pendingPath:
-      inspectorTarget?.intent === 'edit' &&
-      inspectorTarget.eventKey === latestResolvedEdit?.target.eventKey
+      currentTarget?.intent === 'edit' &&
+      currentTarget.eventKey === latestResolvedEdit?.target.eventKey
         ? latestResolvedEdit.pendingPath
         : null,
-    target: inspectorTarget,
+    target: currentTarget,
     lastAcknowledgedCommandId: state.lastAcknowledgedInspectorCommandId,
   })
   const currentRefreshCommand = buildRefreshCommand({
@@ -697,10 +485,7 @@ function deriveFollowControllerState(
         countQueuedCameraTargets({
           acknowledgedCommandIds: acknowledgedCameraCommandIds,
           currentCommand: currentCameraCommand,
-          targets: [
-            ...(latestResolvedEdit ? [latestResolvedEdit.target] : []),
-            ...resolvedActivityQueue.map((resolvedTarget) => resolvedTarget.target),
-          ],
+          targets: candidateTargets,
         }),
       refreshInFlight: state.refreshInFlight,
       refreshPending: state.refreshPending,
@@ -917,236 +702,6 @@ function getFollowTargetMode(viewMode: VisualizerViewMode): TelemetryMode {
   return viewMode === 'symbols' ? 'symbols' : 'files'
 }
 
-function buildCameraCommand(input: {
-  acknowledgedCommandIds: string[]
-  activityTargets: FollowTarget[]
-  cameraLockUntilMs: number
-  currentCommand: FollowCameraCommand | null
-  editTargets: FollowTarget[]
-  lastAcknowledgedCommandId: string | null
-  nowMs: number
-}) {
-  const acknowledgedCommandIds = new Set(input.acknowledgedCommandIds)
-
-  const candidateTargets = input.editTargets.length > 0
-    ? input.editTargets
-    : input.currentCommand?.target.intent === 'activity' &&
-        !acknowledgedCommandIds.has(input.currentCommand.id) &&
-        input.currentCommand.id !== input.lastAcknowledgedCommandId
-      ? [input.currentCommand.target]
-      : input.cameraLockUntilMs <= input.nowMs
-        ? input.activityTargets
-        : []
-
-  const target = candidateTargets.find((candidateTarget) => {
-    const commandId = createCameraCommandId(candidateTarget)
-    return commandId !== input.lastAcknowledgedCommandId && !acknowledgedCommandIds.has(commandId)
-  }) ?? null
-
-  if (!target) {
-    return null
-  }
-
-  return {
-    id: createCameraCommandId(target),
-    target,
-  } satisfies FollowCameraCommand
-}
-
-function createCameraCommandId(target: FollowTarget) {
-  return `camera:${target.intent}:${target.eventKey}:${target.primaryNodeId}:${target.confidence}`
-}
-
-function appendAcknowledgedCommandId(
-  acknowledgedCommandIds: string[],
-  commandId: string,
-) {
-  return [
-    ...acknowledgedCommandIds.filter((acknowledgedCommandId) => acknowledgedCommandId !== commandId),
-    commandId,
-  ].slice(-MAX_ACKNOWLEDGED_CAMERA_COMMAND_IDS)
-}
-
-function createInspectorCommandId(target: FollowTarget) {
-  return `inspector:${target.intent}:${target.path}:${target.eventKey}`
-}
-
-function pruneAcknowledgedInspectorCommandIds(input: {
-  acknowledgedCommandIds: string[]
-  candidateTargets: FollowTarget[]
-  currentCommand: FollowInspectorCommand | null
-}) {
-  const candidateCommandIds = new Set(
-    input.candidateTargets.map(createInspectorCommandId),
-  )
-
-  if (input.currentCommand) {
-    candidateCommandIds.add(input.currentCommand.id)
-  }
-
-  return input.acknowledgedCommandIds
-    .filter((commandId) => candidateCommandIds.has(commandId))
-    .slice(-MAX_ACKNOWLEDGED_CAMERA_COMMAND_IDS)
-}
-
-function pruneAcknowledgedCameraCommandIds(input: {
-  acknowledgedCommandIds: string[]
-  candidateTargets: FollowTarget[]
-  currentCommand: FollowCameraCommand | null
-}) {
-  const candidateCommandIds = new Set(
-    input.candidateTargets.map(createCameraCommandId),
-  )
-
-  if (input.currentCommand) {
-    candidateCommandIds.add(input.currentCommand.id)
-  }
-
-  return input.acknowledgedCommandIds
-    .filter((commandId) => candidateCommandIds.has(commandId))
-    .slice(-MAX_ACKNOWLEDGED_CAMERA_COMMAND_IDS)
-}
-
-function countQueuedCameraTargets(input: {
-  acknowledgedCommandIds: string[]
-  currentCommand: FollowCameraCommand | null
-  targets: FollowTarget[]
-}) {
-  const acknowledgedCommandIds = new Set(input.acknowledgedCommandIds)
-  const currentCommandId = input.currentCommand?.id ?? null
-
-  return input.targets.filter((target) => {
-    const commandId = createCameraCommandId(target)
-    return commandId !== currentCommandId && !acknowledgedCommandIds.has(commandId)
-  }).length
-}
-
-function buildInspectorCommand(input: {
-  acknowledgedCommandIds: string[]
-  pendingPath: string | null
-  target: FollowTarget | null
-  lastAcknowledgedCommandId: string | null
-}) {
-  if (!input.target?.shouldOpenInspector) {
-    return null
-  }
-
-  const commandId = createInspectorCommandId(input.target)
-
-  if (
-    commandId === input.lastAcknowledgedCommandId ||
-    input.acknowledgedCommandIds.includes(commandId)
-  ) {
-    return null
-  }
-
-  return {
-    id: commandId,
-    pendingPath: input.target.intent === 'edit' ? input.pendingPath : null,
-    scrollToDiffRequestKey:
-      input.target.intent === 'edit' ? `edit:${input.target.eventKey}` : null,
-    target: input.target,
-  } satisfies FollowInspectorCommand
-}
-
-function buildRefreshCommand(input: {
-  editTarget: FollowTarget | null
-  lastAcknowledgedCommandId: string | null
-  refreshInFlight: boolean
-  refreshPending: boolean
-  viewMode: VisualizerViewMode
-}) {
-  if (
-    !input.editTarget?.requiresSnapshotRefresh ||
-    input.viewMode !== 'symbols' ||
-    input.refreshPending ||
-    input.refreshInFlight
-  ) {
-    return null
-  }
-
-  const commandId = `refresh:${input.editTarget.path}:${input.editTarget.eventKey}`
-
-  if (commandId === input.lastAcknowledgedCommandId) {
-    return null
-  }
-
-  return {
-    id: commandId,
-    target: input.editTarget,
-  } satisfies FollowRefreshCommand
-}
-
-function buildFollowDebugState(input: {
-  cameraLockUntilMs: number
-  currentMode: FollowIntent | 'idle'
-  currentTarget: FollowTarget | null
-  latestEvent: FollowDomainEvent | null
-  queueLength: number
-  refreshInFlight: boolean
-  refreshPending: boolean
-  nowMs: number
-}) {
-  return {
-    cameraLockActive: input.cameraLockUntilMs > input.nowMs,
-    cameraLockUntilMs: input.cameraLockUntilMs,
-    currentMode: input.currentMode,
-    currentTarget: input.currentTarget,
-    latestEvent: input.latestEvent,
-    queueLength: input.queueLength,
-    refreshInFlight: input.refreshInFlight,
-    refreshPending: input.refreshPending,
-  } satisfies FollowDebugState
-}
-
-function buildFollowIndexes(snapshot: ProjectSnapshot | null): FollowIndexes | null {
-  if (!snapshot) {
-    return null
-  }
-
-  const fileIdsByPath = new Map<string, string>()
-  const symbolIdsByFileId = new Map<string, string[]>()
-
-  for (const node of Object.values(snapshot.nodes)) {
-    if (isFileNode(node)) {
-      fileIdsByPath.set(node.path, node.id)
-      continue
-    }
-
-    if (isSymbolNode(node)) {
-      const currentSymbolIds = symbolIdsByFileId.get(node.fileId) ?? []
-      currentSymbolIds.push(node.id)
-      symbolIdsByFileId.set(node.fileId, currentSymbolIds)
-    }
-  }
-
-  return {
-    fileIdsByPath,
-    symbolIdsByFileId,
-  }
-}
-
-function countSnapshotSymbols(snapshot: ProjectSnapshot | null) {
-  if (!snapshot) {
-    return 0
-  }
-
-  return Object.values(snapshot.nodes).filter(isSymbolNode).length
-}
-
-function buildSnapshotSignature(snapshot: ProjectSnapshot | null) {
-  if (!snapshot) {
-    return null
-  }
-
-  return [
-    snapshot.rootDir,
-    snapshot.generatedAt,
-    Object.keys(snapshot.nodes).length,
-    snapshot.edges.length,
-  ].join('::')
-}
-
 function createLifecycleEvent(
   type: Extract<
     FollowDomainEvent['type'],
@@ -1169,267 +724,5 @@ function createViewChangedEvent(mode: TelemetryMode, nowMs: number): FollowDomai
     timestamp: new Date(nowMs).toISOString(),
     timestampMs: nowMs,
     type: 'view_changed',
-  }
-}
-
-function createTelemetryFollowEvent(
-  event: TelemetryActivityEvent,
-  fallbackNowMs: number,
-): FollowFileEvent {
-  const timestampMs = parseTimestampMs(event.timestamp, fallbackNowMs)
-  const type = isEditTelemetryEvent(event.toolNames) ? 'file_edited' : 'file_touched'
-
-  return {
-    eventKey: event.key,
-    key: `${type}:${event.key}`,
-    path: event.path,
-    sourcePriority: 1,
-    sourceSequence: 0,
-    timestamp: event.timestamp,
-    timestampMs,
-    toolNames: event.toolNames,
-    type,
-  }
-}
-
-function shouldUseTelemetryEventForFollow(event: TelemetryActivityEvent) {
-  return event.confidence !== 'fallback'
-}
-
-function createFileOperationFollowEvent(
-  operation: AgentFileOperation,
-  fallbackNowMs: number,
-): FollowFileEvent | null {
-  if (!operation.path || operation.status === 'error') {
-    return null
-  }
-
-  const timestampMs = parseTimestampMs(operation.timestamp, fallbackNowMs)
-  const type = operation.kind === 'file_read'
-    ? 'file_touched'
-    : isFileChangingOperationKind(operation.kind)
-      ? 'file_edited'
-      : null
-
-  if (!type) {
-    return null
-  }
-
-  return {
-    eventKey: operation.id,
-    key: `operation:${type}:${operation.id}`,
-    path: operation.path,
-    sourcePriority: getFileOperationSourcePriority(operation),
-    sourceSequence: getOperationPathSequence(operation),
-    timestamp: operation.timestamp,
-    timestampMs,
-    toolNames: [operation.toolName],
-    type,
-  }
-}
-
-function createDirtyFileFollowEvent(pathValue: string): FollowFileEvent {
-  const timestamp = new Date(0).toISOString()
-
-  return {
-    eventKey: `dirty:${pathValue}`,
-    key: `dirty:${pathValue}`,
-    path: pathValue,
-    sourcePriority: 2,
-    sourceSequence: 0,
-    timestamp,
-    timestampMs: 0,
-    toolNames: ['git-diff'],
-    type: 'file_edited',
-  }
-}
-
-function createDirtySignalFollowEvent(signal: DirtyFileEditSignal): FollowFileEvent {
-  return {
-    eventKey: `dirty:${signal.path}:${signal.fingerprint}`,
-    key: `dirty:${signal.path}:${signal.fingerprint}`,
-    path: signal.path,
-    sourcePriority: 4,
-    sourceSequence: 0,
-    timestamp: signal.changedAt,
-    timestampMs: signal.changedAtMs,
-    toolNames: ['git-diff'],
-    type: 'file_edited',
-  }
-}
-
-function getChangedDirtySignalPaths(input: {
-  nextSignals: DirtyFileEditSignal[]
-  previousSignals: DirtyFileEditSignal[]
-}) {
-  const previousByPath = new Map(
-    input.previousSignals.map((signal) => [signal.path, signal.fingerprint]),
-  )
-
-  return input.nextSignals
-    .filter((signal) => previousByPath.get(signal.path) !== signal.fingerprint)
-    .sort((left, right) => right.changedAtMs - left.changedAtMs)
-    .map((signal) => signal.path)
-}
-
-function getChangedFileOperationPaths(input: {
-  nextOperations: AgentFileOperation[]
-  previousOperations: AgentFileOperation[]
-}) {
-  const previousOperationIds = new Set(
-    input.previousOperations.map((operation) => operation.id),
-  )
-
-  return input.nextOperations
-    .filter((operation) =>
-      operation.path &&
-      operation.status !== 'error' &&
-      isFileChangingOperationKind(operation.kind) &&
-      !previousOperationIds.has(operation.id),
-    )
-    .sort((left, right) =>
-      parseTimestampMs(right.timestamp, 0) - parseTimestampMs(left.timestamp, 0),
-    )
-    .map((operation) => operation.path!)
-}
-
-function isFileChangingOperationKind(kind: AgentFileOperation['kind']) {
-  return (
-    kind === 'file_changed' ||
-    kind === 'file_delete' ||
-    kind === 'file_rename' ||
-    kind === 'file_write'
-  )
-}
-
-function compareFollowEventsDescending(left: FollowFileEvent, right: FollowFileEvent) {
-  if (left.timestampMs !== right.timestampMs) {
-    const timestampDeltaMs = Math.abs(right.timestampMs - left.timestampMs)
-    if (
-      timestampDeltaMs <= FOLLOW_AGENT_EVENT_PRIORITY_WINDOW_MS &&
-      left.sourcePriority !== right.sourcePriority
-    ) {
-      return right.sourcePriority - left.sourcePriority
-    }
-
-    return right.timestampMs - left.timestampMs
-  }
-
-  if (left.sourcePriority !== right.sourcePriority) {
-    return right.sourcePriority - left.sourcePriority
-  }
-
-  if (left.sourceSequence !== right.sourceSequence) {
-    return left.sourceSequence - right.sourceSequence
-  }
-
-  return right.eventKey.localeCompare(left.eventKey)
-}
-
-function compareFollowEventsForPlayback(left: FollowFileEvent, right: FollowFileEvent) {
-  if (left.timestampMs !== right.timestampMs) {
-    const timestampDeltaMs = Math.abs(right.timestampMs - left.timestampMs)
-    if (
-      timestampDeltaMs <= FOLLOW_AGENT_EVENT_PRIORITY_WINDOW_MS &&
-      left.sourcePriority !== right.sourcePriority
-    ) {
-      return right.sourcePriority - left.sourcePriority
-    }
-
-    return left.timestampMs - right.timestampMs
-  }
-
-  if (left.sourcePriority !== right.sourcePriority) {
-    return right.sourcePriority - left.sourcePriority
-  }
-
-  if (left.sourceSequence !== right.sourceSequence) {
-    return left.sourceSequence - right.sourceSequence
-  }
-
-  return left.eventKey.localeCompare(right.eventKey)
-}
-
-function parseTimestampMs(timestamp: string, fallbackNowMs: number) {
-  const nextTimestampMs = new Date(timestamp).getTime()
-  return Number.isFinite(nextTimestampMs) ? nextTimestampMs : fallbackNowMs
-}
-
-function getOperationPathSequence(operation: AgentFileOperation) {
-  if (!operation.path) {
-    return 0
-  }
-
-  const pathIndex = operation.paths.indexOf(operation.path)
-  return pathIndex >= 0 ? pathIndex : 0
-}
-
-function getFileOperationSourcePriority(operation: AgentFileOperation) {
-  switch (operation.source) {
-    case 'request-telemetry':
-      return 1
-    case 'assistant-message':
-    case 'git-dirty':
-      return 2
-    case 'agent-tool':
-    case 'pi-sdk':
-      return 3
-  }
-}
-
-function isPreferredFollowSymbolNode(symbol: SymbolNode) {
-  const normalizedName = symbol.name.trim().toLowerCase()
-
-  if (
-    normalizedName.length === 0 ||
-    normalizedName === 'anon' ||
-    normalizedName === 'anonymous' ||
-    normalizedName === 'global'
-  ) {
-    return false
-  }
-
-  return symbol.symbolKind !== 'unknown' && symbol.symbolKind !== 'module'
-}
-
-function compareSymbolsForFollow(left: SymbolNode, right: SymbolNode) {
-  const leftPreferred = isPreferredFollowSymbolNode(left) ? 0 : 1
-  const rightPreferred = isPreferredFollowSymbolNode(right) ? 0 : 1
-
-  if (leftPreferred !== rightPreferred) {
-    return leftPreferred - rightPreferred
-  }
-
-  const leftKindRank = getFollowSymbolKindRank(left)
-  const rightKindRank = getFollowSymbolKindRank(right)
-
-  if (leftKindRank !== rightKindRank) {
-    return leftKindRank - rightKindRank
-  }
-
-  const leftLine = left.range?.start.line ?? Number.MAX_SAFE_INTEGER
-  const rightLine = right.range?.start.line ?? Number.MAX_SAFE_INTEGER
-
-  if (leftLine !== rightLine) {
-    return leftLine - rightLine
-  }
-
-  return left.id.localeCompare(right.id)
-}
-
-function getFollowSymbolKindRank(symbol: SymbolNode) {
-  switch (symbol.symbolKind) {
-    case 'class':
-      return 0
-    case 'function':
-      return 1
-    case 'method':
-      return 2
-    case 'constant':
-      return 3
-    case 'variable':
-      return 4
-    default:
-      return 99
   }
 }

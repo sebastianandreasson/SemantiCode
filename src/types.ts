@@ -218,7 +218,7 @@ export type {
   FollowTarget,
   FollowTargetConfidence,
   FollowTargetKind,
-} from './app/agentFollowModel'
+} from './app/follow'
 export type {
   SemanticCacheManifest,
   SemanticCacheSnapshot,

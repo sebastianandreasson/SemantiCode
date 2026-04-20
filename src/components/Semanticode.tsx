@@ -35,7 +35,7 @@ import {
   getPreprocessingProgressPercent,
   hasWorkspaceSyncUpdates,
 } from './shell/workspaceStatusFormat'
-import { useAgentFollowController } from '../app/useAgentFollowController'
+import { useAgentFollowController, useFollowAgentExecutors } from '../app/follow'
 import { useAgentFileOperations } from '../app/useAgentFileOperations'
 import {
   buildAgentDebugFeedEntries,
@@ -43,7 +43,6 @@ import {
 } from '../app/useAgentEventFeed'
 import { useAutonomousRunsController } from '../app/useAutonomousRunsController'
 import { useCanvasGraphController } from '../app/useCanvasGraphController'
-import { useFollowAgentExecutors } from '../app/useFollowAgentExecutors'
 import { useSelectionViewModel } from '../app/useSelectionViewModel'
 import { useSemanticSearchController } from '../app/useSemanticSearchController'
 import { useTelemetryController } from '../app/useTelemetryController'

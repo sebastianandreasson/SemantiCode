@@ -60,7 +60,7 @@ describe('agent file operation normalization', () => {
   it('infers shell reads from common read commands and path tokens', () => {
     const operations = createFileOperationsFromToolInvocation({
       invocation: createInvocation({
-        args: { cmd: 'rg "follow" src/app/agentFollowModel.ts package.json' },
+        args: { cmd: 'rg "follow" src/app/follow/model.ts package.json' },
         toolName: 'exec_command',
       }),
       sessionId: 'session-1',
@@ -71,7 +71,7 @@ describe('agent file operation normalization', () => {
       {
         confidence: 'inferred',
         kind: 'file_read',
-        path: 'src/app/agentFollowModel.ts',
+        path: 'src/app/follow/model.ts',
       },
       {
         confidence: 'inferred',
