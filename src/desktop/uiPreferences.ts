@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import type { UiPreferences } from '../schema/store'
+import { normalizeDockLayoutPreference } from '../app/dock/dockModel'
 
 const UI_PREFERENCES_FILENAME = 'ui-preferences.json'
 
@@ -45,6 +46,7 @@ function normalizeUiPreferences(
       typeof preferences.canvasWidthRatio === 'number'
         ? preferences.canvasWidthRatio
         : undefined,
+    dockLayout: normalizeDockLayoutPreference(preferences.dockLayout),
     graphLayers:
       preferences.graphLayers && typeof preferences.graphLayers === 'object'
         ? preferences.graphLayers

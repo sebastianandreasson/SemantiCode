@@ -6,17 +6,22 @@ import type { AgentFileOperation } from '../types'
 const MAX_LIVE_FILE_OPERATIONS = 250
 const POLLED_FILE_OPERATIONS_INTERVAL_MS = 1000
 const GENERATION_LOOKBACK_MS = 5000
+const EMPTY_AGENT_FILE_OPERATIONS: AgentFileOperation[] = []
 
 export function useAgentFileOperations(input: {
   enabled: boolean
 }) {
   const agentClient = useMemo(() => new DesktopAgentClient(), [])
   const [enabledSinceMs, setEnabledSinceMs] = useState<number | null>(null)
-  const [operations, setOperations] = useState<AgentFileOperation[]>([])
+  const [operations, setOperations] = useState<AgentFileOperation[]>(EMPTY_AGENT_FILE_OPERATIONS)
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
-      setOperations([])
+      setOperations((currentOperations) =>
+        currentOperations.length === 0
+          ? currentOperations
+          : EMPTY_AGENT_FILE_OPERATIONS,
+      )
       setEnabledSinceMs(input.enabled ? Date.now() : null)
     }, 0)
 
@@ -77,7 +82,9 @@ export function useAgentFileOperations(input: {
     }
   }, [agentClient, enabledSinceMs, input.enabled])
 
-  return input.enabled && enabledSinceMs !== null ? operations : []
+  return input.enabled && enabledSinceMs !== null
+    ? operations
+    : EMPTY_AGENT_FILE_OPERATIONS
 }
 
 function isOperationInActiveWindow(

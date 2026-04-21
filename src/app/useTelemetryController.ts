@@ -21,6 +21,8 @@ import type {
 const FOLLOW_DIRTY_SIGNAL_MAX_FILES = 16
 
 interface UseTelemetryControllerOptions {
+  activeChatSessionId?: string | null
+  activeChatWindowStartMs?: number | null
   followActiveAgent: boolean
   hasRunningAutonomousRun: boolean
   rootDir: string | null | undefined
@@ -37,6 +39,8 @@ interface TelemetryData {
 }
 
 export function useTelemetryController({
+  activeChatSessionId = null,
+  activeChatWindowStartMs = null,
   followActiveAgent,
   hasRunningAutonomousRun,
   rootDir,
@@ -65,11 +69,24 @@ export function useTelemetryController({
       return
     }
 
+    if (telemetryWindow === 'session' && !activeChatSessionId) {
+      setTelemetryData({
+        activityEvents: [],
+        heatSamples: [],
+        observedAt: Date.now(),
+        overview: buildEmptyTelemetryOverview(telemetrySource, telemetryWindow),
+      })
+      setTelemetryError(null)
+      return
+    }
+
     const refreshTelemetry = async () => {
       try {
         const telemetryQuery = {
           mode: telemetryMode,
           runId: telemetryWindow === 'run' ? selectedRunId ?? undefined : undefined,
+          sessionId: telemetryWindow === 'session' ? activeChatSessionId ?? undefined : undefined,
+          sinceMs: telemetryWindow === 'session' ? activeChatWindowStartMs ?? undefined : undefined,
           source: telemetrySource,
           window: telemetryWindow,
         } as const
@@ -102,13 +119,20 @@ export function useTelemetryController({
     void refreshTelemetry()
     const intervalId = window.setInterval(() => {
       void refreshTelemetry()
-    }, runsSurfaceOpen || telemetryWindow === 'run' || hasRunningAutonomousRun ? 2500 : 5000)
+    }, (
+      runsSurfaceOpen ||
+      telemetryWindow === 'run' ||
+      telemetryWindow === 'session' ||
+      hasRunningAutonomousRun
+    ) ? 2500 : 5000)
 
     return () => {
       cancelled = true
       window.clearInterval(intervalId)
     }
   }, [
+    activeChatSessionId,
+    activeChatWindowStartMs,
     hasRunningAutonomousRun,
     rootDir,
     runsSurfaceOpen,
@@ -317,4 +341,20 @@ function buildFollowDirtySignalFingerprint(
   }
 
   return diff.fingerprint
+}
+
+function buildEmptyTelemetryOverview(
+  source: TelemetrySource,
+  window: TelemetryWindow,
+): TelemetryOverview {
+  return {
+    activeRuns: [],
+    requestCount: 0,
+    source,
+    topDirectories: [],
+    topFiles: [],
+    topTools: [],
+    totalTokens: 0,
+    window,
+  }
 }

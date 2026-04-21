@@ -1,4 +1,4 @@
-import { useMemo, useState, type CSSProperties } from 'react'
+import { useMemo, useState, type CSSProperties, type ReactNode } from 'react'
 
 interface RecentProject {
   name: string
@@ -34,6 +34,7 @@ interface WorkspaceSidebarProps {
   open: boolean
   recentProjects: RecentProject[]
   selectedNodeId: string | null
+  dockMoveHandle?: ReactNode
   workspaceActionError?: string | null
   workspaceActionPending?: boolean
 }
@@ -50,6 +51,7 @@ export function WorkspaceSidebar({
   open,
   recentProjects,
   selectedNodeId,
+  dockMoveHandle = null,
   workspaceActionError = null,
   workspaceActionPending = false,
 }: WorkspaceSidebarProps) {
@@ -86,14 +88,17 @@ export function WorkspaceSidebar({
 
   return (
     <aside className={`cbv-workspace-sidebar${open ? '' : ' is-collapsed'}`}>
-      <button
-        aria-label="Hide workspace sidebar"
-        className="cbv-inspector-close cbv-workspace-sidebar-close"
-        onClick={onClose}
-        type="button"
-      >
-        ×
-      </button>
+      <div className="cbv-workspace-sidebar-actions">
+        {dockMoveHandle}
+        <button
+          aria-label="Hide workspace sidebar"
+          className="cbv-inspector-close cbv-workspace-sidebar-close"
+          onClick={onClose}
+          type="button"
+        >
+          ×
+        </button>
+      </div>
 
       {sidebarView === 'workspaces' ? (
         <section className="cbv-sidebar-section cbv-sidebar-workspaces">

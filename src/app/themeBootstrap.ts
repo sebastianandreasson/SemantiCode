@@ -1,4 +1,5 @@
 import type { UiPreferences } from '../types'
+import { normalizeDockLayoutPreference } from './dock/dockModel'
 
 export type ThemeMode = 'light' | 'dark'
 
@@ -54,6 +55,7 @@ function readStoredUiPreferencesFallback(): UiPreferences {
         typeof parsed.canvasWidthRatio === 'number'
           ? parsed.canvasWidthRatio
           : undefined,
+      dockLayout: normalizeDockLayoutPreference(parsed.dockLayout),
       graphLayers: parsed.graphLayers,
       inspectorOpen:
         typeof parsed.inspectorOpen === 'boolean'
@@ -88,6 +90,9 @@ export function readStoredUiPreferences(): UiPreferences {
   return {
     canvasWidthRatio:
       desktopPreferences.canvasWidthRatio ?? storedPreferences.canvasWidthRatio,
+    dockLayout:
+      normalizeDockLayoutPreference(desktopPreferences.dockLayout) ??
+      storedPreferences.dockLayout,
     graphLayers: desktopPreferences.graphLayers ?? storedPreferences.graphLayers,
     inspectorOpen:
       desktopPreferences.inspectorOpen ?? storedPreferences.inspectorOpen,

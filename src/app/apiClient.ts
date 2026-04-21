@@ -531,6 +531,14 @@ function buildTelemetryUrl(
     url.searchParams.set('runId', query.runId)
   }
 
+  if (query.sessionId) {
+    url.searchParams.set('sessionId', query.sessionId)
+  }
+
+  if (typeof query.sinceMs === 'number' && Number.isFinite(query.sinceMs)) {
+    url.searchParams.set('sinceMs', String(Math.floor(query.sinceMs)))
+  }
+
   if (query.source) {
     url.searchParams.set('source', String(query.source))
   }

@@ -109,6 +109,13 @@
   white-space: nowrap;
 }
 
+.cbv-panel-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex: 0 0 auto;
+}
+
 .cbv-inspector-close {
   border: 1px solid var(--app-border);
   border-radius: 999px;

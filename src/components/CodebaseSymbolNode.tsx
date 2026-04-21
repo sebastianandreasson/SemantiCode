@@ -22,6 +22,9 @@ type CodebaseSymbolNodeData = Record<string, unknown> & {
   clusterExpanded?: boolean
   contained?: boolean
   compact?: boolean
+  agentFocusConfidence?: string
+  agentFocusEventCount?: number
+  agentFocusIntent?: 'read' | 'edit' | 'mixed'
 }
 
 export const CodebaseSymbolNode = memo(function CodebaseSymbolNode({
@@ -76,6 +79,8 @@ export const CodebaseSymbolNode = memo(function CodebaseSymbolNode({
         selected && 'is-selected',
         nodeData.dimmed && 'is-dimmed',
         nodeData.highlighted && 'is-compare-highlighted',
+        nodeData.agentFocusIntent && 'is-agent-focus',
+        nodeData.agentFocusIntent && `is-agent-focus-${nodeData.agentFocusIntent}`,
         (nodeData.heatWeight ?? 0) > 0 && 'has-agent-heat',
         nodeData.heatPulse && 'is-agent-heat-pulse',
       )}
@@ -93,6 +98,21 @@ export const CodebaseSymbolNode = memo(function CodebaseSymbolNode({
             {tag}
           </span>
         ))}
+        {nodeData.agentFocusIntent ? (
+          <span className={`cbv-node-tag is-agent-focus is-${nodeData.agentFocusIntent}`}>
+            {formatAgentFocusIntent(nodeData.agentFocusIntent)}
+          </span>
+        ) : null}
+        {nodeData.agentFocusConfidence ? (
+          <span className="cbv-node-tag is-agent-focus-confidence">
+            {formatAgentFocusConfidence(nodeData.agentFocusConfidence)}
+          </span>
+        ) : null}
+        {nodeData.agentFocusEventCount && nodeData.agentFocusEventCount > 1 ? (
+          <span className="cbv-node-tag is-agent-focus-count">
+            {nodeData.agentFocusEventCount} events
+          </span>
+        ) : null}
         {nodeData.loc ? (
           <span className="cbv-node-tag is-loc">
             {nodeData.loc} loc
@@ -119,6 +139,32 @@ export const CodebaseSymbolNode = memo(function CodebaseSymbolNode({
     </div>
   )
 })
+
+function formatAgentFocusIntent(intent: NonNullable<CodebaseSymbolNodeData['agentFocusIntent']>) {
+  switch (intent) {
+    case 'edit':
+      return 'edit'
+    case 'mixed':
+      return 'mixed'
+    case 'read':
+      return 'read'
+  }
+}
+
+function formatAgentFocusConfidence(confidence: string) {
+  switch (confidence) {
+    case 'exact_symbol':
+      return 'exact'
+    case 'range_overlap':
+      return 'range'
+    case 'dirty_file':
+      return 'dirty'
+    case 'file_wide':
+      return 'file'
+    default:
+      return confidence
+  }
+}
 
 function formatSymbolKindTag(kind: string) {
   switch (kind) {

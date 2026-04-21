@@ -1591,9 +1591,16 @@
   background: color-mix(in oklch, var(--app-surface) 82%, black 18%);
 }
 
-.cbv-agent-drawer:not(.is-collapsed) .cbv-agent-drawer-close {
+.cbv-agent-drawer:not(.is-collapsed) .cbv-agent-drawer-header-actions {
+  display: flex;
+  align-items: center;
   justify-self: start;
+  gap: 0.25rem;
   margin: 0.45rem 0 0.25rem 0.55rem;
+}
+
+.cbv-agent-drawer:not(.is-collapsed) .cbv-agent-drawer-close {
+  margin: 0;
 }
 
 .cbv-agent-drawer:not(.is-collapsed) .cbv-agent-drawer-tabs {

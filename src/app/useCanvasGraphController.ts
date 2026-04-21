@@ -18,6 +18,7 @@ import {
   isDirectoryNode,
   isFileNode,
   isSymbolNode,
+  type AgentTouchedSymbolRecord,
   type AgentHeatSample,
   type CodebaseSnapshot,
   type GraphLayerVisibility,
@@ -50,6 +51,7 @@ import {
   isAnnotationNodeId,
   updateLayoutPlacement,
   type FlowModel,
+  type FlowSymbolRuntimeMetadata,
 } from '../visualizer/flowModel'
 
 const FLOW_MODEL_VIEWPORT_ZOOM_BUCKETS = [
@@ -67,6 +69,7 @@ const FLOW_MODEL_VIEWPORT_ZOOM_BUCKETS = [
 ] as const
 
 export interface UseCanvasGraphControllerInput {
+  agentFocusSymbolsByNodeId: Map<string, AgentTouchedSymbolRecord>
   collapsedDirectoryIds: string[]
   compareOverlayActive: boolean
   draftLayouts: LayoutDraft[]
@@ -99,6 +102,7 @@ export interface UseCanvasGraphControllerInput {
 }
 
 export function useCanvasGraphController({
+  agentFocusSymbolsByNodeId,
   collapsedDirectoryIds,
   compareOverlayActive,
   draftLayouts,
@@ -138,6 +142,7 @@ export function useCanvasGraphController({
   }>({ key: '', nodeIds: [] })
   const containerDragPreviewPositionsRef = useRef(new Map<string, XYPosition>())
   const lastFittedCompareKeyRef = useRef<string | null>(null)
+  const lastFittedAgentFocusKeyRef = useRef<string | null>(null)
   const snapshotOrNull = snapshot ?? null
   const selectedNodeIdSet = useMemo(() => new Set(selectedNodeIds), [selectedNodeIds])
   const followRevealKey = [
@@ -262,12 +267,14 @@ export function useCanvasGraphController({
       toggleCollapsedDirectory,
       {
         selectedNodeIds: selectedNodeIdSet,
+        symbolRuntimeMetadataByNodeId: buildSymbolRuntimeMetadata(agentFocusSymbolsByNodeId),
         symbolFootprints: symbolFootprints ?? undefined,
         viewportZoom: modelViewportZoom,
       },
     )
   }, [
     collapsedDirectoryIdSet,
+    agentFocusSymbolsByNodeId,
     expandedClusterIds,
     expandedClusterLayouts,
     filesystemContainerLayouts,
@@ -656,6 +663,46 @@ export function useCanvasGraphController({
     resolvedCompareOverlay,
   ])
 
+  useEffect(() => {
+    if (resolvedScene?.kind !== 'agent_focus_semantic' || !flowInstance) {
+      lastFittedAgentFocusKeyRef.current = null
+      return
+    }
+
+    const focusedNodeIds = [...agentFocusSymbolsByNodeId.keys()].sort()
+    const focusKey = [
+      resolvedScene.layoutSpec.id,
+      resolvedScene.layoutSpec.updatedAt ?? 'runtime',
+      focusedNodeIds.join(','),
+    ].join('::')
+
+    if (lastFittedAgentFocusKeyRef.current === focusKey || focusedNodeIds.length === 0) {
+      return
+    }
+
+    const focusedNodeIdSet = new Set(focusedNodeIds)
+    const nodesToFit = nodes.filter((node) => focusedNodeIdSet.has(node.id))
+
+    if (nodesToFit.length === 0) {
+      return
+    }
+
+    lastFittedAgentFocusKeyRef.current = focusKey
+    window.setTimeout(() => {
+      void flowInstance.fitView({
+        duration: 280,
+        maxZoom: 2.6,
+        nodes: nodesToFit,
+        padding: 0.22,
+      })
+    }, 0)
+  }, [
+    agentFocusSymbolsByNodeId,
+    flowInstance,
+    nodes,
+    resolvedScene,
+  ])
+
   const handleCanvasMoveEnd = useCallback(
     (_event: MouseEvent | TouchEvent | null, flowViewport: { x: number; y: number; zoom: number }) => {
       setViewport(flowViewport)
@@ -836,6 +883,25 @@ function waitForFollowFocusDelay(durationMs: number) {
   return new Promise<void>((resolve) => {
     window.setTimeout(resolve, durationMs)
   })
+}
+
+function buildSymbolRuntimeMetadata(
+  recordsByNodeId: Map<string, AgentTouchedSymbolRecord>,
+): Map<string, FlowSymbolRuntimeMetadata> {
+  if (recordsByNodeId.size === 0) {
+    return new Map()
+  }
+
+  return new Map(
+    [...recordsByNodeId.entries()].map(([nodeId, record]) => [
+      nodeId,
+      {
+        agentFocusConfidence: record.confidence,
+        agentFocusEventCount: record.eventCount,
+        agentFocusIntent: record.intent,
+      },
+    ]),
+  )
 }
 
 function getCollapsedFilesystemAncestorIds(

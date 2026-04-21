@@ -82,6 +82,12 @@ export type {
 export type {
   GraphLayerKey,
   GraphLayerVisibility,
+  DockLayoutPreference,
+  DockPanelId,
+  DockPanelState,
+  DockSlot,
+  DockSlotSize,
+  DockSlotState,
   UiPreferences,
   VisualizerStore,
   VisualizerStoreActions,
@@ -210,6 +216,11 @@ export type {
   TelemetryWindow,
 } from './schema/telemetry'
 export type {
+  AgentFocusConfidence,
+  AgentFocusIntent,
+  AgentFocusSemanticLayoutResult,
+  AgentTouchedSymbolRecord,
+  AgentUnresolvedTouch,
   DirtyFileEditSignal,
   FollowCameraCommand,
   FollowControllerAction,

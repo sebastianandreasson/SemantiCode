@@ -9,19 +9,31 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from 'react'
 
 import {
   isSymbolNode,
+  type AgentFileOperation,
+  type DockPanelId,
+  type AgentSessionSummary,
   type CodebaseSnapshot,
+  type DirtyFileEditSignal,
   type PreprocessedWorkspaceContext,
   type PreprocessingStatus,
+  type TelemetryActivityEvent,
+  type TelemetryWindow,
   type WorkspaceProfile,
   type WorkspaceArtifactSyncStatus,
 } from '../types'
 import { useVisualizerStore } from '../store/visualizerStore'
-import { AgentDrawer } from './agent/AgentDrawer'
+import {
+  AgentCollapsedLauncher,
+  AgentPanelContent,
+  type AgentPromptSeed,
+} from './agent/AgentDrawer'
 import { CanvasViewport } from './canvas/CanvasViewport'
+import { DockWorkspace } from './dock/DockWorkspace'
 import { SemanticodeErrorBoundary } from './SemanticodeErrorBoundary'
 import { WorkspaceSidebar } from './shell/WorkspaceSidebar'
 import { WorkspaceSyncModal } from './shell/WorkspaceSyncModal'
@@ -35,7 +47,12 @@ import {
   getPreprocessingProgressPercent,
   hasWorkspaceSyncUpdates,
 } from './shell/workspaceStatusFormat'
-import { useAgentFollowController, useFollowAgentExecutors } from '../app/follow'
+import {
+  buildAgentFocusSemanticLayout,
+  type AgentTouchedSymbolRecord,
+  useAgentFollowController,
+  useFollowAgentExecutors,
+} from '../app/follow'
 import { useAgentFileOperations } from '../app/useAgentFileOperations'
 import {
   buildAgentDebugFeedEntries,
@@ -65,6 +82,14 @@ const LazyGeneralSettingsPanel = lazy(async () => {
   const module = await import('./settings/GeneralSettingsPanel')
   return { default: module.GeneralSettingsPanel }
 })
+
+const EMPTY_AGENT_FILE_OPERATIONS: AgentFileOperation[] = []
+const EMPTY_AGENT_FOCUS_SYMBOLS = new Map<string, AgentTouchedSymbolRecord>()
+
+interface ActiveChatSessionWindow {
+  sessionId: string | null
+  startedAtMs: number | null
+}
 
 interface SemanticodeProps {
   snapshot?: CodebaseSnapshot | null
@@ -103,6 +128,8 @@ export function Semanticode({
 }: SemanticodeProps) {
   const [draftActionError, setDraftActionError] = useState<string | null>(null)
   const [layoutSuggestionText, setLayoutSuggestionText] = useState('')
+  const [agentPromptSeed, setAgentPromptSeed] = useState<AgentPromptSeed | null>(null)
+  const [agentFocusFallbackObservedAtMs] = useState(() => Date.now())
   const [followActiveAgent, setFollowActiveAgent] = useState(false)
   const [followDebugOpen, setFollowDebugOpen] = useState(false)
   const currentSnapshot = useVisualizerStore((state) => state.snapshot)
@@ -168,11 +195,16 @@ export function Semanticode({
     agentDrawerOpen,
     agentDrawerTab,
     canManageProjects,
+    dockLayout,
+    dockPreview,
+    dockWorkspaceRef,
+    dockWorkspaceStyle,
     handleFocusAgentDrawerComposer,
     handleOpenAnotherWorkspace,
     handleOpenRecentProject,
     handleRemoveRecentProject,
-    handleResizePointerDown,
+    handlePanelMovePointerDown,
+    handleSlotHandlePointerDown,
     inspectorOpen,
     isDesktopHost,
     projectsSidebarOpen,
@@ -182,6 +214,7 @@ export function Semanticode({
     setInspectorOpen,
     setProjectsSidebarOpen,
     setSettingsOpen,
+    setSlotActivePanel,
     setThemeMode,
     setWorkspaceSyncOpen,
     setWorkspaceStateByRootDir,
@@ -191,9 +224,7 @@ export function Semanticode({
     uiPreferencesHydrated,
     workspaceActionError,
     workspaceActionPending,
-    workspaceRef,
     workspaceStateByRootDir,
-    workspaceStyle,
     workspaceSyncOpen,
     workspaceViewReady,
     workspaceViewResolvedRootDir,
@@ -224,6 +255,39 @@ export function Semanticode({
     rootDir: effectiveSnapshot?.rootDir,
     runsSurfaceOpen,
   })
+  const [activeChatSessionWindow, setActiveChatSessionWindow] =
+    useState<ActiveChatSessionWindow>({
+      sessionId: null,
+      startedAtMs: null,
+    })
+  const handleActiveChatSessionChange = useCallback((session: AgentSessionSummary | null) => {
+    setActiveChatSessionWindow((currentWindow) => {
+      if (!session) {
+        return currentWindow.sessionId === null
+          ? currentWindow
+          : {
+              sessionId: null,
+              startedAtMs: null,
+            }
+      }
+
+      const startedAtMs = getAgentSessionStartedAtMs(session)
+
+      return currentWindow.sessionId === session.id &&
+        currentWindow.startedAtMs === startedAtMs
+        ? currentWindow
+        : {
+            sessionId: session.id,
+            startedAtMs,
+          }
+    })
+  }, [])
+  const handleChatSessionCleared = useCallback((session: AgentSessionSummary | null) => {
+    setActiveChatSessionWindow({
+      sessionId: session?.id ?? null,
+      startedAtMs: session ? Date.now() : null,
+    })
+  }, [])
   const {
     activateRunTelemetry,
     enableTelemetry,
@@ -242,6 +306,8 @@ export function Semanticode({
     telemetrySource,
     telemetryWindow,
   } = useTelemetryController({
+    activeChatSessionId: activeChatSessionWindow.sessionId,
+    activeChatWindowStartMs: activeChatSessionWindow.startedAtMs,
     followActiveAgent,
     hasRunningAutonomousRun,
     rootDir: effectiveSnapshot?.rootDir,
@@ -253,17 +319,125 @@ export function Semanticode({
     enabled: followActiveAgent,
   })
   const liveAgentEventFeedEntries = useAgentEventFeed()
-  const followFileOperations = useMemo(() => {
+  const allFollowFileOperations = useMemo(() => {
     const autonomousFileOperations =
       selectedRunDetail?.runId === activeRunId
         ? selectedRunDetail.fileOperations
-        : []
+        : EMPTY_AGENT_FILE_OPERATIONS
+
+    if (agentFileOperations.length === 0) {
+      return autonomousFileOperations.length === 0
+        ? EMPTY_AGENT_FILE_OPERATIONS
+        : autonomousFileOperations
+    }
+
+    if (autonomousFileOperations.length === 0) {
+      return agentFileOperations
+    }
 
     return [
       ...agentFileOperations,
       ...autonomousFileOperations,
     ]
-  }, [activeRunId, agentFileOperations, selectedRunDetail])
+  }, [
+    activeRunId,
+    agentFileOperations,
+    selectedRunDetail?.fileOperations,
+    selectedRunDetail?.runId,
+  ])
+  const followFileOperations = useMemo(
+    () =>
+      filterAgentFileOperationsForTelemetryWindow({
+        activeSessionId: activeChatSessionWindow.sessionId,
+        operations: allFollowFileOperations,
+        sessionStartMs: activeChatSessionWindow.startedAtMs,
+        telemetryWindow,
+      }),
+    [
+      activeChatSessionWindow.sessionId,
+      activeChatSessionWindow.startedAtMs,
+      allFollowFileOperations,
+      telemetryWindow,
+    ],
+  )
+  const sessionTouchedPathSet = useMemo(
+    () =>
+      buildSessionTouchedPathSet({
+        fileOperations: followFileOperations,
+        telemetryActivityEvents,
+        telemetryWindow,
+      }),
+    [
+      followFileOperations,
+      telemetryActivityEvents,
+      telemetryWindow,
+    ],
+  )
+  const scopedLiveChangedFiles = useMemo(
+    () =>
+      sessionTouchedPathSet
+        ? liveChangedFiles.filter((path) => sessionTouchedPathSet.has(path))
+        : liveChangedFiles,
+    [liveChangedFiles, sessionTouchedPathSet],
+  )
+  const scopedFollowDirtyFileSignals = useMemo(
+    () =>
+      filterDirtyFileSignalsForTelemetryWindow({
+        dirtyFileEditSignals: followDirtyFileSignals,
+        sessionStartMs: activeChatSessionWindow.startedAtMs,
+        sessionTouchedPathSet,
+        telemetryWindow,
+      }),
+    [
+      activeChatSessionWindow.startedAtMs,
+      followDirtyFileSignals,
+      sessionTouchedPathSet,
+      telemetryWindow,
+    ],
+  )
+  const semanticLayoutForAgentFocus = useMemo(
+    () => layouts.find((layout) => layout.strategy === 'semantic') ?? null,
+    [layouts],
+  )
+  const agentFocusSemanticResult = useMemo(
+    () =>
+      buildAgentFocusSemanticLayout({
+        dirtyFileEditSignals: scopedFollowDirtyFileSignals,
+        fileOperations: followFileOperations,
+        liveChangedFiles: scopedLiveChangedFiles,
+        observedAtMs: telemetryObservedAt || agentFocusFallbackObservedAtMs,
+        semanticLayout: semanticLayoutForAgentFocus,
+        snapshot: effectiveSnapshot ?? null,
+        telemetryActivityEvents,
+        telemetryWindow,
+      }),
+    [
+      effectiveSnapshot,
+      agentFocusFallbackObservedAtMs,
+      followFileOperations,
+      scopedFollowDirtyFileSignals,
+      scopedLiveChangedFiles,
+      semanticLayoutForAgentFocus,
+      telemetryActivityEvents,
+      telemetryObservedAt,
+      telemetryWindow,
+    ],
+  )
+  const agentFocusSymbolsByNodeId = useMemo(
+    () => {
+      if (!agentFocusSemanticResult?.touchedSymbols.length) {
+        return EMPTY_AGENT_FOCUS_SYMBOLS
+      }
+
+      return new Map(
+        agentFocusSemanticResult.touchedSymbols.map((record) => [
+          record.symbolId,
+          record,
+        ]),
+      )
+    },
+    [agentFocusSemanticResult],
+  )
 
   useEffect(() => {
     if (snapshot === undefined) {
@@ -295,6 +469,7 @@ export function Semanticode({
   } = useWorkspaceLayoutController({
     activeDraftId,
     activeLayoutId,
+    agentFocusLayout: agentFocusSemanticResult?.layout ?? null,
     baseScene,
     clearCompareOverlay,
     compareOverlay,
@@ -419,6 +594,7 @@ export function Semanticode({
     onNodesChange,
     setFlowInstance,
   } = useCanvasGraphController({
+    agentFocusSymbolsByNodeId,
     collapsedDirectoryIds,
     compareOverlayActive,
     draftLayouts,
@@ -459,10 +635,10 @@ export function Semanticode({
     acknowledgeRefreshCommand,
     setRefreshStatus,
   } = useAgentFollowController({
-    dirtyFileEditSignals: followDirtyFileSignals,
+    dirtyFileEditSignals: scopedFollowDirtyFileSignals,
     enabled: followActiveAgent,
     fileOperations: followFileOperations,
-    liveChangedFiles,
+    liveChangedFiles: scopedLiveChangedFiles,
     snapshot: effectiveSnapshot,
     telemetryActivityEvents,
     telemetryEnabled,
@@ -533,14 +709,24 @@ export function Semanticode({
       return telemetryError
     }
 
+    if (telemetryWindow === 'session' && !activeChatSessionWindow.sessionId) {
+      return 'Open the chat pane to bind agent heat to the active chat.'
+    }
+
     if (!telemetryOverview) {
       return 'Loading agent activity…'
     }
 
     if (telemetryOverview.requestCount === 0) {
-      return telemetryWindow === 'run'
-        ? 'No agent activity recorded for this run yet.'
-        : 'No agent activity recorded in this window.'
+      if (telemetryWindow === 'run') {
+        return 'No agent activity recorded for this run yet.'
+      }
+
+      if (telemetryWindow === 'session') {
+        return 'No agent activity recorded for this chat yet.'
+      }
+
+      return 'No agent activity recorded in this window.'
     }
 
     const tokenText = `${Math.round(telemetryOverview.totalTokens)} tokens`
@@ -551,7 +737,13 @@ export function Semanticode({
         : ''
 
     return `${requestText} · ${tokenText}${runText}`
-  }, [telemetryEnabled, telemetryError, telemetryOverview, telemetryWindow])
+  }, [
+    activeChatSessionWindow.sessionId,
+    telemetryEnabled,
+    telemetryError,
+    telemetryOverview,
+    telemetryWindow,
+  ])
   const agentHeatSummaryText = useMemo(() => {
     if (!telemetryEnabled) {
       return 'heat off'
@@ -561,12 +753,24 @@ export function Semanticode({
       return 'telemetry error'
     }
 
+    if (telemetryWindow === 'session' && !activeChatSessionWindow.sessionId) {
+      return 'no chat'
+    }
+
     if (!telemetryOverview) {
       return 'loading activity'
     }
 
     if (telemetryOverview.requestCount === 0) {
-      return telemetryWindow === 'run' ? '0 req · run' : '0 req'
+      if (telemetryWindow === 'run') {
+        return '0 req · run'
+      }
+
+      if (telemetryWindow === 'session') {
+        return '0 req · chat'
+      }
+
+      return '0 req'
     }
 
     const requestText = `${telemetryOverview.requestCount} req`
@@ -577,7 +781,74 @@ export function Semanticode({
         : ''
 
     return `${requestText} · ${tokenText}${runText}`
-  }, [telemetryEnabled, telemetryError, telemetryOverview, telemetryWindow])
+  }, [
+    activeChatSessionWindow.sessionId,
+    telemetryEnabled,
+    telemetryError,
+    telemetryOverview,
+    telemetryWindow,
+  ])
+  const agentFocusActive = resolvedScene?.kind === 'agent_focus_semantic'
+  const agentFocusSummaryText = useMemo(() => {
+    if (!agentFocusActive) {
+      return ''
+    }
+
+    if (!semanticLayoutForAgentFocus) {
+      return 'Loading semantic layout'
+    }
+
+    if (!agentFocusSemanticResult || agentFocusSemanticResult.summary.symbolCount === 0) {
+      return agentFocusSemanticResult?.summary.unresolvedCount
+        ? `0 symbols · ${agentFocusSemanticResult.summary.unresolvedCount} unresolved`
+        : '0 symbols in window'
+    }
+
+    const { editCount, fileCount, readCount, symbolCount, unresolvedCount } =
+      agentFocusSemanticResult.summary
+    const editText = editCount > 0 ? ` · ${editCount} edit${editCount === 1 ? '' : 's'}` : ''
+    const readText = readCount > 0 ? ` · ${readCount} read${readCount === 1 ? '' : 's'}` : ''
+    const unresolvedText =
+      unresolvedCount > 0
+        ? ` · ${unresolvedCount} unresolved`
+        : ''
+
+    return `${symbolCount} symbol${symbolCount === 1 ? '' : 's'} · ${fileCount} file${fileCount === 1 ? '' : 's'}${editText}${readText}${unresolvedText}`
+  }, [
+    agentFocusActive,
+    agentFocusSemanticResult,
+    semanticLayoutForAgentFocus,
+  ])
+  const agentFocusEmptyText = useMemo(() => {
+    if (!agentFocusActive) {
+      return ''
+    }
+
+    if (!semanticLayoutForAgentFocus) {
+      return 'Semantic symbol positions are loading.'
+    }
+
+    if (!telemetryEnabled) {
+      return 'Agent heat is off. Select a window or enable follow to load agent activity.'
+    }
+
+    if (telemetryWindow === 'session' && !activeChatSessionWindow.sessionId) {
+      return 'Open the chat pane to bind this layout to the active chat.'
+    }
+
+    if (agentFocusSemanticResult?.summary.unresolvedCount) {
+      return 'Agent activity was found, but it did not resolve to visible semantic symbols.'
+    }
+
+    return 'No agent-touched symbols were found in the active window.'
+  }, [
+    agentFocusActive,
+    activeChatSessionWindow.sessionId,
+    agentFocusSemanticResult,
+    semanticLayoutForAgentFocus,
+    telemetryEnabled,
+    telemetryWindow,
+  ])
   const agentHeatFollowText = useMemo(() => {
     if (!followActiveAgent) {
       return 'Follow active agent off.'
@@ -602,6 +873,22 @@ export function Semanticode({
     selectedFile?.path ??
     workingSetSummary?.label ??
     workspaceName
+  const activeAgentRun = useMemo(
+    () => autonomousRuns.find((run) => run.runId === activeRunId) ?? null,
+    [activeRunId, autonomousRuns],
+  )
+  const handleOpenAgentLauncher = useCallback(() => {
+    setAgentDrawerTab('chat')
+    setAgentDrawerOpen(true)
+  }, [setAgentDrawerOpen, setAgentDrawerTab])
+  const handleAgentPromptSeed = useCallback((value: string) => {
+    setAgentDrawerTab('chat')
+    setAgentDrawerOpen(true)
+    setAgentPromptSeed({
+      id: `${Date.now()}:${Math.random().toString(36).slice(2)}`,
+      value,
+    })
+  }, [setAgentDrawerOpen, setAgentDrawerTab])
 
   const handleToggleFollowDebug = useCallback(() => {
     setFollowDebugOpen((current) => !current)
@@ -618,16 +905,16 @@ export function Semanticode({
     () =>
       buildAgentDebugFeedEntries({
         agentEvents: liveAgentEventFeedEntries,
-        dirtyFileEditSignals: followDirtyFileSignals,
+        dirtyFileEditSignals: scopedFollowDirtyFileSignals,
         fileOperations: followFileOperations,
         followDebugState,
         telemetryActivityEvents,
       }),
     [
       followDebugState,
-      followDirtyFileSignals,
       followFileOperations,
       liveAgentEventFeedEntries,
+      scopedFollowDirtyFileSignals,
       telemetryActivityEvents,
     ],
   )
@@ -710,6 +997,13 @@ export function Semanticode({
 
     void onSuggestLayout(layoutSuggestionText)
   }, [layoutSuggestionPending, layoutSuggestionText, onSuggestLayout])
+  const handleWorkspaceLayoutSelectionChange = useCallback((value: string) => {
+    if (value === 'scene:agent-focus-semantic') {
+      enableTelemetry()
+    }
+
+    handleLayoutSelectionChange(value)
+  }, [enableTelemetry, handleLayoutSelectionChange])
 
   const handleSelectSidebarSymbol = useCallback((nodeId: string) => {
     if (!effectiveSnapshot) {
@@ -748,6 +1042,141 @@ export function Semanticode({
     return <section className="demo-status">Loading workspace view...</section>
   }
 
+  const renderSnapshot = effectiveSnapshot
+
+  function renderDockPanel(
+    panelId: DockPanelId,
+    active = true,
+    dockMoveHandle: ReactNode = null,
+  ) {
+    if (panelId === 'outline') {
+      return (
+        <WorkspaceSidebar
+          canManageProjects={canManageProjects}
+          currentRootDir={renderSnapshot.rootDir}
+          groups={workspaceSidebarGroups}
+          onClose={() => setProjectsSidebarOpen(false)}
+          onOpenRecentProject={(rootDir) => {
+            void handleOpenRecentProject(rootDir)
+          }}
+          onRemoveRecentProject={(rootDir) => {
+            void handleRemoveRecentProject(rootDir)
+          }}
+          onOpenWorkspace={() => {
+            void handleOpenAnotherWorkspace()
+          }}
+          onSelectSymbol={handleSelectSidebarSymbol}
+          open={projectsSidebarOpen}
+          recentProjects={recentProjects}
+          selectedNodeId={selectedNodeId}
+          dockMoveHandle={dockMoveHandle}
+          workspaceActionError={workspaceActionError}
+          workspaceActionPending={workspaceActionPending}
+        />
+      )
+    }
+
+    if (panelId === 'inspector') {
+      return (
+        <Suspense fallback={<InspectorFallback dockMoveHandle={dockMoveHandle} header={inspectorHeader} onClose={() => setInspectorOpen(false)} />}>
+          <LazyInspectorPane
+            activeDraft={activeDraft}
+            agentEventFeedEntries={agentEventFeedEntries}
+            compareOverlayActive={compareOverlayActive}
+            draftActionError={draftActionError}
+            detectedPlugins={renderSnapshot.detectedPlugins ?? []}
+            dockMoveHandle={dockMoveHandle}
+            facetDefinitions={renderSnapshot.facetDefinitions ?? []}
+            followDebugState={followDebugState}
+            followedInspectorActivity={followedInspectorActivity}
+            graphSummary={graphSummary}
+            header={inspectorHeader}
+            inspectorBodyRef={inspectorBodyRef}
+            inspectorTab={inspectorTab}
+            onAdoptInspectorContextAsWorkingSet={adoptSelectionAsWorkingSet}
+            onAcceptDraft={onAcceptDraft ? handleAcceptActiveDraft : undefined}
+            onClearCompareOverlay={handleClearCompareOverlay}
+            onClearWorkingSet={clearWorkingSet}
+            onClose={() => setInspectorOpen(false)}
+            onOpenAgentDrawer={handleFocusAgentDrawerComposer}
+            onOpenAgentSettings={() => setSettingsOpen(true)}
+            onRejectDraft={onRejectDraft ? handleRejectActiveDraft : undefined}
+            onSetInspectorTab={setInspectorTab}
+            layoutActionsPending={layoutActionsPending}
+            layoutSyncNote={activeLayoutSyncNote}
+            preprocessedWorkspaceContext={preprocessedWorkspaceContext}
+            resolvedCompareOverlay={resolvedCompareOverlay}
+            selectedEdge={selectedEdge}
+            selectedFile={selectedFile}
+            selectedFiles={selectedFiles}
+            selectedLayoutGroup={selectedLayoutGroup}
+            selectedLayoutGroupNearbySymbols={selectedGroupNearbySymbols}
+            selectedLayoutGroupPrototype={selectedGroupPrototype}
+            selectedNodeTelemetry={selectedNodeTelemetry}
+            selectedNode={selectedNode}
+            selectedSymbol={selectedSymbol}
+            selectedSymbols={selectedSymbols}
+            scrollToDiffRequestKey={followedEditDiffRequestKey}
+            themeMode={themeMode}
+            workingSet={workingSet.nodeIds.length > 0 ? workingSet : null}
+            workingSetContext={workingSetContext}
+            workspaceProfile={workspaceProfile}
+          />
+        </Suspense>
+      )
+    }
+
+    return (
+      <AgentPanelContent
+        activeRunId={activeRunId}
+        activeTab={agentDrawerTab}
+        autonomousRuns={autonomousRuns}
+        autoFocusComposer={active}
+        composerFocusRequestKey={agentComposerFocusRequestKey}
+        desktopHostAvailable={isDesktopHost}
+        detectedTaskFile={detectedTaskFile}
+        dockMoveHandle={dockMoveHandle}
+        errorMessage={runActionError}
+        inspectorContext={{
+          file: selectedFile,
+          files: selectedFiles,
+          node: selectedNode,
+          symbol: selectedSymbol,
+          symbols: selectedSymbols,
+        }}
+        layoutDraftError={layoutSuggestionError}
+        layoutDraftPending={layoutSuggestionPending}
+        layoutDraftPrompt={layoutSuggestionText}
+        onAdoptInspectorContextAsWorkingSet={adoptSelectionAsWorkingSet}
+        onActiveSessionChange={handleActiveChatSessionChange}
+        onChangeTab={setAgentDrawerTab}
+        onChatSessionCleared={handleChatSessionCleared}
+        onClearWorkingSet={clearWorkingSet}
+        onClose={() => setAgentDrawerOpen(false)}
+        onLayoutDraftPromptChange={handleLayoutSuggestionChange}
+        onLayoutDraftSubmit={handleLayoutSuggestionSubmit}
+        onOpenSettings={() => setSettingsOpen(true)}
+        onRunSettled={onAgentRunSettled}
+        onSelectRun={handleSelectRun}
+        onStartRun={() => {
+          void handleStartAutonomousRun()
+        }}
+        onStopRun={(runId) => {
+          void handleStopAutonomousRun(runId)
+        }}
+        pendingRunAction={runActionPending}
+        preprocessedWorkspaceContext={preprocessedWorkspaceContext}
+        promptSeed={agentPromptSeed}
+        selectedRunDetail={selectedRunDetail}
+        selectedRunId={selectedRunId}
+        timeline={selectedRunTimeline}
+        workingSet={workingSet.nodeIds.length > 0 ? workingSet : null}
+        workingSetContext={workingSetContext}
+        workspaceProfile={workspaceProfile}
+      />
+    )
+  }
+
   return (
     <SemanticodeErrorBoundary
       resetKey={[
@@ -768,7 +1197,7 @@ export function Semanticode({
             onOpenWorkspaceSync={
               workspaceSyncStatus ? () => setWorkspaceSyncOpen(true) : undefined
             }
-            onSelectLayoutValue={handleLayoutSelectionChange}
+            onSelectLayoutValue={handleWorkspaceLayoutSelectionChange}
             onToggleProjectsSidebar={
               () => setProjectsSidebarOpen((current) => !current)
             }
@@ -780,193 +1209,87 @@ export function Semanticode({
             workspaceRootDir={effectiveSnapshot.rootDir}
           />
           <div className="cbv-main-layout">
-            <WorkspaceSidebar
-              canManageProjects={canManageProjects}
-              currentRootDir={effectiveSnapshot.rootDir}
-              groups={workspaceSidebarGroups}
-              onClose={() => setProjectsSidebarOpen(false)}
-              onOpenRecentProject={(rootDir) => {
-                void handleOpenRecentProject(rootDir)
-              }}
-              onRemoveRecentProject={(rootDir) => {
-                void handleRemoveRecentProject(rootDir)
-              }}
-              onOpenWorkspace={() => {
-                void handleOpenAnotherWorkspace()
-              }}
-              onSelectSymbol={handleSelectSidebarSymbol}
-              open={projectsSidebarOpen}
-              recentProjects={recentProjects}
-              selectedNodeId={selectedNodeId}
-              workspaceActionError={workspaceActionError}
-              workspaceActionPending={workspaceActionPending}
-            />
-
-            <div
-              className={`cbv-workspace${inspectorOpen ? '' : ' is-inspector-closed'}`}
-              ref={workspaceRef}
-              style={workspaceStyle}
-            >
-              <CanvasViewport
-                  agentHeatHelperText={agentHeatHelperText}
-                  agentHeatFollowEnabled={followActiveAgent}
-                  agentHeatFollowText={agentHeatFollowText}
-                  agentHeatDebugOpen={followDebugOpen}
-                  agentHeatDebugState={followDebugState}
-                  agentHeatMode={telemetryMode}
-                  agentHeatSource={telemetrySource}
-                  agentHeatWindow={telemetryWindow}
-                  compareOverlayActive={compareOverlayActive}
-                  compareSourceTitle={currentCompareSource?.title ?? null}
-                  denseCanvasMode={denseCanvasMode}
-                  edges={edges}
-                  graphLayers={graphLayers}
-                  nodes={nodes}
-                  onEdgeClick={handleCanvasEdgeClick}
-                  onEdgesChange={onEdgesChange}
-                  onInit={setFlowInstance}
-                  onAgentHeatModeChange={handleTelemetryModeChange}
-                  onOpenAgentEventFeed={handleOpenAgentEventFeed}
-                  onAgentHeatSourceChange={handleTelemetrySourceChange}
-                  onToggleAgentHeatDebug={handleToggleFollowDebug}
-                  onToggleAgentHeatFollow={handleToggleFollowActiveAgent}
-                  onAgentHeatWindowChange={handleTelemetryWindowChange}
-                  onActivateCompareOverlay={
-                    currentCompareSource ? handleActivateCompareOverlay : undefined
-                  }
-                  onClearCompareOverlay={compareOverlayActive ? handleClearCompareOverlay : undefined}
-                  onMoveEnd={handleCanvasMoveEnd}
-                  onNodeClick={handleCanvasNodeClick}
-                  onNodeDoubleClick={handleCanvasNodeDoubleClick}
-                  onNodeDrag={handleCanvasNodeDrag}
-                  onNodeDragStop={handleCanvasNodeDragStop}
-                  onNodesChange={onNodesChange}
-                  onSemanticSearchChange={setSemanticSearchQuery}
-                  onSemanticSearchClear={clearSemanticSearch}
-                  onSemanticSearchLimitChange={setSemanticSearchMatchLimit}
-                  onSemanticSearchModeChange={handleSemanticSearchModeChange}
-                  onSemanticSearchStrictnessChange={setSemanticSearchStrictness}
-                  onToggleLayer={toggleGraphLayer}
-                  semanticSearchAvailable={semanticSearchAvailable}
-                  semanticSearchGroupSearchAvailable={semanticGroupSearchAvailable}
-                  semanticSearchHelperText={semanticSearchStatus.helper}
-                  semanticSearchLimit={semanticSearchMatchLimit}
-                  semanticSearchMode={semanticSearchMode}
-                  semanticSearchPending={semanticSearchPending}
-                  semanticSearchQuery={semanticSearchQuery}
-                  semanticSearchStrictness={semanticSearchStrictness}
-                  semanticSearchResultCount={semanticSearchStatus.resultCount}
-                  showCompareAction={Boolean(currentCompareSource)}
-                  showSemanticSearch={viewMode === 'symbols' && semanticSearchAvailable}
-                  themeMode={themeMode}
-                  utilitySummaryText={agentHeatSummaryText}
-                  viewMode={viewMode}
+            <DockWorkspace
+              center={
+                <CanvasViewport
+                agentFocusActive={agentFocusActive}
+                agentFocusEmptyText={agentFocusEmptyText}
+                agentFocusSummaryText={agentFocusSummaryText}
+                agentHeatHelperText={agentHeatHelperText}
+                agentHeatFollowEnabled={followActiveAgent}
+                agentHeatFollowText={agentHeatFollowText}
+                agentHeatDebugOpen={followDebugOpen}
+                agentHeatDebugState={followDebugState}
+                agentHeatMode={telemetryMode}
+                agentHeatSource={telemetrySource}
+                agentHeatWindow={telemetryWindow}
+                compareOverlayActive={compareOverlayActive}
+                compareSourceTitle={currentCompareSource?.title ?? null}
+                denseCanvasMode={denseCanvasMode}
+                edges={edges}
+                graphLayers={graphLayers}
+                nodes={nodes}
+                onEdgeClick={handleCanvasEdgeClick}
+                onEdgesChange={onEdgesChange}
+                onInit={setFlowInstance}
+                onAgentHeatModeChange={handleTelemetryModeChange}
+                onOpenAgentEventFeed={handleOpenAgentEventFeed}
+                onAgentHeatSourceChange={handleTelemetrySourceChange}
+                onToggleAgentHeatDebug={handleToggleFollowDebug}
+                onToggleAgentHeatFollow={handleToggleFollowActiveAgent}
+                onAgentHeatWindowChange={handleTelemetryWindowChange}
+                onActivateCompareOverlay={
+                  currentCompareSource ? handleActivateCompareOverlay : undefined
+                }
+                onClearCompareOverlay={compareOverlayActive ? handleClearCompareOverlay : undefined}
+                onMoveEnd={handleCanvasMoveEnd}
+                onNodeClick={handleCanvasNodeClick}
+                onNodeDoubleClick={handleCanvasNodeDoubleClick}
+                onNodeDrag={handleCanvasNodeDrag}
+                onNodeDragStop={handleCanvasNodeDragStop}
+                onNodesChange={onNodesChange}
+                onSemanticSearchChange={setSemanticSearchQuery}
+                onSemanticSearchClear={clearSemanticSearch}
+                onSemanticSearchLimitChange={setSemanticSearchMatchLimit}
+                onSemanticSearchModeChange={handleSemanticSearchModeChange}
+                onSemanticSearchStrictnessChange={setSemanticSearchStrictness}
+                onToggleLayer={toggleGraphLayer}
+                semanticSearchAvailable={semanticSearchAvailable}
+                semanticSearchGroupSearchAvailable={semanticGroupSearchAvailable}
+                semanticSearchHelperText={semanticSearchStatus.helper}
+                semanticSearchLimit={semanticSearchMatchLimit}
+                semanticSearchMode={semanticSearchMode}
+                semanticSearchPending={semanticSearchPending}
+                semanticSearchQuery={semanticSearchQuery}
+                semanticSearchStrictness={semanticSearchStrictness}
+                semanticSearchResultCount={semanticSearchStatus.resultCount}
+                showCompareAction={Boolean(currentCompareSource)}
+                showSemanticSearch={viewMode === 'symbols' && semanticSearchAvailable}
+                themeMode={themeMode}
+                utilitySummaryText={agentFocusActive ? agentFocusSummaryText : agentHeatSummaryText}
+                viewMode={viewMode}
                   viewport={viewport}
                   visibleLayerToggles={visibleLayerToggles}
                 />
-              {inspectorOpen ? (
-                <button
-                  aria-label="Resize canvas and inspector"
-                  className="cbv-workspace-resize-handle"
-                  onPointerDown={handleResizePointerDown}
-                  type="button"
-                >
-                  <span />
-                </button>
-              ) : null}
-
-              {inspectorOpen ? (
-                <Suspense fallback={<InspectorFallback header={inspectorHeader} onClose={() => setInspectorOpen(false)} />}>
-                  <LazyInspectorPane
-                    activeDraft={activeDraft}
-                    agentEventFeedEntries={agentEventFeedEntries}
-                    compareOverlayActive={compareOverlayActive}
-                    draftActionError={draftActionError}
-                    detectedPlugins={effectiveSnapshot?.detectedPlugins ?? []}
-                    facetDefinitions={effectiveSnapshot?.facetDefinitions ?? []}
-                    followDebugState={followDebugState}
-                    followedInspectorActivity={followedInspectorActivity}
-                    graphSummary={graphSummary}
-                    header={inspectorHeader}
-                    inspectorBodyRef={inspectorBodyRef}
-                    inspectorTab={inspectorTab}
-                    onAdoptInspectorContextAsWorkingSet={adoptSelectionAsWorkingSet}
-                    onAcceptDraft={onAcceptDraft ? handleAcceptActiveDraft : undefined}
-                    onClearCompareOverlay={handleClearCompareOverlay}
-                    onClearWorkingSet={clearWorkingSet}
-                    onClose={() => setInspectorOpen(false)}
-                    onOpenAgentDrawer={handleFocusAgentDrawerComposer}
-                    onOpenAgentSettings={() => setSettingsOpen(true)}
-                    onRejectDraft={onRejectDraft ? handleRejectActiveDraft : undefined}
-                    onSetInspectorTab={setInspectorTab}
-                    layoutActionsPending={layoutActionsPending}
-                    layoutSyncNote={activeLayoutSyncNote}
-                    preprocessedWorkspaceContext={preprocessedWorkspaceContext}
-                    resolvedCompareOverlay={resolvedCompareOverlay}
-                    selectedEdge={selectedEdge}
-                    selectedFile={selectedFile}
-                    selectedFiles={selectedFiles}
-                    selectedLayoutGroup={selectedLayoutGroup}
-                    selectedLayoutGroupNearbySymbols={selectedGroupNearbySymbols}
-                    selectedLayoutGroupPrototype={selectedGroupPrototype}
-                    selectedNodeTelemetry={selectedNodeTelemetry}
-                    selectedNode={selectedNode}
-                    selectedSymbol={selectedSymbol}
-                    selectedSymbols={selectedSymbols}
-                    scrollToDiffRequestKey={followedEditDiffRequestKey}
-                    themeMode={themeMode}
-                    workingSet={workingSet.nodeIds.length > 0 ? workingSet : null}
-                    workingSetContext={workingSetContext}
-                    workspaceProfile={workspaceProfile}
-                  />
-                </Suspense>
-              ) : null}
-            </div>
+              }
+              dockLayout={dockLayout}
+              dockPreview={dockPreview}
+              onPanelMovePointerDown={handlePanelMovePointerDown}
+              onSlotActivePanelChange={setSlotActivePanel}
+              onSlotHandlePointerDown={handleSlotHandlePointerDown}
+              renderPanel={renderDockPanel}
+              workspaceRef={dockWorkspaceRef}
+              workspaceStyle={dockWorkspaceStyle}
+            />
           </div>
-          <AgentDrawer
-            activeRunId={activeRunId}
-            activeTab={agentDrawerTab}
-            autonomousRuns={autonomousRuns}
-            composerFocusRequestKey={agentComposerFocusRequestKey}
-            desktopHostAvailable={isDesktopHost}
-            detectedTaskFile={detectedTaskFile}
-            errorMessage={runActionError}
-            inspectorContext={{
-              file: selectedFile,
-              files: selectedFiles,
-              node: selectedNode,
-              symbol: selectedSymbol,
-              symbols: selectedSymbols,
-            }}
-            layoutDraftError={layoutSuggestionError}
-            layoutDraftPending={layoutSuggestionPending}
-            layoutDraftPrompt={layoutSuggestionText}
-            onAdoptInspectorContextAsWorkingSet={adoptSelectionAsWorkingSet}
-            onChangeTab={setAgentDrawerTab}
-            onClearWorkingSet={clearWorkingSet}
-            onLayoutDraftPromptChange={handleLayoutSuggestionChange}
-            onLayoutDraftSubmit={handleLayoutSuggestionSubmit}
-            onOpenSettings={() => setSettingsOpen(true)}
-            onRunSettled={onAgentRunSettled}
-            onSelectRun={handleSelectRun}
-            onStartRun={() => {
-              void handleStartAutonomousRun()
-            }}
-            onStopRun={(runId) => {
-              void handleStopAutonomousRun(runId)
-            }}
-            onToggleOpen={() => setAgentDrawerOpen((current) => !current)}
-            open={agentDrawerOpen}
-            pendingRunAction={runActionPending}
-            preprocessedWorkspaceContext={preprocessedWorkspaceContext}
-            selectedRunDetail={selectedRunDetail}
-            selectedRunId={selectedRunId}
-            timeline={selectedRunTimeline}
-            trailLabel={agentStripTrailLabel}
-            workingSet={workingSet.nodeIds.length > 0 ? workingSet : null}
-            workingSetContext={workingSetContext}
-            workspaceProfile={workspaceProfile}
-          />
+          {!agentDrawerOpen ? (
+            <AgentCollapsedLauncher
+              active={Boolean(activeAgentRun)}
+              onOpen={handleOpenAgentLauncher}
+              onPromptSeed={handleAgentPromptSeed}
+              trailLabel={agentStripTrailLabel}
+            />
+          ) : null}
         {settingsOpen ? (
           <div
             className="cbv-modal-backdrop"
@@ -1022,10 +1345,106 @@ export function Semanticode({
 }
 
 
+function getAgentSessionStartedAtMs(session: AgentSessionSummary) {
+  const createdAtMs = Date.parse(session.createdAt)
+
+  return Number.isFinite(createdAtMs) ? createdAtMs : null
+}
+
+function filterAgentFileOperationsForTelemetryWindow(input: {
+  activeSessionId: string | null
+  operations: AgentFileOperation[]
+  sessionStartMs: number | null
+  telemetryWindow: TelemetryWindow
+}) {
+  if (input.telemetryWindow !== 'session') {
+    return input.operations
+  }
+
+  if (!input.activeSessionId) {
+    return EMPTY_AGENT_FILE_OPERATIONS
+  }
+
+  const filteredOperations = input.operations.filter((operation) => {
+    if (operation.sessionId !== input.activeSessionId) {
+      return false
+    }
+
+    if (input.sessionStartMs === null) {
+      return true
+    }
+
+    const timestampMs = Date.parse(operation.timestamp)
+
+    return !Number.isFinite(timestampMs) || timestampMs >= input.sessionStartMs
+  })
+
+  return filteredOperations.length === input.operations.length
+    ? input.operations
+    : filteredOperations
+}
+
+function buildSessionTouchedPathSet(input: {
+  fileOperations: AgentFileOperation[]
+  telemetryActivityEvents: TelemetryActivityEvent[]
+  telemetryWindow: TelemetryWindow
+}) {
+  if (input.telemetryWindow !== 'session') {
+    return null
+  }
+
+  const pathSet = new Set<string>()
+
+  for (const operation of input.fileOperations) {
+    for (const path of getAgentFileOperationPaths(operation)) {
+      pathSet.add(path)
+    }
+  }
+
+  for (const event of input.telemetryActivityEvents) {
+    if (event.path) {
+      pathSet.add(event.path)
+    }
+  }
+
+  return pathSet
+}
+
+function filterDirtyFileSignalsForTelemetryWindow(input: {
+  dirtyFileEditSignals: DirtyFileEditSignal[]
+  sessionStartMs: number | null
+  sessionTouchedPathSet: Set<string> | null
+  telemetryWindow: TelemetryWindow
+}) {
+  if (input.telemetryWindow !== 'session') {
+    return input.dirtyFileEditSignals
+  }
+
+  return input.dirtyFileEditSignals.filter((signal) => {
+    if (input.sessionStartMs !== null && signal.changedAtMs < input.sessionStartMs) {
+      return false
+    }
+
+    return input.sessionTouchedPathSet
+      ? input.sessionTouchedPathSet.has(signal.path)
+      : false
+  })
+}
+
+function getAgentFileOperationPaths(operation: AgentFileOperation) {
+  return operation.paths.length > 0
+    ? operation.paths
+    : operation.path
+      ? [operation.path]
+      : []
+}
+
 function InspectorFallback({
+  dockMoveHandle = null,
   header,
   onClose,
 }: {
+  dockMoveHandle?: ReactNode
   header: {
     eyebrow: string
     title: string
@@ -1039,14 +1458,17 @@ function InspectorFallback({
           <p className="cbv-eyebrow">{header.eyebrow ?? 'Inspector'}</p>
           <strong title={header.title}>{header.title}</strong>
         </div>
-        <button
-          aria-label="Close inspector"
-          className="cbv-inspector-close"
-          onClick={onClose}
-          type="button"
-        >
-          ×
-        </button>
+        <div className="cbv-panel-header-actions">
+          {dockMoveHandle}
+          <button
+            aria-label="Close inspector"
+            className="cbv-inspector-close"
+            onClick={onClose}
+            type="button"
+          >
+            ×
+          </button>
+        </div>
       </div>
       <div className="cbv-inspector-body cbv-inspector-body--loading">
         <div aria-live="polite" className="cbv-inspector-loading" role="status">

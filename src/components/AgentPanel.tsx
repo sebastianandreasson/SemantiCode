@@ -1,5 +1,6 @@
 import type { AgentScopeContext } from '../agent/agentScopeContext'
 import type {
+  AgentSessionSummary,
   PreprocessedWorkspaceContext,
   WorkingSetState,
   WorkspaceProfile,
@@ -16,9 +17,11 @@ interface AgentPanelProps {
   composerFocusRequestKey?: number
   desktopHostAvailable?: boolean
   inspectorContext?: AgentScopeContext
+  onActiveSessionChange?: (session: AgentSessionSummary | null) => void
   onOpenSettings?: () => void
   onRunSettled?: () => Promise<void>
   onAdoptInspectorContextAsWorkingSet?: () => void
+  onChatSessionCleared?: (session: AgentSessionSummary | null) => void
   onClearWorkingSet?: () => void
   preprocessedWorkspaceContext?: PreprocessedWorkspaceContext | null
   promptSeed?: {
@@ -36,9 +39,11 @@ export function AgentPanel({
   composerFocusRequestKey = 0,
   desktopHostAvailable = false,
   inspectorContext,
+  onActiveSessionChange,
   onOpenSettings,
   onRunSettled,
   onAdoptInspectorContextAsWorkingSet,
+  onChatSessionCleared,
   onClearWorkingSet,
   preprocessedWorkspaceContext = null,
   promptSeed = null,
@@ -96,6 +101,8 @@ export function AgentPanel({
     composerFocusRequestKey,
     desktopHostAvailable,
     inspectorContext,
+    onActiveSessionChange,
+    onChatSessionCleared,
     onRunSettled,
     preprocessedWorkspaceContext,
     promptSeed,

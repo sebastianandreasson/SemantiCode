@@ -1,5 +1,14 @@
 export type * from './types'
 export {
+  buildAgentFocusSemanticLayout,
+  buildAgentTouchedSymbolRecords,
+  type AgentFocusConfidence,
+  type AgentFocusIntent,
+  type AgentFocusSemanticLayoutResult,
+  type AgentTouchedSymbolRecord,
+  type AgentUnresolvedTouch,
+} from './agentFocus'
+export {
   computePendingEditedPaths,
   createInitialFollowControllerState,
   followControllerReducer,

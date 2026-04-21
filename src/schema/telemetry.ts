@@ -1,6 +1,6 @@
 export type TelemetrySource = 'interactive' | 'autonomous' | 'all'
 
-export type TelemetryWindow = 30 | 60 | 120 | 'run' | 'workspace'
+export type TelemetryWindow = 30 | 60 | 120 | 'session' | 'run' | 'workspace'
 
 export type TelemetryMode = 'files' | 'symbols'
 

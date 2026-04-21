@@ -75,6 +75,9 @@ const MINIMAP_NODE_COLORS_LIGHT: Record<string, string> = {
 } as const
 
 interface CanvasViewportProps {
+  agentFocusActive: boolean
+  agentFocusEmptyText: string
+  agentFocusSummaryText: string
   agentHeatDebugOpen: boolean
   agentHeatDebugState: FollowDebugState
   agentHeatHelperText: string
@@ -134,6 +137,9 @@ interface CanvasViewportProps {
 }
 
 export const CanvasViewport = memo(function CanvasViewport({
+  agentFocusActive,
+  agentFocusEmptyText,
+  agentFocusSummaryText,
   agentHeatDebugOpen,
   agentHeatDebugState,
   agentHeatHelperText,
@@ -189,6 +195,7 @@ export const CanvasViewport = memo(function CanvasViewport({
   visibleLayerToggles,
 }: CanvasViewportProps) {
   const [utilityPaletteOpen, setUtilityPaletteOpen] = useState(false)
+  const canCullVisibleElements = !nodes.some((node) => node.parentId)
   const canvasDotColor = themeMode === 'dark' ? '#4f5f74' : '#d8d1c3'
   const minimapMaskColor =
     themeMode === 'dark' ? 'rgba(7, 9, 12, 0.42)' : 'rgba(44, 35, 27, 0.16)'
@@ -322,6 +329,7 @@ export const CanvasViewport = memo(function CanvasViewport({
                         <option value="30">30s</option>
                         <option value="60">60s</option>
                         <option value="120">2m</option>
+                        <option value="session">Chat</option>
                         <option value="run">Run</option>
                         <option value="workspace">Workspace</option>
                       </select>
@@ -519,7 +527,20 @@ export const CanvasViewport = memo(function CanvasViewport({
           ) : null}
           </div>
         </div>
+        {agentFocusActive ? (
+          <div className="cbv-agent-focus-status">
+            <p className="cbv-eyebrow">Agent focus</p>
+            <strong>{agentFocusSummaryText}</strong>
+          </div>
+        ) : null}
       </div>
+      {agentFocusActive && nodes.length === 0 ? (
+        <div className="cbv-agent-focus-empty">
+          <p className="cbv-eyebrow">Agent focus</p>
+          <strong>No visible symbols</strong>
+          <span>{agentFocusEmptyText}</span>
+        </div>
+      ) : null}
       <ReactFlow
         defaultViewport={viewport}
         elevateNodesOnSelect={false}
@@ -529,7 +550,7 @@ export const CanvasViewport = memo(function CanvasViewport({
         minZoom={0.03}
         nodeTypes={nodeTypes}
         nodes={nodes}
-        onlyRenderVisibleElements
+        onlyRenderVisibleElements={canCullVisibleElements}
         onEdgeClick={onEdgeClick}
         onEdgesChange={onEdgesChange}
         onInit={onInit}
@@ -569,6 +590,10 @@ function parseTelemetryWindow(value: string): TelemetryWindow {
 
   if (value === 'run') {
     return 'run'
+  }
+
+  if (value === 'session') {
+    return 'session'
   }
 
   if (value === 'workspace') {

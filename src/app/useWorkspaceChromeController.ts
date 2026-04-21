@@ -1,10 +1,8 @@
 import {
+  useCallback,
   useEffect,
   useMemo,
-  useRef,
   useState,
-  type CSSProperties,
-  type PointerEvent as ReactPointerEvent,
 } from 'react'
 
 import {
@@ -20,17 +18,19 @@ import {
   UI_PREFERENCES_STORAGE_KEY,
 } from './themeBootstrap'
 import type { ThemeMode } from './themeBootstrap'
+import {
+  getLegacyCanvasWidthRatio,
+  isDockPanelOpen,
+} from './dock/dockModel'
+import { useDockLayoutController } from './useDockLayoutController'
 import { useWorkspaceViewState } from './useWorkspaceViewState'
 import type {
   GraphLayerVisibility,
   UiPreferences,
   VisualizerViewMode,
 } from '../types'
-import { clampNumber } from '../visualizer/flowModel'
 
-const DEFAULT_CANVAS_WIDTH_RATIO = 0.6
-const MIN_CANVAS_WIDTH_RATIO = 0.32
-const MAX_CANVAS_WIDTH_RATIO = 0.78
+type BooleanUpdater = boolean | ((current: boolean) => boolean)
 
 export interface DesktopBridge {
   closeWorkspace?: () => Promise<boolean>
@@ -77,7 +77,6 @@ export function useWorkspaceChromeController({
   const storedUiPreferences = useMemo(() => readStoredUiPreferences(), [])
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [workspaceSyncOpen, setWorkspaceSyncOpen] = useState(false)
-  const [agentDrawerOpen, setAgentDrawerOpen] = useState(false)
   const [agentDrawerTab, setAgentDrawerTab] = useState<'chat' | 'agents' | 'layout'>(
     'chat',
   )
@@ -85,19 +84,39 @@ export function useWorkspaceChromeController({
   const [themeMode, setThemeMode] = useState<ThemeMode>(
     () => storedUiPreferences.themeMode ?? readThemeMode(),
   )
-  const [projectsSidebarOpen, setProjectsSidebarOpen] = useState(
-    storedUiPreferences.projectsSidebarOpen ?? true,
+  const {
+    dockLayout,
+    dockPreview,
+    dockWorkspaceRef,
+    dockWorkspaceStyle,
+    handlePanelMovePointerDown,
+    handleSlotHandlePointerDown,
+    hydrateDockLayoutFromPreferences,
+    setPanelOpen,
+    setSlotActivePanel,
+  } = useDockLayoutController({
+    initialPreferences: storedUiPreferences,
+  })
+  const agentDrawerOpen = isDockPanelOpen(dockLayout, 'agent')
+  const inspectorOpen = isDockPanelOpen(dockLayout, 'inspector')
+  const projectsSidebarOpen = isDockPanelOpen(dockLayout, 'outline')
+  const setAgentDrawerOpen = useCallback(
+    (nextOpen: BooleanUpdater) => {
+      setPanelOpen('agent', nextOpen)
+    },
+    [setPanelOpen],
   )
-  const [canvasWidthRatio, setCanvasWidthRatio] = useState(
-    clampNumber(
-      storedUiPreferences.canvasWidthRatio ?? DEFAULT_CANVAS_WIDTH_RATIO,
-      MIN_CANVAS_WIDTH_RATIO,
-      MAX_CANVAS_WIDTH_RATIO,
-    ),
+  const setInspectorOpen = useCallback(
+    (nextOpen: BooleanUpdater) => {
+      setPanelOpen('inspector', nextOpen)
+    },
+    [setPanelOpen],
   )
-  const [activeResizePointerId, setActiveResizePointerId] = useState<number | null>(null)
-  const [inspectorOpen, setInspectorOpen] = useState(
-    storedUiPreferences.inspectorOpen ?? false,
+  const setProjectsSidebarOpen = useCallback(
+    (nextOpen: BooleanUpdater) => {
+      setPanelOpen('outline', nextOpen)
+    },
+    [setPanelOpen],
   )
   const [recentProjects, setRecentProjects] = useState<RecentProject[]>([])
   const [workspaceActionPending, setWorkspaceActionPending] = useState(false)
@@ -116,7 +135,6 @@ export function useWorkspaceChromeController({
     rootDir,
     uiPreferencesHydrated,
   })
-  const workspaceRef = useRef<HTMLDivElement | null>(null)
   const desktopBridge = getDesktopBridge()
   const isDesktopHost = desktopHostAvailable || isElectronHost()
   const canManageProjects = Boolean(
@@ -126,11 +144,6 @@ export function useWorkspaceChromeController({
       desktopBridge?.getWorkspaceHistory ||
       isDesktopHost,
   )
-  const inspectorWidthRatio = 1 - canvasWidthRatio
-  const workspaceStyle = {
-    '--cbv-canvas-width': `${(canvasWidthRatio * 100).toFixed(2)}%`,
-    '--cbv-inspector-width': `${(inspectorWidthRatio * 100).toFixed(2)}%`,
-  } as CSSProperties
   const workspaceViewReady =
     !rootDir || (uiPreferencesHydrated && workspaceViewResolvedRootDir === rootDir)
 
@@ -172,22 +185,13 @@ export function useWorkspaceChromeController({
           setThemeMode(preferences.themeMode)
         }
 
-        if (typeof preferences.projectsSidebarOpen === 'boolean') {
-          setProjectsSidebarOpen(preferences.projectsSidebarOpen)
-        }
-
-        if (typeof preferences.inspectorOpen === 'boolean') {
-          setInspectorOpen(preferences.inspectorOpen)
-        }
-
-        if (typeof preferences.canvasWidthRatio === 'number') {
-          setCanvasWidthRatio(
-            clampNumber(
-              preferences.canvasWidthRatio,
-              MIN_CANVAS_WIDTH_RATIO,
-              MAX_CANVAS_WIDTH_RATIO,
-            ),
-          )
+        if (
+          preferences.dockLayout ||
+          typeof preferences.projectsSidebarOpen === 'boolean' ||
+          typeof preferences.inspectorOpen === 'boolean' ||
+          typeof preferences.canvasWidthRatio === 'number'
+        ) {
+          hydrateDockLayoutFromPreferences(preferences)
         }
 
         if (preferences.viewMode) {
@@ -214,7 +218,12 @@ export function useWorkspaceChromeController({
     return () => {
       cancelled = true
     }
-  }, [setGraphLayerVisibility, setViewMode, setWorkspaceStateByRootDir])
+  }, [
+    hydrateDockLayoutFromPreferences,
+    setGraphLayerVisibility,
+    setViewMode,
+    setWorkspaceStateByRootDir,
+  ])
 
   useEffect(() => {
     if (storedUiPreferences.viewMode) {
@@ -232,7 +241,8 @@ export function useWorkspaceChromeController({
     }
 
     const preferences: UiPreferences = {
-      canvasWidthRatio,
+      canvasWidthRatio: getLegacyCanvasWidthRatio(dockLayout),
+      dockLayout,
       graphLayers,
       inspectorOpen,
       projectsSidebarOpen,
@@ -260,7 +270,7 @@ export function useWorkspaceChromeController({
       }
     })
   }, [
-    canvasWidthRatio,
+    dockLayout,
     graphLayers,
     inspectorOpen,
     projectsSidebarOpen,
@@ -315,74 +325,6 @@ export function useWorkspaceChromeController({
 
     setRecentProjects((currentProjects) => rememberRecentProject(currentProjects, rootDir))
   }, [rootDir])
-
-  useEffect(() => {
-    if (activeResizePointerId == null) {
-      return
-    }
-
-    const previousCursor = document.body.style.cursor
-    const previousUserSelect = document.body.style.userSelect
-
-    document.body.style.cursor = 'col-resize'
-    document.body.style.userSelect = 'none'
-
-    function handlePointerMove(event: PointerEvent) {
-      if (activeResizePointerId !== event.pointerId) {
-        return
-      }
-
-      const workspaceElement = workspaceRef.current
-
-      if (!workspaceElement) {
-        return
-      }
-
-      const bounds = workspaceElement.getBoundingClientRect()
-
-      if (bounds.width <= 0) {
-        return
-      }
-
-      const nextRatio = clampNumber(
-        (event.clientX - bounds.left) / bounds.width,
-        MIN_CANVAS_WIDTH_RATIO,
-        MAX_CANVAS_WIDTH_RATIO,
-      )
-
-      setCanvasWidthRatio(nextRatio)
-    }
-
-    function handlePointerUp(event: PointerEvent) {
-      if (activeResizePointerId !== event.pointerId) {
-        return
-      }
-
-      setActiveResizePointerId(null)
-    }
-
-    window.addEventListener('pointermove', handlePointerMove)
-    window.addEventListener('pointerup', handlePointerUp)
-    window.addEventListener('pointercancel', handlePointerUp)
-
-    return () => {
-      document.body.style.cursor = previousCursor
-      document.body.style.userSelect = previousUserSelect
-      window.removeEventListener('pointermove', handlePointerMove)
-      window.removeEventListener('pointerup', handlePointerUp)
-      window.removeEventListener('pointercancel', handlePointerUp)
-    }
-  }, [activeResizePointerId])
-
-  function handleResizePointerDown(event: ReactPointerEvent<HTMLButtonElement>) {
-    if (!inspectorOpen) {
-      return
-    }
-
-    setActiveResizePointerId(event.pointerId)
-    event.currentTarget.setPointerCapture(event.pointerId)
-    event.preventDefault()
-  }
 
   async function handleOpenAnotherWorkspace() {
     if (!desktopBridge?.openWorkspaceDialog) {
@@ -469,11 +411,16 @@ export function useWorkspaceChromeController({
     agentDrawerTab,
     canManageProjects,
     desktopBridge,
+    dockLayout,
+    dockPreview,
+    dockWorkspaceRef,
+    dockWorkspaceStyle,
     handleFocusAgentDrawerComposer,
     handleOpenAnotherWorkspace,
     handleOpenRecentProject,
     handleRemoveRecentProject,
-    handleResizePointerDown,
+    handlePanelMovePointerDown,
+    handleSlotHandlePointerDown,
     inspectorOpen,
     isDesktopHost,
     projectsSidebarOpen,
@@ -483,6 +430,7 @@ export function useWorkspaceChromeController({
     setInspectorOpen,
     setProjectsSidebarOpen,
     setSettingsOpen,
+    setSlotActivePanel,
     setThemeMode,
     setWorkspaceSyncOpen,
     setWorkspaceStateByRootDir,
@@ -492,9 +440,7 @@ export function useWorkspaceChromeController({
     uiPreferencesHydrated,
     workspaceActionError,
     workspaceActionPending,
-    workspaceRef,
     workspaceStateByRootDir,
-    workspaceStyle,
     workspaceSyncOpen,
     workspaceViewReady,
     workspaceViewResolvedRootDir,

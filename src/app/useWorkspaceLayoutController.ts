@@ -30,9 +30,12 @@ import {
   mergeLayoutsWithDefaults,
 } from '../visualizer/flowModel'
 
+const AGENT_FOCUS_LAYOUT_VALUE = 'scene:agent-focus-semantic'
+
 export interface UseWorkspaceLayoutControllerInput {
   activeDraftId: string | null
   activeLayoutId: string | null
+  agentFocusLayout?: LayoutSpec | null
   baseScene: CanvasBaseScene
   clearCompareOverlay: () => void
   compareOverlay: LayoutCompareOverlayReference | null
@@ -66,6 +69,7 @@ export interface UseWorkspaceLayoutControllerInput {
 export function useWorkspaceLayoutController({
   activeDraftId,
   activeLayoutId,
+  agentFocusLayout = null,
   baseScene,
   clearCompareOverlay,
   compareOverlay,
@@ -209,7 +213,9 @@ export function useWorkspaceLayoutController({
     availableDraftLayouts.find((draft) => draft.id === activeDraftId) ?? null
   const selectedLayoutValue = activeDraft
     ? `draft:${activeDraft.id}`
-    : activeLayoutId
+    : baseScene.kind === 'agent_focus_semantic'
+      ? AGENT_FOCUS_LAYOUT_VALUE
+      : activeLayoutId
       ? `layout:${activeLayoutId}`
       : ''
   const activeLayout =
@@ -222,7 +228,8 @@ export function useWorkspaceLayoutController({
   const shouldResolveSemanticLayout = snapshot
     ? (
         activeLayout?.strategy === 'semantic' ||
-        baseScene.kind === 'semantic_projection'
+        baseScene.kind === 'semantic_projection' ||
+        baseScene.kind === 'agent_focus_semantic'
       ) &&
       !isResolvedSemanticLayoutCurrent(currentSemanticLayout, snapshot)
     : false
@@ -293,6 +300,10 @@ export function useWorkspaceLayoutController({
         label: formatLayoutOptionLabel(layout.title, layoutSyncById.get(layout.id)),
         value: `layout:${layout.id}`,
       })),
+      {
+        label: 'Agent focus',
+        value: AGENT_FOCUS_LAYOUT_VALUE,
+      },
       ...availableDraftLayouts.map((draft) => ({
         label: formatLayoutOptionLabel(
           `Draft: ${draft.layout?.title ?? draft.id}`,
@@ -307,10 +318,11 @@ export function useWorkspaceLayoutController({
     () =>
       resolveCanvasScene({
         activeLayout,
+        agentFocusLayout,
         baseScene,
         layouts,
       }),
-    [activeLayout, baseScene, layouts],
+    [activeLayout, agentFocusLayout, baseScene, layouts],
   )
   const resolvedCompareOverlay = useMemo(
     () =>
@@ -334,6 +346,10 @@ export function useWorkspaceLayoutController({
     overlayVisibility &&
     overlayFocusMode === 'highlight_dim'
   const currentCompareSource = useMemo(() => {
+    if (baseScene.kind === 'agent_focus_semantic') {
+      return null
+    }
+
     if (activeDraft?.layout && canCompareLayoutAgainstSemantic(activeDraft.layout)) {
       return {
         sourceType: 'draft' as const,
@@ -351,9 +367,12 @@ export function useWorkspaceLayoutController({
     }
 
     return null
-  }, [activeDraft, activeLayout])
+  }, [activeDraft, activeLayout, baseScene.kind])
   const editableDraftLayout = resolvedScene?.kind === 'layout' ? activeDraft : null
-  const editableLayout = resolvedScene?.layoutSpec ?? activeLayout
+  const editableLayout =
+    resolvedScene?.kind === 'agent_focus_semantic'
+      ? null
+      : resolvedScene?.layoutSpec ?? activeLayout
   const activeLayoutSyncNote =
     activeLayoutSync?.state === 'outdated'
       ? {
@@ -410,6 +429,17 @@ export function useWorkspaceLayoutController({
 
   function handleLayoutSelectionChange(value: string) {
     if (!value) {
+      return
+    }
+
+    if (value === AGENT_FOCUS_LAYOUT_VALUE) {
+      setBaseScene({
+        kind: 'agent_focus_semantic',
+      })
+      clearCompareOverlay()
+      setActiveDraftId(null)
+      onClearDraftActionError()
+      setViewMode('symbols')
       return
     }
 

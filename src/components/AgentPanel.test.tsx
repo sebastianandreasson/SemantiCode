@@ -909,6 +909,48 @@ describe('AgentPanel OAuth reconciliation', () => {
     expect(screen.queryByText('Agent settings needed')).toBeNull()
     expect(screen.getByRole('textbox')).toBeTruthy()
   })
+
+  it('notifies when the active chat session is cleared', async () => {
+    const user = userEvent.setup()
+    const readySession = buildSdkSession({
+      id: 'session-clear',
+      runState: 'ready',
+    })
+    const onChatSessionCleared = vi.fn()
+
+    mockClient.getSettings.mockResolvedValue(buildApiKeySettings())
+    mockClient.getHttpState.mockResolvedValue({
+      messages: [],
+      session: readySession,
+      timeline: [],
+    })
+    mockClient.getControls.mockResolvedValue({
+      activeToolNames: [],
+      availableThinkingLevels: [],
+      commands: [],
+      models: [],
+      runtimeKind: 'pi-sdk',
+      sessionId: readySession.id,
+      tools: [],
+    })
+
+    render(
+      <AgentPanel
+        desktopHostAvailable
+        onChatSessionCleared={onChatSessionCleared}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(screen.getAllByText('ready').length).toBeGreaterThan(0)
+    })
+
+    await user.type(screen.getByRole('textbox'), '/clear{enter}')
+
+    await waitFor(() => {
+      expect(onChatSessionCleared).toHaveBeenCalledWith(readySession)
+    })
+  })
 })
 
 function buildSettings(input: {

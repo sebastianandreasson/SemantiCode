@@ -110,6 +110,8 @@ export interface TelemetryRequestBridge {
     mode: TelemetryMode
     rootDir: string
     runId?: string
+    sessionId?: string
+    sinceMs?: number
     source: TelemetrySource
     window: TelemetryWindow
   }) => Promise<TelemetryActivityEvent[]>
@@ -117,6 +119,8 @@ export interface TelemetryRequestBridge {
     mode: TelemetryMode
     rootDir: string
     runId?: string
+    sessionId?: string
+    sinceMs?: number
     source: TelemetrySource
     window: TelemetryWindow
   }) => Promise<AgentHeatSample[]>
@@ -124,6 +128,8 @@ export interface TelemetryRequestBridge {
     mode: TelemetryMode
     rootDir: string
     runId?: string
+    sessionId?: string
+    sinceMs?: number
     source: TelemetrySource
     window: TelemetryWindow
   }) => Promise<TelemetryOverview>

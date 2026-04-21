@@ -17,6 +17,33 @@ export type GraphLayerKey = 'contains' | 'imports' | 'calls'
 
 export type GraphLayerVisibility = Record<GraphLayerKey, boolean>
 
+export type DockSlot = 'left' | 'right' | 'bottom'
+
+export type DockPanelId = 'outline' | 'inspector' | 'agent'
+
+export interface DockSlotSize {
+  value: number
+  unit: 'px' | 'rem' | 'ratio'
+}
+
+export interface DockSlotState {
+  panelIds: DockPanelId[]
+  activePanelId: DockPanelId | null
+  size: DockSlotSize
+}
+
+export interface DockPanelState {
+  id: DockPanelId
+  slot: DockSlot
+  open: boolean
+}
+
+export interface DockLayoutPreference {
+  version: 1
+  slots: Record<DockSlot, DockSlotState>
+  panels: Record<DockPanelId, DockPanelState>
+}
+
 export interface WorkspaceUiState {
   activeDraftId?: string
   activeLayoutId?: string
@@ -30,6 +57,7 @@ export interface WorkingSetState {
 
 export interface UiPreferences {
   canvasWidthRatio?: number
+  dockLayout?: DockLayoutPreference
   graphLayers?: Partial<GraphLayerVisibility>
   inspectorOpen?: boolean
   projectsSidebarOpen?: boolean

@@ -115,6 +115,16 @@ interface RequestTelemetryTarget {
   symbolNodeIds: string[]
 }
 
+interface TelemetryQueryInput {
+  mode: TelemetryMode
+  rootDir: string
+  runId?: string
+  sessionId?: string
+  sinceMs?: number
+  source: TelemetrySource
+  window: TelemetryWindow
+}
+
 const require = createRequire(import.meta.url)
 const REQUEST_TELEMETRY_EXTENSION_DIRNAME = 'pi-harness-request-telemetry'
 const REQUEST_TELEMETRY_SHIM_HEADER = [
@@ -263,13 +273,7 @@ export class AgentTelemetryService {
     })
   }
 
-  async getTelemetryOverview(input: {
-    mode: TelemetryMode
-    rootDir: string
-    runId?: string
-    source: TelemetrySource
-    window: TelemetryWindow
-  }): Promise<TelemetryOverview> {
+  async getTelemetryOverview(input: TelemetryQueryInput): Promise<TelemetryOverview> {
     const telemetry = await this.readFilteredTelemetry(input)
     const breakdown = deriveRequestTelemetryBreakdown({
       requests: telemetry.requests,
@@ -288,13 +292,7 @@ export class AgentTelemetryService {
     }
   }
 
-  async getTelemetryActivity(input: {
-    mode: TelemetryMode
-    rootDir: string
-    runId?: string
-    source: TelemetrySource
-    window: TelemetryWindow
-  }): Promise<TelemetryActivityEvent[]> {
+  async getTelemetryActivity(input: TelemetryQueryInput): Promise<TelemetryActivityEvent[]> {
     const telemetry = await this.readFilteredTelemetry(input)
     const spansByRequestId = indexSpansByRequestId(telemetry.spans)
     const events: TelemetryActivityEvent[] = []
@@ -343,13 +341,7 @@ export class AgentTelemetryService {
       .slice(0, 80)
   }
 
-  async getTelemetryHeatmap(input: {
-    mode: TelemetryMode
-    rootDir: string
-    runId?: string
-    source: TelemetrySource
-    window: TelemetryWindow
-  }): Promise<AgentHeatSample[]> {
+  async getTelemetryHeatmap(input: TelemetryQueryInput): Promise<AgentHeatSample[]> {
     const telemetry = await this.readFilteredTelemetry(input)
     const spansByRequestId = indexSpansByRequestId(telemetry.spans)
     const byPath = new Map<string, {
@@ -434,13 +426,14 @@ export class AgentTelemetryService {
       .sort((left, right) => right.weight - left.weight)
   }
 
-  private async readFilteredTelemetry(input: {
-    mode: TelemetryMode
-    rootDir: string
-    runId?: string
-    source: TelemetrySource
-    window: TelemetryWindow
-  }) {
+  private async readFilteredTelemetry(input: TelemetryQueryInput) {
+    if (input.window === 'session' && !input.sessionId) {
+      return {
+        requests: [],
+        spans: [],
+      }
+    }
+
     const requestTelemetry = await readRequestTelemetryRecords({
       cwd: input.rootDir,
     })
@@ -448,6 +441,12 @@ export class AgentTelemetryService {
     const windowStart =
       typeof input.window === 'number'
         ? Date.now() - (input.window * 1000)
+        : null
+    const sessionWindowStart =
+      input.window === 'session' &&
+      typeof input.sinceMs === 'number' &&
+      Number.isFinite(input.sinceMs)
+        ? input.sinceMs
         : null
 
     const requests = requestTelemetry.requests.filter((request: Record<string, unknown>) => {
@@ -461,10 +460,22 @@ export class AgentTelemetryService {
         return false
       }
 
-      if (windowStart !== null) {
+      if (input.window === 'session' && getTelemetryRequestSessionId(request) !== input.sessionId) {
+        return false
+      }
+
+      if (windowStart !== null || sessionWindowStart !== null) {
         const timestampMs = new Date(String(request.timestamp ?? '')).getTime()
 
-        if (!Number.isFinite(timestampMs) || timestampMs < windowStart) {
+        if (!Number.isFinite(timestampMs)) {
+          return false
+        }
+
+        if (windowStart !== null && timestampMs < windowStart) {
+          return false
+        }
+
+        if (sessionWindowStart !== null && timestampMs < sessionWindowStart) {
           return false
         }
       }
@@ -515,6 +526,10 @@ export class AgentTelemetryService {
       await writeFile(paths.manifestFile, manifestContent, 'utf8')
     }
   }
+}
+
+function getTelemetryRequestSessionId(request: Record<string, unknown>) {
+  return String(request.sessionId ?? request.runId ?? '')
 }
 
 function buildInteractiveSpanRecords(input: {

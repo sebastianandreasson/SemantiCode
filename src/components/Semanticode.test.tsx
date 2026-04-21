@@ -11,6 +11,7 @@ import type {
   PreprocessedWorkspaceContext,
   PreprocessingStatus,
   ProjectSnapshot,
+  WorkspaceArtifactSyncStatus,
   WorkspaceProfile,
 } from '../types'
 
@@ -205,6 +206,38 @@ const preprocessingStatus: PreprocessingStatus = {
   totalSymbols: 2,
 }
 
+const dirtyWorkspaceSyncStatus: WorkspaceArtifactSyncStatus = {
+  git: {
+    branch: 'main',
+    changedFiles: ['src/feature.ts'],
+    head: 'abc123',
+    isGitRepo: true,
+    stagedFiles: [],
+    unstagedFiles: ['src/feature.ts'],
+    untrackedFiles: [],
+  },
+  summaries: {
+    affectedPaths: [],
+    obsoleteCount: 0,
+    obsoleteSymbolIds: [],
+    staleCount: 0,
+    staleSymbolIds: [],
+    state: 'in_sync',
+    totalTracked: 2,
+  },
+  embeddings: {
+    affectedPaths: [],
+    obsoleteCount: 0,
+    obsoleteSymbolIds: [],
+    staleCount: 0,
+    staleSymbolIds: [],
+    state: 'in_sync',
+    totalTracked: 0,
+  },
+  layouts: [],
+  drafts: [],
+}
+
 describe('Semanticode semantic compare overlay', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', async (input: RequestInfo | URL) => {
@@ -275,6 +308,7 @@ describe('Semanticode semantic compare overlay', () => {
 
     act(() => {
       visualizerStore.getState().reset()
+      visualizerStore.getState().setLayouts([semanticLayout])
       visualizerStore.getState().setDraftLayouts([featureDraft])
       visualizerStore.getState().setActiveDraftId(featureDraft.id)
       visualizerStore.getState().setViewMode('symbols')
@@ -343,11 +377,14 @@ describe('Semanticode semantic compare overlay', () => {
       />,
     )
 
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'agent' }).className).toContain('is-active')
-    })
+    const agentTab = await screen.findByRole(
+      'button',
+      { name: 'agent' },
+      { timeout: 3000 },
+    )
 
-    expect(screen.getByText('Draft Layout')).not.toBeNull()
+    expect(agentTab.className).toContain('is-active')
+    expect(await screen.findByText('Draft Layout')).not.toBeNull()
     expect(screen.getByText('Feature flow')).not.toBeNull()
     expect(screen.getByText('Feature grouping')).not.toBeNull()
 
@@ -356,5 +393,31 @@ describe('Semanticode semantic compare overlay', () => {
 
     await user.click(screen.getByRole('button', { name: 'Reject Draft' }))
     expect(onRejectDraft).toHaveBeenCalledWith(featureDraft.id)
+  })
+
+  it('switches to agent focus for dirty files without resetting canvas nodes repeatedly', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <Semanticode
+        preprocessedWorkspaceContext={preprocessedWorkspaceContext}
+        preprocessingStatus={preprocessingStatus}
+        snapshot={snapshot}
+        workspaceProfile={workspaceProfile}
+        workspaceSyncStatus={dirtyWorkspaceSyncStatus}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Layout' })).not.toBeNull()
+    })
+
+    await user.click(screen.getByRole('button', { name: 'Layout' }))
+    await user.click(screen.getByRole('option', { name: 'Agent focus' }))
+
+    await waitFor(() => {
+      expect(screen.getAllByText('2 symbols · 1 file · 2 edits').length).toBeGreaterThan(0)
+      expect(document.querySelectorAll('.cbv-node.is-agent-focus')).toHaveLength(2)
+    })
   })
 })

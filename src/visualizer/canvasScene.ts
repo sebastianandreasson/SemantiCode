@@ -7,7 +7,7 @@ import type {
 } from '../schema/scene'
 
 export interface ResolvedCanvasScene {
-  kind: 'layout' | 'semantic_projection'
+  kind: 'layout' | 'semantic_projection' | 'agent_focus_semantic'
   nodeScope: LayoutSpec['nodeScope']
   layoutSpec: LayoutSpec
 }
@@ -25,9 +25,22 @@ export interface ResolvedCanvasOverlay {
 
 export function resolveCanvasScene(input: {
   activeLayout: LayoutSpec | null
+  agentFocusLayout?: LayoutSpec | null
   baseScene: CanvasBaseScene
   layouts: LayoutSpec[]
 }): ResolvedCanvasScene | null {
+  if (input.baseScene.kind === 'agent_focus_semantic') {
+    if (!input.agentFocusLayout) {
+      return null
+    }
+
+    return {
+      kind: 'agent_focus_semantic',
+      nodeScope: input.agentFocusLayout.nodeScope,
+      layoutSpec: input.agentFocusLayout,
+    }
+  }
+
   if (input.baseScene.kind === 'semantic_projection') {
     const semanticLayout =
       input.layouts.find((layout) => layout.strategy === 'semantic') ??

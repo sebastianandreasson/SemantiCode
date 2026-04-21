@@ -169,6 +169,27 @@ describe('canvas scene resolution', () => {
     })
   })
 
+  it('resolves an agent-focus semantic scene from a runtime layout', () => {
+    const agentFocusLayout: LayoutSpec = {
+      ...semanticLayout,
+      hiddenNodeIds: ['symbol:helper'],
+      id: 'layout:agent-focus-semantic:/tmp/repo',
+      title: 'Agent focus',
+    }
+    const scene = resolveCanvasScene({
+      activeLayout: featureLayout,
+      agentFocusLayout,
+      baseScene: { kind: 'agent_focus_semantic' },
+      layouts: [featureLayout, semanticLayout],
+    })
+
+    expect(scene).toEqual({
+      kind: 'agent_focus_semantic',
+      nodeScope: 'symbols',
+      layoutSpec: agentFocusLayout,
+    })
+  })
+
   it('derives overlay membership and missing nodes from a draft source', () => {
     const scene = resolveCanvasScene({
       activeLayout: featureLayout,

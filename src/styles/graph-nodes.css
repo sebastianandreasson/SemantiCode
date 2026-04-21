@@ -579,6 +579,30 @@
   background: color-mix(in oklch, var(--app-warning) 6%, var(--app-surface)) !important;
 }
 
+.cbv-node.is-agent-focus-edit {
+  border-color: color-mix(in oklch, var(--app-danger) 54%, var(--app-border)) !important;
+}
+
+.cbv-node.is-agent-focus-mixed {
+  border-color: color-mix(in oklch, var(--app-warning) 58%, var(--app-border)) !important;
+}
+
+.cbv-node.is-agent-focus-read {
+  border-color: color-mix(in oklch, var(--app-success) 48%, var(--app-border)) !important;
+}
+
+.cbv-node.is-agent-focus-edit::before {
+  background: color-mix(in oklch, var(--app-danger) 78%, var(--cbv-node-kind-color));
+}
+
+.cbv-node.is-agent-focus-mixed::before {
+  background: color-mix(in oklch, var(--app-warning) 82%, var(--cbv-node-kind-color));
+}
+
+.cbv-node.is-agent-focus-read::before {
+  background: color-mix(in oklch, var(--app-success) 72%, var(--cbv-node-kind-color));
+}
+
 .cbv-node.is-folder-container,
 .cbv-node.is-group-container {
   background: color-mix(in oklch, var(--app-surface-soft) 52%, var(--app-surface)) !important;
@@ -707,6 +731,29 @@
 .cbv-node-tag.is-loc {
   color: color-mix(in oklch, var(--cbv-node-kind-color, var(--app-accent)) 72%, var(--app-text-faint));
   background: color-mix(in oklch, var(--cbv-node-kind-color, var(--app-accent)) 8%, transparent);
+}
+
+.cbv-node-tag.is-agent-focus {
+  color: var(--app-inverse-text);
+  border-color: transparent;
+}
+
+.cbv-node-tag.is-agent-focus.is-edit {
+  background: color-mix(in oklch, var(--app-danger) 86%, black 4%);
+}
+
+.cbv-node-tag.is-agent-focus.is-mixed {
+  background: color-mix(in oklch, var(--app-warning) 84%, black 6%);
+}
+
+.cbv-node-tag.is-agent-focus.is-read {
+  background: color-mix(in oklch, var(--app-success) 78%, black 5%);
+}
+
+.cbv-node-tag.is-agent-focus-confidence,
+.cbv-node-tag.is-agent-focus-count {
+  color: var(--app-text);
+  background: color-mix(in oklch, var(--app-accent) 9%, var(--app-surface-soft));
 }
 
 .cbv-node-title,

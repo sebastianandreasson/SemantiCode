@@ -1,5 +1,5 @@
 import { act } from 'react'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, render, renderHook, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { AgentFileOperation } from '../types'
@@ -90,6 +90,20 @@ describe('useAgentFileOperations', () => {
       await statePromise
     })
     expect(screen.getByTestId('operation-paths').textContent).toBe('none')
+  })
+
+  it('keeps the disabled empty operation list stable across renders', () => {
+    const { result, rerender } = renderHook(
+      (input: { enabled: boolean }) => useAgentFileOperations({ enabled: input.enabled }),
+      {
+        initialProps: { enabled: false },
+      },
+    )
+    const firstOperations = result.current
+
+    rerender({ enabled: false })
+
+    expect(result.current).toBe(firstOperations)
   })
 })
 

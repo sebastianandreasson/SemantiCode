@@ -5,6 +5,7 @@
 @import './styles/graph-nodes.css';
 @import './styles/inspector.css';
 @import './styles/agent-drawer.css';
+@import './styles/dock.css';
 @import './styles/runs.css';
 @import './styles/workspace-sync-settings.css';
 @import './styles/responsive.css';

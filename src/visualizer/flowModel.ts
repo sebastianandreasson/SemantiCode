@@ -67,8 +67,15 @@ const ANNOTATION_NODE_Z_INDEX = 5
 export interface FlowModelOptions {
   callEdgeRenderLimit?: number
   selectedNodeIds?: Set<string>
+  symbolRuntimeMetadataByNodeId?: Map<string, FlowSymbolRuntimeMetadata>
   symbolFootprints?: SymbolFootprintLookup
   viewportZoom?: number
+}
+
+export interface FlowSymbolRuntimeMetadata {
+  agentFocusConfidence?: string
+  agentFocusEventCount?: number
+  agentFocusIntent?: 'read' | 'edit' | 'mixed'
 }
 
 export interface GraphSummary {
@@ -370,7 +377,11 @@ export function buildFlowModel(
         },
       ),
     )
-  const nodes = [...annotationNodes, ...groupNodes, ...codeNodes]
+  const nodes = orderFlowNodesForParentRendering([
+    ...annotationNodes,
+    ...groupNodes,
+    ...codeNodes,
+  ])
   const visibleNodeIds = new Set(codeNodes.map((node) => node.id))
   const edges: Edge[] = []
 
@@ -634,15 +645,18 @@ function buildFlowNode(
     const sharedCallerCount = symbolClusterState.callerCounts[node.id] ?? 0
     const clusterExpanded =
       clusterSize > 0 && cluster ? expandedClusterIds.has(cluster.id) : undefined
+    const symbolRuntimeMetadata = options.symbolRuntimeMetadataByNodeId?.get(node.id)
+    const runtimeMetaLabels = getRuntimeSymbolMetaLabels(
+      sharedCallerCount,
+      clusterSize,
+      clusterExpanded,
+      symbolRuntimeMetadata,
+    )
     const symbolDimensions =
       options.symbolFootprints?.get(node.id, {
         contained: isContainedNode,
         containedPlacement,
-        extraMetaLabels: getRuntimeSymbolMetaLabels(
-          sharedCallerCount,
-          clusterSize,
-          clusterExpanded,
-        ),
+        extraMetaLabels: runtimeMetaLabels,
       }) ??
       getSymbolNodeFootprint(
         node,
@@ -650,11 +664,7 @@ function buildFlowNode(
         {
           contained: isContainedNode,
           containedPlacement,
-          extraMetaLabels: getRuntimeSymbolMetaLabels(
-            sharedCallerCount,
-            clusterSize,
-            clusterExpanded,
-          ),
+          extraMetaLabels: runtimeMetaLabels,
         },
         options.viewportZoom,
         snapshot,
@@ -699,6 +709,9 @@ function buildFlowNode(
         clusterSize,
         clusterExpanded,
         sharedCallerCount,
+        agentFocusConfidence: symbolRuntimeMetadata?.agentFocusConfidence,
+        agentFocusEventCount: symbolRuntimeMetadata?.agentFocusEventCount,
+        agentFocusIntent: symbolRuntimeMetadata?.agentFocusIntent,
         contained: isContainedNode,
         compact: symbolDimensions.compact,
         dimmed: false,
@@ -2067,8 +2080,21 @@ function getRuntimeSymbolMetaLabels(
   sharedCallerCount: number,
   clusterSize: number,
   clusterExpanded: boolean | undefined,
+  runtimeMetadata?: FlowSymbolRuntimeMetadata,
 ) {
   const labels: string[] = []
+
+  if (runtimeMetadata?.agentFocusIntent) {
+    labels.push(formatAgentFocusIntentLabel(runtimeMetadata.agentFocusIntent))
+  }
+
+  if (runtimeMetadata?.agentFocusConfidence) {
+    labels.push(formatAgentFocusConfidenceLabel(runtimeMetadata.agentFocusConfidence))
+  }
+
+  if ((runtimeMetadata?.agentFocusEventCount ?? 0) > 1) {
+    labels.push(`${runtimeMetadata?.agentFocusEventCount} events`)
+  }
 
   if (sharedCallerCount > 1) {
     labels.push(`${sharedCallerCount} callers`)
@@ -2079,6 +2105,32 @@ function getRuntimeSymbolMetaLabels(
   }
 
   return labels
+}
+
+function formatAgentFocusIntentLabel(intent: NonNullable<FlowSymbolRuntimeMetadata['agentFocusIntent']>) {
+  switch (intent) {
+    case 'edit':
+      return 'edit'
+    case 'mixed':
+      return 'mixed'
+    case 'read':
+      return 'read'
+  }
+}
+
+function formatAgentFocusConfidenceLabel(confidence: string) {
+  switch (confidence) {
+    case 'exact_symbol':
+      return 'exact'
+    case 'range_overlap':
+      return 'range'
+    case 'dirty_file':
+      return 'dirty'
+    case 'file_wide':
+      return 'file-wide'
+    default:
+      return confidence
+  }
 }
 
 export function getSymbolKindRank(symbol: SymbolNode) {
@@ -2374,6 +2426,52 @@ function compareFlowNodeOrder(
   }
 
   return left.id.localeCompare(right.id)
+}
+
+function orderFlowNodesForParentRendering(nodes: Node[]) {
+  const nodeById = new Map(nodes.map((node) => [node.id, node]))
+  const originalIndexById = new Map(nodes.map((node, index) => [node.id, index]))
+  const depthById = new Map<string, number>()
+
+  const getDepth = (node: Node, visited = new Set<string>()): number => {
+    const existingDepth = depthById.get(node.id)
+
+    if (existingDepth != null) {
+      return existingDepth
+    }
+
+    const parentId = node.parentId
+
+    if (!parentId || visited.has(node.id)) {
+      depthById.set(node.id, 0)
+      return 0
+    }
+
+    const parentNode = nodeById.get(parentId)
+
+    if (!parentNode) {
+      depthById.set(node.id, 0)
+      return 0
+    }
+
+    const nextVisited = new Set(visited)
+    nextVisited.add(node.id)
+
+    const depth = getDepth(parentNode, nextVisited) + 1
+    depthById.set(node.id, depth)
+    return depth
+  }
+
+  return [...nodes].sort((left, right) => {
+    const leftDepth = getDepth(left)
+    const rightDepth = getDepth(right)
+
+    if (leftDepth !== rightDepth) {
+      return leftDepth - rightDepth
+    }
+
+    return (originalIndexById.get(left.id) ?? 0) - (originalIndexById.get(right.id) ?? 0)
+  })
 }
 
 function getFilesystemNodeDepth(node: ProjectNode) {

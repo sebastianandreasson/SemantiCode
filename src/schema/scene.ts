@@ -5,6 +5,9 @@ export type CanvasBaseScene =
   | {
       kind: 'semantic_projection'
     }
+  | {
+      kind: 'agent_focus_semantic'
+    }
 
 export type CompareOverlaySourceType = 'layout' | 'draft'
 

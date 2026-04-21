@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from 'react'
 import type { Edge } from '@xyflow/react'
 import CodeMirror from '@uiw/react-codemirror'
 import { EditorState, type Extension } from '@uiw/react-codemirror'
@@ -57,6 +64,7 @@ interface InspectorPaneProps {
   agentEventFeedEntries: AgentDebugFeedEntry[]
   compareOverlayActive: boolean
   detectedPlugins: ProjectPluginDetection[]
+  dockMoveHandle?: ReactNode
   draftActionError?: string | null
   facetDefinitions: ProjectFacetDefinition[]
   followDebugState: FollowDebugState
@@ -116,6 +124,7 @@ export function InspectorPane({
   agentEventFeedEntries,
   compareOverlayActive,
   detectedPlugins,
+  dockMoveHandle = null,
   draftActionError = null,
   facetDefinitions,
   followDebugState,
@@ -173,14 +182,17 @@ export function InspectorPane({
           <p className="cbv-eyebrow">{header.eyebrow ?? 'Inspector'}</p>
           <strong title={header.title}>{header.title}</strong>
         </div>
-        <button
-          aria-label="Close inspector"
-          className="cbv-inspector-close"
-          onClick={onClose}
-          type="button"
-        >
-          ×
-        </button>
+        <div className="cbv-panel-header-actions">
+          {dockMoveHandle}
+          <button
+            aria-label="Close inspector"
+            className="cbv-inspector-close"
+            onClick={onClose}
+            type="button"
+          >
+            ×
+          </button>
+        </div>
       </div>
 
       <div className="cbv-inspector-tabs">

@@ -391,11 +391,18 @@
   padding-right: 0.75rem;
 }
 
-.cbv-workspace-sidebar-close {
+.cbv-workspace-sidebar-actions {
   position: absolute;
   top: 0.6rem;
   right: 0.9rem;
   z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.cbv-workspace-sidebar-actions .cbv-workspace-sidebar-close {
+  position: static;
 }
 
 .cbv-sidebar-section-header,

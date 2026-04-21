@@ -50,6 +50,8 @@ interface UseAgentSessionControllerInput {
   composerFocusRequestKey?: number
   desktopHostAvailable?: boolean
   inspectorContext?: AgentScopeContext
+  onActiveSessionChange?: (session: AgentSessionSummary | null) => void
+  onChatSessionCleared?: (session: AgentSessionSummary | null) => void
   onRunSettled?: () => Promise<void>
   preprocessedWorkspaceContext?: PreprocessedWorkspaceContext | null
   promptSeed?: {
@@ -66,6 +68,8 @@ export function useAgentSessionController({
   composerFocusRequestKey = 0,
   desktopHostAvailable = false,
   inspectorContext,
+  onActiveSessionChange,
+  onChatSessionCleared,
   onRunSettled,
   preprocessedWorkspaceContext = null,
   promptSeed = null,
@@ -121,6 +125,14 @@ export function useAgentSessionController({
   useEffect(() => {
     sessionRef.current = session
   }, [session])
+
+  useEffect(() => {
+    if (settingsOnly) {
+      return
+    }
+
+    onActiveSessionChange?.(session)
+  }, [onActiveSessionChange, session, settingsOnly])
 
   useEffect(() => {
     controlsRef.current = controls
@@ -429,7 +441,13 @@ export function useAgentSessionController({
       setErrorMessage(null)
       shouldStickToTimelineBottomRef.current = true
 
+      const localCommandName = getLocalCommandName(nextPrompt)
+
       if (await handleLocalCommand(nextPrompt)) {
+        if (localCommandName === 'clear') {
+          onChatSessionCleared?.(sessionRef.current)
+        }
+
         setComposerState({
           seedId: promptSeed?.id ?? composerState.seedId,
           value: '',
@@ -804,4 +822,12 @@ function areBridgeInfoEqual(
     left.hasAgentBridge === right.hasAgentBridge &&
     left.hasDesktopHost === right.hasDesktopHost
   )
+}
+
+function getLocalCommandName(command: string) {
+  if (!command.startsWith('/')) {
+    return null
+  }
+
+  return command.slice(1).trim().split(/\s+/)[0] || null
 }

@@ -295,6 +295,8 @@ export interface TelemetryOverviewResponse {
 export interface TelemetryHeatmapRequest {
   mode?: TelemetryMode
   runId?: string
+  sessionId?: string
+  sinceMs?: number
   source?: TelemetrySource
   window?: TelemetryWindow
 }

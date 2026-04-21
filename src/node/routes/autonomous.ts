@@ -175,10 +175,14 @@ function getTelemetryQuery(request: IncomingMessage) {
   const windowValue = normalizeWindow(url.searchParams.get('window'))
   const mode = normalizeMode(url.searchParams.get('mode'))
   const runId = url.searchParams.get('runId')?.trim() || undefined
+  const sessionId = url.searchParams.get('sessionId')?.trim() || undefined
+  const sinceMs = normalizeSinceMs(url.searchParams.get('sinceMs'))
 
   return {
     mode,
     runId,
+    sessionId,
+    sinceMs,
     source,
     window: windowValue,
   }
@@ -209,11 +213,23 @@ function normalizeWindow(value: string | null): TelemetryWindow {
     return 'run'
   }
 
+  if (value === 'session') {
+    return 'session'
+  }
+
   if (value === 'workspace') {
     return 'workspace'
   }
 
   return 60
+}
+
+function normalizeSinceMs(value: string | null) {
+  const sinceMs = Number(value)
+
+  return Number.isFinite(sinceMs) && sinceMs > 0
+    ? sinceMs
+    : undefined
 }
 
 function matchRunId(pathname: string) {

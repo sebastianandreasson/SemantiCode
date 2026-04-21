@@ -10,11 +10,13 @@ import type {
 import {
   applyFlowEdgePresentation,
   applyFlowNodePresentation,
+  buildExpandedClusterLayouts,
   buildLayoutGroupContainerIndex,
   buildFlowModel,
   buildUpdatedPlacementsForMovedNode,
   buildWorkspaceSidebarGroups,
   createSymbolFootprintLookup,
+  deriveSymbolClusterState,
   getLayoutGroupNodeId,
   mergeDefaultLayoutWithExisting,
   type SymbolClusterState,
@@ -402,6 +404,44 @@ describe('flowModel extracted helpers', () => {
       clusterSize: 2,
       sharedCallerCount: 2,
     })
+  })
+
+  it('orders expanded cluster parents before child symbols for React Flow nesting', () => {
+    const root = symbol('zRoot', 'RootWorkflow', null, 'function', 1, 80)
+    const child = {
+      ...symbol('aChild', 'buildStep', null, 'function', 10, 16),
+      parentSymbolId: root.id,
+    }
+    const snapshot = buildSnapshot([child, root])
+    const layout = buildSymbolLayout([child.id, root.id])
+    const symbolClusterState = deriveSymbolClusterState(snapshot, layout, 'symbols')
+    const expandedClusterIds = new Set(['cluster:zRoot'])
+    const expandedClusterLayouts = buildExpandedClusterLayouts(
+      snapshot,
+      layout,
+      symbolClusterState,
+      expandedClusterIds,
+    )
+
+    const model = buildFlowModel(
+      snapshot,
+      layout,
+      { contains: false, imports: false, calls: false },
+      'symbols',
+      symbolClusterState,
+      expandedClusterIds,
+      expandedClusterLayouts,
+      new Map(),
+      new Map(),
+      new Set<string>(),
+      () => {},
+    )
+    const rootIndex = model.nodes.findIndex((node) => node.id === root.id)
+    const childIndex = model.nodes.findIndex((node) => node.id === child.id)
+
+    expect(model.nodes[childIndex]?.parentId).toBe(root.id)
+    expect(rootIndex).toBeGreaterThanOrEqual(0)
+    expect(childIndex).toBeGreaterThan(rootIndex)
   })
 
   it('does not promote tiny constants to large-symbol size when zoomed out', () => {
