@@ -31,7 +31,6 @@ export default defineConfig({
     },
     rollupOptions: {
       external: [
-        '@mariozechner/pi-agent',
         '@mariozechner/pi-ai',
         '@mariozechner/pi-coding-agent',
         '@persper/js-callgraph',

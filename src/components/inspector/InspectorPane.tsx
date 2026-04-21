@@ -1617,6 +1617,10 @@ function formatKindTag(symbol: SymbolNode | null) {
     return 'comp'
   }
 
+  if (symbol.facets.includes('api:handler')) {
+    return 'api'
+  }
+
   if (symbol.facets.includes('react:hook')) {
     return 'hook'
   }

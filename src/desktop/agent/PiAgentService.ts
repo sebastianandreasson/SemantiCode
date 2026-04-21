@@ -2,25 +2,11 @@ import { randomUUID } from 'node:crypto'
 import { unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import { Agent, ProviderTransport, type AgentEvent as PiAgentEvent } from '@mariozechner/pi-agent'
-import {
-  getApiKey,
-  getModel,
-  getModels,
-  type AgentTool,
-  type AssistantMessage,
-  type KnownProvider,
-  type Message,
-} from '@mariozechner/pi-ai'
 import {
   AuthStorage,
   createAgentSessionFromServices,
   createAgentSessionRuntime,
   createAgentSessionServices,
-  createCodingTools,
-  createFindTool,
-  createGrepTool,
-  createLsTool,
   getAgentDir,
   ModelRegistry,
   type OAuthCredential,
@@ -99,11 +85,11 @@ import {
 } from '../agent-runtime/WorkspaceAgentRuntime'
 
 const DEFAULT_PI_PROVIDER = 'openai'
-const DEFAULT_PI_MODEL_ID = 'gpt-4.1-mini'
 const BOOT_PROMPT_ENV_NAME = 'SEMANTICODE_PI_BOOT_PROMPT'
 const PI_PROVIDER_ENV_NAME = 'SEMANTICODE_PI_PROVIDER'
 const PI_MODEL_ENV_NAME = 'SEMANTICODE_PI_MODEL'
 const MAX_SESSION_FILE_OPERATIONS = 250
+const STANDARD_SDK_TOOL_NAMES = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls'] as const
 
 type PiRegistryModel = ReturnType<ModelRegistry['getAll']>[number]
 
@@ -124,9 +110,8 @@ interface BaseAgentSessionRecord {
   workspaceRootDir: string
 }
 
-interface LegacyPiAgentSessionRecord extends BaseAgentSessionRecord {
-  agent: Agent
-  kind: 'legacy'
+interface DisabledPiAgentSessionRecord extends BaseAgentSessionRecord {
+  kind: 'disabled'
 }
 
 interface PiSdkAgentSessionRecord extends BaseAgentSessionRecord {
@@ -136,7 +121,7 @@ interface PiSdkAgentSessionRecord extends BaseAgentSessionRecord {
   session: AgentSession
 }
 
-type AgentSessionRecord = LegacyPiAgentSessionRecord | PiSdkAgentSessionRecord
+type AgentSessionRecord = DisabledPiAgentSessionRecord | PiSdkAgentSessionRecord
 
 function createTurnToolCounts(
   record: AgentSessionRecord,
@@ -203,7 +188,6 @@ export class PiAgentService {
       return existingRecord.summary
     }
 
-    await this.settingsStore.applyConfiguredApiKeys()
     const settings = await this.getSettings()
     const provider = resolveProvider(settings)
     const sdkAuthStorage = await this.createSdkAuthStorage(settings)
@@ -250,9 +234,7 @@ export class PiAgentService {
             summary,
             workspaceRootDir,
           })
-        : this.createLegacySessionRecord({
-            disabledReason,
-            provider,
+        : this.createDisabledSessionRecord({
             settings,
             summary,
             workspaceRootDir,
@@ -274,7 +256,7 @@ export class PiAgentService {
     )
 
     this.logger.info(
-      `[semanticode][pi] Created ${record.kind === 'sdk' ? 'SDK' : 'provider'} workspace session ${record.summary.id} for ${workspaceRootDir} using ${record.summary.provider}/${record.summary.modelId}.`,
+      `[semanticode][pi] Created ${record.kind === 'sdk' ? 'SDK' : 'disabled'} workspace session ${record.summary.id} for ${workspaceRootDir} using ${record.summary.provider}/${record.summary.modelId}.`,
     )
 
     if (disabledReason) {
@@ -284,7 +266,7 @@ export class PiAgentService {
       return summary
     }
 
-    if (bootPrompt.length > 0) {
+    if (record.kind === 'sdk' && bootPrompt.length > 0) {
       await this.runBootPrompt(record, bootPrompt)
     }
 
@@ -303,9 +285,6 @@ export class PiAgentService {
       await record.runtime.dispose().catch(() => {
         record.session.dispose()
       })
-    } else {
-      record.agent.abort()
-      await record.agent.waitForIdle().catch(() => undefined)
     }
     record.unsubscribe()
 
@@ -378,51 +357,30 @@ export class PiAgentService {
     return authStorage
   }
 
-  private createLegacySessionRecord(input: {
-    disabledReason?: string
-    provider: string
+  private createDisabledSessionRecord(input: {
     settings: AgentSettingsState
     summary: AgentSessionSummary
     workspaceRootDir: string
-  }): LegacyPiAgentSessionRecord {
-    const transport = input.disabledReason
-      ? createDisabledTransport()
-      : this.createTransport(input.provider)
-    const model = resolveLegacyProviderModel(input.provider, input.settings.modelId)
-    const agent = new Agent({
-      initialState: {
-        model,
-        systemPrompt: buildWorkspaceSystemPrompt(input.workspaceRootDir),
-        thinkingLevel: 'medium',
-        tools: [],
-      },
-      transport,
-    })
-    const unsubscribe = agent.subscribe((event) => {
-      this.handleLegacyAgentEvent(input.summary.id, input.workspaceRootDir, event)
-    })
-
+  }): DisabledPiAgentSessionRecord {
     return {
       activeAssistantMessageId: null,
-      agent,
-      capabilities: resolveCapabilities(input.disabledReason),
+      capabilities: DISABLED_AGENT_CAPABILITIES,
       completedAssistantMessageId: null,
       fileOperations: [],
-      kind: 'legacy',
+      kind: 'disabled',
       messages: [],
       promptSequence: 0,
       summary: {
         ...input.summary,
-        capabilities: resolveCapabilities(input.disabledReason),
+        capabilities: DISABLED_AGENT_CAPABILITIES,
         runtimeKind: resolveRuntimeKind(),
-        thinkingLevel: 'medium',
       },
       timeline: [],
       timelineRevision: 0,
       turnToolCallIds: new Set(),
       toolInvocationById: new Map(),
       toolProfile: input.settings.toolProfile,
-      unsubscribe,
+      unsubscribe: () => undefined,
       workspaceRootDir: input.workspaceRootDir,
     }
   }
@@ -645,31 +603,17 @@ export class PiAgentService {
     const displayText = (promptRequest.displayText ?? promptRequest.message).trim()
     const contextInjection = promptRequest.contextInjection?.trim()
     const promptMode = promptRequest.mode ?? 'send'
-    const agentText =
-      promptRequest.agentText?.trim() ||
-      (contextInjection ? buildContextualAgentPrompt(contextInjection, displayText) : displayText)
     const now = new Date().toISOString()
     const startedAt = now
     const promptSequence = record.promptSequence + 1
     const existingToolCallIds = new Set(record.toolInvocationById.keys())
 
     record.promptSequence = promptSequence
-    if (record.kind === 'legacy') {
-      const normalizedMessage: AgentMessage = {
-        id: `agent-message:${randomUUID()}`,
-        role: 'user',
-        blocks: [{ kind: 'text', text: displayText }],
-        createdAt: now,
-        isStreaming: false,
-      }
-
-      record.messages = upsertNormalizedMessage(record.messages, normalizedMessage)
-      this.emit({
-        type: 'message',
-        sessionId: record.summary.id,
-        message: normalizedMessage,
-      })
-      this.addMessageTimelineItems(record, normalizedMessage)
+    if (record.kind !== 'sdk') {
+      throw new Error(
+        record.summary.lastError ??
+          `The workspace agent session is not available for "${record.summary.provider}".`,
+      )
     }
 
     record.summary = updateSessionSummary(record.summary, {
@@ -688,27 +632,23 @@ export class PiAgentService {
       this.logger.info(
         `[semanticode][agent] Prompting PI session ${record.summary.id} with model ${record.summary.modelId}.`,
       )
-      if (record.kind === 'sdk') {
-        const streamingBehavior =
-          promptMode === 'steer'
-            ? 'steer'
-            : promptMode === 'follow_up' || record.session.isStreaming
-              ? 'followUp'
-              : undefined
+      const streamingBehavior =
+        promptMode === 'steer'
+          ? 'steer'
+          : promptMode === 'follow_up' || record.session.isStreaming
+            ? 'followUp'
+            : undefined
 
-        if (contextInjection) {
-          record.pendingContextQueue.push(contextInjection)
-          queuedContextInjection = contextInjection
-        }
-
-        await record.session.prompt(displayText, {
-          streamingBehavior,
-        })
-      } else {
-        await record.agent.prompt(agentText)
+      if (contextInjection) {
+        record.pendingContextQueue.push(contextInjection)
+        queuedContextInjection = contextInjection
       }
+
+      await record.session.prompt(displayText, {
+        streamingBehavior,
+      })
     } catch (error) {
-      if (record.kind === 'sdk' && queuedContextInjection) {
+      if (queuedContextInjection) {
         const queuedIndex = record.pendingContextQueue.indexOf(queuedContextInjection)
 
         if (queuedIndex !== -1) {
@@ -771,7 +711,6 @@ export class PiAgentService {
     input: LayoutSuggestionPayload,
   ): Promise<LayoutSuggestionResponse> {
     await this.telemetryService?.ensureWorkspaceTelemetry(workspaceRootDir).catch(() => undefined)
-    await this.settingsStore.applyConfiguredApiKeys()
     const settings = await this.getSettings()
     const provider = resolveProvider(settings)
     const disabledReason = resolveDisabledReason(settings.authMode, provider, settings)
@@ -804,23 +743,13 @@ export class PiAgentService {
     })
 
     try {
-      if (settings.authMode === 'brokered_oauth') {
-        await this.runSdkLayoutSuggestion({
-      input,
-      provider,
-      querySession,
-      settings,
-      workspaceRootDir,
-        })
-      } else {
-        await this.runNativeLayoutSuggestion({
-          input,
-          provider,
-          querySession,
-          settings,
-          workspaceRootDir,
-        })
-      }
+      await this.runSdkLayoutSuggestion({
+        input,
+        provider,
+        querySession,
+        settings,
+        workspaceRootDir,
+      })
 
       const createdDraft =
         querySession.getCreatedDraft() ??
@@ -859,7 +788,6 @@ export class PiAgentService {
     },
   ) {
     await this.telemetryService?.ensureWorkspaceTelemetry(workspaceRootDir).catch(() => undefined)
-    await this.settingsStore.applyConfiguredApiKeys()
     const settings = await this.getSettings()
     const provider = resolveProvider(settings)
     const disabledReason = resolveDisabledReason(settings.authMode, provider, settings)
@@ -868,120 +796,35 @@ export class PiAgentService {
       throw new Error(disabledReason)
     }
 
-    if (settings.authMode === 'brokered_oauth') {
-      const result = await this.runTransientSdkPrompt({
-        message: input.message,
-        provider,
-        rootDir: workspaceRootDir,
-        settings,
-        systemPrompt: input.systemPrompt ?? buildWorkspaceSystemPrompt(workspaceRootDir),
-        toolProfile: settings.toolProfile,
-      })
-
-      await this.telemetryService?.recordInteractivePrompt({
-        finishedAt: new Date().toISOString(),
-        kind: input.telemetry?.kind ?? 'one_off_prompt',
-        message: input.message,
-        modelId: result.model.id,
-        promptSequence: 1,
-        provider: String(result.model.provider),
-        rootDir: workspaceRootDir,
-        scope: input.telemetry,
-        sessionId: `one-off:${randomUUID()}`,
-        startedAt: result.startedAt,
-        toolProfile: settings.toolProfile,
-        toolInvocations: result.toolInvocations,
-      }).catch((error) => {
-        this.logger.warn(
-          `[semanticode][telemetry] Failed to write one-off telemetry: ${error instanceof Error ? error.message : error}`,
-        )
-      })
-
-      return result.assistantText
-    }
-
-    const transport = this.createTransport(provider)
-    const model = resolveLegacyProviderModel(provider, settings.modelId)
-    const agent = new Agent({
-      initialState: {
-        model,
-        systemPrompt: input.systemPrompt ?? buildWorkspaceSystemPrompt(workspaceRootDir),
-        thinkingLevel: 'medium',
-        tools: [],
-      },
-      transport,
+    const result = await this.runTransientSdkPrompt({
+      message: input.message,
+      provider,
+      rootDir: workspaceRootDir,
+      settings,
+      systemPrompt: input.systemPrompt ?? buildWorkspaceSystemPrompt(workspaceRootDir),
+      toolProfile: settings.toolProfile,
     })
 
-    let assistantText = ''
-    const toolInvocationById = new Map<string, AgentToolInvocation>()
-    const startedAt = new Date().toISOString()
-    const sessionId = `one-off:${randomUUID()}`
-    const unsubscribe = agent.subscribe((event) => {
-      if (event.type === 'tool_execution_start') {
-        toolInvocationById.set(event.toolCallId, {
-          args: event.args,
-          startedAt: new Date().toISOString(),
-          toolCallId: event.toolCallId,
-          toolName: event.toolName,
-        })
-      }
-
-      if (event.type === 'tool_execution_end') {
-        const existingInvocation = toolInvocationById.get(event.toolCallId)
-
-        if (existingInvocation) {
-          toolInvocationById.set(event.toolCallId, {
-            ...existingInvocation,
-            endedAt: new Date().toISOString(),
-            isError: event.isError,
-          })
-        }
-      }
-
-      if (
-        (event.type === 'message_end' || event.type === 'turn_end') &&
-        event.message.role === 'assistant'
-      ) {
-        const nextText = extractAssistantText(event.message)
-
-        if (nextText) {
-          assistantText = nextText
-        }
-      }
+    await this.telemetryService?.recordInteractivePrompt({
+      finishedAt: new Date().toISOString(),
+      kind: input.telemetry?.kind ?? 'one_off_prompt',
+      message: input.message,
+      modelId: result.model.id,
+      promptSequence: 1,
+      provider: String(result.model.provider),
+      rootDir: workspaceRootDir,
+      scope: input.telemetry,
+      sessionId: `one-off:${randomUUID()}`,
+      startedAt: result.startedAt,
+      toolProfile: settings.toolProfile,
+      toolInvocations: result.toolInvocations,
+    }).catch((error) => {
+      this.logger.warn(
+        `[semanticode][telemetry] Failed to write one-off telemetry: ${error instanceof Error ? error.message : error}`,
+      )
     })
 
-    try {
-      await agent.prompt(input.message)
-      await agent.waitForIdle().catch(() => undefined)
-
-      if (!assistantText.trim()) {
-        throw new Error('The preprocessing prompt returned no assistant text.')
-      }
-
-      return assistantText.trim()
-    } finally {
-      await this.telemetryService?.recordInteractivePrompt({
-        finishedAt: new Date().toISOString(),
-        kind: input.telemetry?.kind ?? 'one_off_prompt',
-        message: input.message,
-        modelId: model.id,
-        promptSequence: 1,
-        provider,
-        rootDir: workspaceRootDir,
-        scope: input.telemetry,
-        sessionId,
-        startedAt,
-        toolProfile: settings.toolProfile,
-        toolInvocations: [...toolInvocationById.values()],
-      }).catch((error) => {
-        this.logger.warn(
-          `[semanticode][telemetry] Failed to write one-off telemetry: ${error instanceof Error ? error.message : error}`,
-        )
-      })
-      unsubscribe()
-      agent.abort()
-      await agent.waitForIdle().catch(() => undefined)
-    }
+    return result.assistantText
   }
 
   async cancelWorkspaceSession(workspaceRootDir: string) {
@@ -993,8 +836,6 @@ export class PiAgentService {
 
     if (record.kind === 'sdk') {
       await record.session.abort().catch(() => undefined)
-    } else {
-      record.agent.abort()
     }
     record.summary = updateSessionSummary(record.summary, {
       runState: resolveSessionReadyState(record.summary),
@@ -1513,7 +1354,6 @@ export class PiAgentService {
     workspaceRootDir: string,
     sessionManager: SessionManager,
   ) {
-    await this.settingsStore.applyConfiguredApiKeys()
     const settings = await this.getSettings()
     const provider = resolveProvider(settings)
     const sdkAuthStorage = await this.createSdkAuthStorage(settings)
@@ -1566,77 +1406,6 @@ export class PiAgentService {
     })
   }
 
-  private async runNativeLayoutSuggestion(input: {
-    input: LayoutSuggestionPayload
-    provider: string
-    querySession: ReturnType<typeof registerLayoutQuerySession>
-    settings: AgentSettingsState
-    workspaceRootDir: string
-  }) {
-    const model = resolveLegacyProviderModel(input.provider, input.settings.modelId)
-    const agent = new Agent({
-      initialState: {
-        model,
-        systemPrompt: buildLayoutSuggestionSystemPrompt(),
-        thinkingLevel: 'medium',
-        tools: createLayoutQueryTools(input.querySession),
-      },
-      transport: this.createTransport(input.provider),
-    })
-    const startedAt = new Date().toISOString()
-    const toolInvocationById = new Map<string, AgentToolInvocation>()
-    const unsubscribe = agent.subscribe((event) => {
-      if (event.type === 'tool_execution_start') {
-        toolInvocationById.set(event.toolCallId, {
-          args: event.args,
-          startedAt: new Date().toISOString(),
-          toolCallId: event.toolCallId,
-          toolName: event.toolName,
-        })
-      }
-
-      if (event.type === 'tool_execution_end') {
-        const existingInvocation = toolInvocationById.get(event.toolCallId)
-
-        if (existingInvocation) {
-          toolInvocationById.set(event.toolCallId, {
-            ...existingInvocation,
-            endedAt: new Date().toISOString(),
-            isError: event.isError,
-          })
-        }
-      }
-    })
-
-    try {
-      await agent.prompt(buildLayoutSuggestionUserPrompt(input.input))
-      await agent.waitForIdle().catch(() => undefined)
-    } finally {
-      await this.telemetryService?.recordInteractivePrompt({
-        finishedAt: new Date().toISOString(),
-        kind: 'layout_suggestion',
-        message: input.input.prompt,
-        modelId: model.id,
-        promptSequence: 1,
-        provider: input.provider,
-        rootDir: input.workspaceRootDir,
-        scope: {
-          task: input.input.prompt,
-        },
-        sessionId: `layout-suggestion:${randomUUID()}`,
-        startedAt,
-        toolInvocations: [...toolInvocationById.values()],
-      }).catch((error) => {
-        this.logger.warn(
-          `[semanticode][telemetry] Failed to write layout suggestion telemetry: ${error instanceof Error ? error.message : error}`,
-        )
-      })
-      unsubscribe()
-      agent.abort()
-      await agent.waitForIdle().catch(() => undefined)
-    }
-  }
-
   private async runSdkLayoutSuggestion(input: {
     input: LayoutSuggestionPayload
     provider: string
@@ -1684,7 +1453,6 @@ export class PiAgentService {
     settings: AgentSettingsState
     systemPrompt?: string
     toolProfile?: AgentToolProfile
-    tools?: AgentTool[]
   }) {
     const startedAt = new Date().toISOString()
     const agentDir = getAgentDir()
@@ -1739,10 +1507,10 @@ export class PiAgentService {
         throw new Error(`No pi SDK model is available for provider "${input.provider}".`)
       }
 
-      const toolConfig = input.customTools || input.tools
+      const toolConfig = input.customTools
         ? {
             customTools: input.customTools,
-            tools: (input.tools ?? []) as never,
+            tools: input.customTools.map((tool) => tool.name),
           }
         : createSdkSessionToolConfig(cwd, input.toolProfile ?? input.settings.toolProfile)
 
@@ -1833,13 +1601,7 @@ export class PiAgentService {
     }
   }
 
-  private createTransport(provider: string) {
-    return new ProviderTransport({
-      getApiKey: () => getApiKey(provider as KnownProvider),
-    })
-  }
-
-  private async runBootPrompt(record: AgentSessionRecord, prompt: string) {
+  private async runBootPrompt(record: PiSdkAgentSessionRecord, prompt: string) {
     record.summary = updateSessionSummary(record.summary, {
       runState: 'running',
       lastError: undefined,
@@ -1849,11 +1611,7 @@ export class PiAgentService {
       this.logger.info(
         `[semanticode][pi] Running boot prompt for workspace ${record.workspaceRootDir}.`,
       )
-      if (record.kind === 'sdk') {
-        await record.session.prompt(prompt)
-      } else {
-        await record.agent.prompt(prompt)
-      }
+      await record.session.prompt(prompt)
       record.summary = updateSessionSummary(record.summary, {
         runState: 'ready',
       })
@@ -1870,152 +1628,6 @@ export class PiAgentService {
       this.logger.error(
         `[semanticode][pi] Boot prompt failed for workspace ${record.workspaceRootDir}: ${message}`,
       )
-    }
-  }
-
-  private handleLegacyAgentEvent(
-    sessionId: string,
-    workspaceRootDir: string,
-    event: PiAgentEvent,
-  ) {
-    const record = this.sessionsByWorkspaceRootDir.get(workspaceRootDir)
-
-    if (!record || record.kind !== 'legacy') {
-      return
-    }
-
-    switch (event.type) {
-      case 'agent_start':
-        record.turnToolCallIds = new Set()
-        this.updateRecordSummary(record, {
-          runState: 'running',
-          lastError: undefined,
-        })
-        this.addTimelineItem(
-          record,
-          createLifecycleTimelineItem({
-            event: 'agent_start',
-            label: 'agent start',
-            status: 'running',
-          }),
-        )
-        break
-
-      case 'turn_start':
-        record.turnToolCallIds = new Set()
-        record.completedAssistantMessageId = null
-        this.updateRecordSummary(record, {
-          runState: 'running',
-          lastError: undefined,
-        })
-        this.addTimelineItem(
-          record,
-          createLifecycleTimelineItem({
-            event: 'turn_start',
-            label: 'turn start',
-            status: 'running',
-          }),
-        )
-        break
-
-      case 'message_start':
-        this.updateRecordSummary(record, {
-          runState: 'running',
-          lastError: undefined,
-        })
-        if (event.type === 'message_start' && event.message.role === 'assistant') {
-          record.activeAssistantMessageId = `agent-message:${randomUUID()}`
-          record.completedAssistantMessageId = null
-          this.emitNormalizedMessage(record, event.message, true)
-        }
-        break
-
-      case 'tool_execution_start': {
-        const invocation = normalizeToolInvocation({
-          toolCallId: event.toolCallId,
-          toolName: event.toolName,
-          args: event.args,
-          startedAt: new Date().toISOString(),
-        })
-
-        record.toolInvocationById.set(event.toolCallId, invocation)
-        record.turnToolCallIds.add(event.toolCallId)
-        this.logger.info(
-          `[semanticode][pi] ${sessionId} tool start: ${event.toolName}`,
-        )
-        this.emitToolInvocation(record, sessionId, invocation)
-        this.addTimelineItem(
-          record,
-          createToolTimelineItem(invocation),
-        )
-        break
-      }
-
-      case 'tool_execution_end':
-        record.turnToolCallIds.add(event.toolCallId)
-        this.finishToolInvocation(record, sessionId, event)
-        if (event.isError) {
-          this.logger.warn(
-            `[semanticode][pi] ${sessionId} tool error: ${event.toolName}`,
-          )
-        } else {
-          this.logger.info(
-            `[semanticode][pi] ${sessionId} tool end: ${event.toolName}`,
-          )
-        }
-        break
-
-      case 'message_update':
-        this.emitNormalizedMessage(record, event.message, true)
-        if (event.assistantMessageEvent.type === 'text_delta') {
-          this.logger.info(
-            `[semanticode][pi] ${sessionId} delta: ${event.assistantMessageEvent.delta}`,
-          )
-        }
-        break
-
-      case 'turn_end':
-      case 'agent_end':
-        this.updateRecordSummary(record, {
-          runState: resolveSessionReadyState(record.summary),
-          lastError:
-            event.type === 'turn_end' &&
-            event.message.role === 'assistant' &&
-            'errorMessage' in event.message &&
-            event.message.errorMessage
-              ? event.message.errorMessage
-              : record.summary.lastError,
-        })
-        if (
-          event.type === 'turn_end' &&
-          event.message.role === 'assistant' &&
-          !record.completedAssistantMessageId
-        ) {
-          const normalizedMessage = this.emitNormalizedMessage(record, event.message, false)
-          record.completedAssistantMessageId = normalizedMessage?.id ?? null
-          record.activeAssistantMessageId = null
-        }
-        this.addTimelineItem(
-          record,
-          createLifecycleTimelineItem({
-            counts:
-              event.type === 'turn_end'
-                ? createTurnToolCounts(record, event.toolResults.length)
-                : undefined,
-            event: event.type,
-            label: event.type === 'turn_end' ? 'turn done' : 'agent done',
-            status: 'completed',
-          }),
-        )
-        break
-
-      case 'message_end':
-        if (event.message.role === 'assistant') {
-          const normalizedMessage = this.emitNormalizedMessage(record, event.message, false)
-          record.completedAssistantMessageId = normalizedMessage?.id ?? null
-          record.activeAssistantMessageId = null
-        }
-        break
     }
   }
 
@@ -2147,59 +1759,6 @@ export class PiAgentService {
         .map((tool) => createToolControlInfo(tool, activeToolNameSet))
         .sort((left, right) => left.name.localeCompare(right.name)),
     }
-  }
-
-  private emitNormalizedMessage(
-    record: AgentSessionRecord,
-    message: Message | AssistantMessage,
-    isStreaming: boolean,
-  ): AgentMessage | null {
-    const normalizedMessage = normalizeAgentMessage(
-      record.summary.id,
-      record.activeAssistantMessageId,
-      message,
-      isStreaming,
-    )
-
-    if (!normalizedMessage) {
-      return null
-    }
-
-    this.emit({
-      type: 'message',
-      sessionId: record.summary.id,
-      message: normalizedMessage,
-    })
-    record.messages = upsertNormalizedMessage(record.messages, normalizedMessage)
-    this.emitFileOperationsForMessage(record, normalizedMessage)
-    this.addMessageTimelineItems(record, normalizedMessage)
-    return normalizedMessage
-  }
-
-  private finishToolInvocation(
-    record: AgentSessionRecord,
-    sessionId: string,
-    event: Extract<PiAgentEvent, { type: 'tool_execution_end' }>,
-  ) {
-    const existingInvocation = record.toolInvocationById.get(event.toolCallId)
-
-    if (!existingInvocation) {
-      return
-    }
-
-    const completedInvocation = normalizeToolInvocation({
-      args: existingInvocation.args,
-      endedAt: new Date().toISOString(),
-      isError: event.isError,
-      result: event.result,
-      startedAt: existingInvocation.startedAt,
-      toolCallId: event.toolCallId,
-      toolName: existingInvocation.toolName || event.toolName,
-    })
-
-    record.toolInvocationById.set(event.toolCallId, completedInvocation)
-    this.emitToolInvocation(record, sessionId, completedInvocation)
-    this.addTimelineItem(record, createToolTimelineItem(completedInvocation))
   }
 
   private emitToolInvocation(
@@ -2597,48 +2156,6 @@ function formatSessionListItem(session: SessionInfo): AgentSessionListItem {
   }
 }
 
-function createLayoutQueryTools(
-  querySession: ReturnType<typeof registerLayoutQuerySession>,
-): AgentTool[] {
-  return [
-    createLayoutQueryTool(
-      'getWorkspaceSummary',
-      'Get compact workspace counts, available facets/tags, top directories, and existing layout summaries.',
-      querySession,
-    ),
-    createLayoutQueryTool(
-      'findNodes',
-      'Find compact node references using filters like kind, symbolKind, facet, tag, pathPrefix, pathContains, nameContains, nameRegex, LOC range, degree range, and limit.',
-      querySession,
-    ),
-    createLayoutQueryTool(
-      'getNodes',
-      'Get compact node references for explicit nodeIds.',
-      querySession,
-    ),
-    createLayoutQueryTool(
-      'getNeighborhood',
-      'Expand a bounded graph neighborhood from seedNodeIds using optional edgeKinds, direction, depth, and limit.',
-      querySession,
-    ),
-    createLayoutQueryTool(
-      'summarizeScope',
-      'Summarize nodes matched by a selector and return counts plus representative nodes.',
-      querySession,
-    ),
-    createLayoutQueryTool(
-      'previewHybridLayout',
-      'Validate a hybrid layout proposal without saving it.',
-      querySession,
-    ),
-    createLayoutQueryTool(
-      'createLayoutDraft',
-      'Create and save the final draft from a hybrid layout proposal. This must be called to complete layout generation.',
-      querySession,
-    ),
-  ]
-}
-
 function createLayoutQueryToolDefinitions(
   querySession: ReturnType<typeof registerLayoutQuerySession>,
 ): ToolDefinition[] {
@@ -2679,50 +2196,6 @@ function createLayoutQueryToolDefinitions(
       querySession,
     ),
   ]
-}
-
-function createLayoutQueryTool(
-  operation: string,
-  description: string,
-  querySession: ReturnType<typeof registerLayoutQuerySession>,
-): AgentTool {
-  return {
-    description,
-    label: operation,
-    name: operation,
-    parameters: {
-      additionalProperties: true,
-      properties: {
-        args: {
-          additionalProperties: true,
-          type: 'object',
-        },
-        proposal: {
-          additionalProperties: true,
-          type: 'object',
-        },
-      },
-      type: 'object',
-    } as never,
-    execute: async (_toolCallId, params) => {
-      const result = await querySession.execute({
-        args: params && typeof params === 'object' && 'args' in params
-          ? (params.args as Record<string, unknown>)
-          : (params as Record<string, unknown>),
-        operation: operation as never,
-      })
-
-      return {
-        content: [
-          {
-            text: JSON.stringify(result),
-            type: 'text',
-          },
-        ],
-        details: result,
-      }
-    },
-  }
 }
 
 function createLayoutQueryToolDefinition(
@@ -2835,12 +2308,6 @@ function resolveProvider(settings?: AgentSettingsState): string {
   return envProvider
 }
 
-function createDisabledTransport() {
-  return new ProviderTransport({
-    getApiKey: () => undefined,
-  })
-}
-
 function normalizeAgentPromptRequest(
   messageOrRequest: string | AgentPromptRequest,
   metadata: AgentPromptRequest['metadata'] | undefined,
@@ -2862,15 +2329,6 @@ function normalizeAgentPromptRequest(
     metadata: messageOrRequest.metadata ?? metadata,
     mode: messageOrRequest.mode ?? mode,
   }
-}
-
-function buildContextualAgentPrompt(contextInjection: string, displayText: string) {
-  return [
-    contextInjection,
-    '',
-    'User request:',
-    displayText,
-  ].join('\n')
 }
 
 function createSemanticodeContextExtension(
@@ -3280,10 +2738,6 @@ function resolveDisabledReason(
     return 'OpenAI Codex sign-in is in progress.'
   }
 
-  if (!getApiKey(provider as KnownProvider)) {
-    return `No API key found for provider "${provider}".`
-  }
-
   return undefined
 }
 
@@ -3334,52 +2788,14 @@ function resolveSdkModel(
 }
 
 function createSdkSessionToolConfig(cwd: string, toolProfile: AgentToolProfile) {
+  const customTools = createSymbolQueryToolDefinitions(cwd)
+  const customToolNames = customTools.map((tool) => tool.name)
+
   return {
-    customTools: createSymbolQueryToolDefinitions(cwd),
-    tools: toolProfile === 'symbol_first' ? [] : createStandardSdkTools(cwd),
-  }
-}
-
-function createStandardSdkTools(cwd: string) {
-  return [
-    ...createCodingTools(cwd),
-    createGrepTool(cwd),
-    createFindTool(cwd),
-    createLsTool(cwd),
-  ]
-}
-
-function resolveLegacyProviderModel(provider: string, preferredModelId?: string) {
-  try {
-    return resolveModel(provider as KnownProvider, preferredModelId)
-  } catch {
-    return resolveModel(DEFAULT_PI_PROVIDER as KnownProvider, DEFAULT_PI_MODEL_ID)
-  }
-}
-
-function resolveModel(provider: KnownProvider, preferredModelId?: string) {
-  const envModelId = process.env[PI_MODEL_ENV_NAME]?.trim()
-  const desiredModelId = envModelId || preferredModelId || DEFAULT_PI_MODEL_ID
-  const exactModel = tryGetModel(provider, desiredModelId)
-
-  if (exactModel) {
-    return exactModel
-  }
-
-  const fallbackModel = getModels(provider)[0]
-
-  if (!fallbackModel) {
-    throw new Error(`No PI models available for provider "${provider}".`)
-  }
-
-  return fallbackModel
-}
-
-function tryGetModel(provider: KnownProvider, modelId: string) {
-  try {
-    return getModel(provider, modelId as never)
-  } catch {
-    return null
+    customTools,
+    tools: toolProfile === 'symbol_first'
+      ? customToolNames
+      : [...customToolNames, ...STANDARD_SDK_TOOL_NAMES],
   }
 }
 
@@ -3412,45 +2828,6 @@ function hasNodeErrorCode(error: unknown, code: string) {
     'code' in error &&
     (error as { code?: unknown }).code === code
   )
-}
-
-function normalizeAgentMessage(
-  sessionId: string,
-  activeAssistantMessageId: string | null,
-  message: Message | AssistantMessage,
-  isStreaming: boolean,
-): AgentMessage | null {
-  if (message.role !== 'assistant' && message.role !== 'toolResult') {
-    return null
-  }
-
-  const id =
-    message.role === 'assistant'
-      ? activeAssistantMessageId ?? `agent-message:${sessionId}:assistant`
-      : `agent-message:${sessionId}:${message.role}:${message.timestamp ?? Date.now()}`
-
-  const contentBlocks = Array.isArray(message.content) ? message.content : []
-  const blocks: AgentMessage['blocks'] = contentBlocks.reduce<AgentMessage['blocks']>((result, block) => {
-    if (block.type === 'text') {
-      result.push({ kind: 'text', text: block.text })
-      return result
-    }
-
-    if (block.type === 'thinking') {
-      result.push({ kind: 'thinking', text: block.thinking })
-      return result
-    }
-
-    return result
-  }, [] as AgentMessage['blocks'])
-
-  return {
-    id,
-    role: message.role === 'toolResult' ? 'tool' : 'assistant',
-    blocks,
-    createdAt: new Date(message.timestamp ?? Date.now()).toISOString(),
-    isStreaming,
-  }
 }
 
 function normalizeStoredSessionMessages(sessionId: string, messages: unknown[]) {
@@ -3564,19 +2941,4 @@ function formatSdkLifecycleLabel(event: AgentSessionEvent) {
     default:
       return event.type.replaceAll('_', ' ')
   }
-}
-
-function extractAssistantText(message: Message | AssistantMessage) {
-  const contentBlocks = Array.isArray(message.content) ? message.content : []
-
-  return contentBlocks
-    .flatMap((block) => {
-      if (block.type === 'text') {
-        return [block.text]
-      }
-
-      return []
-    })
-    .join('\n')
-    .trim()
 }

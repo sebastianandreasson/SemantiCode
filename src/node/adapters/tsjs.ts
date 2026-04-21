@@ -28,6 +28,8 @@ const IMPORTABLE_EXTENSIONS = new Set([
   '.tsx',
   '.mjs',
   '.cjs',
+  '.mts',
+  '.cts',
 ])
 
 const ENTRYPOINT_BASENAMES = new Set([
@@ -1219,7 +1221,7 @@ function collectHttpServerEndpoints(
       symbolContext.symbolNode,
     ]),
   )
-  const endpoints: HttpServerEndpoint[] = []
+  const astEndpoints: HttpServerEndpoint[] = []
 
   function visit(node: ts.Node) {
     if (ts.isCallExpression(node)) {
@@ -1231,7 +1233,7 @@ function collectHttpServerEndpoints(
       )
 
       if (endpoint) {
-        endpoints.push(endpoint)
+        astEndpoints.push(endpoint)
       }
     }
 
@@ -1239,7 +1241,13 @@ function collectHttpServerEndpoints(
   }
 
   visit(sourceFile)
-  return endpoints
+  const textEndpoints = collectTextHttpServerEndpoints(
+    fileNode,
+    sourceFile,
+    symbolContexts,
+  )
+
+  return dedupeServerEndpoints([...astEndpoints, ...textEndpoints])
 }
 
 function parseHttpServerEndpoint(
@@ -1256,7 +1264,8 @@ function parseHttpServerEndpoint(
 
   const directRoute = parseDirectServerRouteExpression(expression, node)
   const chainedRoute = parseChainedServerRouteExpression(expression, node)
-  const route = directRoute ?? chainedRoute
+  const objectRoute = parseObjectServerRouteExpression(expression, node)
+  const route = directRoute ?? chainedRoute ?? objectRoute
 
   if (!route) {
     return null
@@ -1345,6 +1354,152 @@ function parseHttpServerEndpoint(
       subjectId: resolveHandlerSubjectId(node.arguments, symbolByName, fileNode.id),
     }
   }
+
+  function parseObjectServerRouteExpression(
+    expression: ts.PropertyAccessExpression,
+    node: ts.CallExpression,
+  ) {
+    if (
+      expression.name.text !== 'route' ||
+      !isLikelyServerRouterReceiver(expression.expression)
+    ) {
+      return null
+    }
+
+    const routeObject = unwrapExpression(node.arguments[0])
+
+    if (!routeObject || !ts.isObjectLiteralExpression(routeObject)) {
+      return null
+    }
+
+    const method = extractRouteObjectString(routeObject, ['method'])?.toUpperCase() ?? 'ANY'
+    const routePattern = extractRouteObjectString(routeObject, ['path', 'url'])
+
+    if (!routePattern) {
+      return null
+    }
+
+    return {
+      framework: 'fastify',
+      method,
+      routePattern,
+      subjectId: resolveRouteObjectHandlerSubjectId(routeObject, symbolByName, fileNode.id),
+    }
+  }
+}
+
+function collectTextHttpServerEndpoints(
+  fileNode: FileNode,
+  sourceFile: ts.SourceFile,
+  symbolContexts: ExtractedSymbolContext[],
+) {
+  const sourceText = fileNode.content ?? ''
+
+  if (!sourceText || !hasServerRouteHints(sourceText)) {
+    return []
+  }
+
+  const endpoints: HttpServerEndpoint[] = []
+  const routeCallPattern =
+    /(?:^|[^\w$])(?:[A-Za-z_$][\w$]*|this\.[A-Za-z_$][\w$]*|express\.Router\(\)|Router\(\)|new\s+Router\(\))\s*\.\s*(get|post|put|patch|delete|head|options|all)\s*\(\s*(['"`])([^'"`]+)\2/g
+  let routeMatch: RegExpExecArray | null
+
+  while ((routeMatch = routeCallPattern.exec(sourceText)) !== null) {
+    const methodName = routeMatch[1]?.toLowerCase()
+    const routePattern = routeMatch[3]
+
+    if (!methodName || !routePattern || (methodName !== 'all' && !HTTP_METHOD_NAMES.has(methodName))) {
+      continue
+    }
+
+    const range = getSourceRangeFromOffsets(
+      sourceFile,
+      routeMatch.index,
+      routeMatch.index + routeMatch[0].length,
+    )
+    const sourceSymbol = findEnclosingSymbolContextByRange(range, symbolContexts)
+
+    endpoints.push({
+      confidence: sourceSymbol ? 0.78 : 0.68,
+      framework: inferServerFramework(sourceText),
+      method: methodName === 'all' ? 'ANY' : methodName.toUpperCase(),
+      normalizedRoutePattern: normalizeRoutePattern(routePattern),
+      range,
+      routePattern,
+      subjectId: sourceSymbol?.symbolNode.id ?? fileNode.id,
+    })
+  }
+
+  const routeObjectPattern =
+    /\b[A-Za-z_$][\w$]*\s*\.\s*route\s*\(\s*\{[\s\S]{0,1200}?(?:path|url)\s*:\s*(['"`])([^'"`]+)\1[\s\S]{0,1200}?\}\s*\)/g
+  let objectMatch: RegExpExecArray | null
+
+  while ((objectMatch = routeObjectPattern.exec(sourceText)) !== null) {
+    const routePattern = objectMatch[2]
+
+    if (!routePattern) {
+      continue
+    }
+
+    const callText = objectMatch[0]
+    const method = callText.match(/\bmethod\s*:\s*(['"`])([A-Za-z]+)\1/)?.[2]?.toUpperCase() ?? 'ANY'
+    const range = getSourceRangeFromOffsets(
+      sourceFile,
+      objectMatch.index,
+      objectMatch.index + objectMatch[0].length,
+    )
+    const sourceSymbol = findEnclosingSymbolContextByRange(range, symbolContexts)
+
+    endpoints.push({
+      confidence: sourceSymbol ? 0.78 : 0.68,
+      framework: inferServerFramework(sourceText),
+      method,
+      normalizedRoutePattern: normalizeRoutePattern(routePattern),
+      range,
+      routePattern,
+      subjectId: sourceSymbol?.symbolNode.id ?? fileNode.id,
+    })
+  }
+
+  return endpoints
+}
+
+function dedupeServerEndpoints(endpoints: HttpServerEndpoint[]) {
+  const uniqueEndpoints = new Map<string, HttpServerEndpoint>()
+
+  for (const endpoint of endpoints) {
+    const key = [
+      endpoint.method,
+      endpoint.normalizedRoutePattern,
+      endpoint.range.start.line,
+    ].join(':')
+
+    if (!uniqueEndpoints.has(key)) {
+      uniqueEndpoints.set(key, endpoint)
+    }
+  }
+
+  return [...uniqueEndpoints.values()]
+}
+
+function hasServerRouteHints(sourceText: string) {
+  return /\b(express|fastify|hono|koa|Router|NestFactory|Controller)\b/.test(sourceText)
+}
+
+function inferServerFramework(sourceText: string) {
+  if (/\bfastify\b/.test(sourceText)) {
+    return 'fastify'
+  }
+
+  if (/\bhono\b|from\s+['"]hono['"]/.test(sourceText)) {
+    return 'hono'
+  }
+
+  if (/\bkoa\b|koa-router|@koa\/router/.test(sourceText)) {
+    return 'koa'
+  }
+
+  return 'express'
 }
 
 function resolveHandlerSubjectId(
@@ -1382,13 +1537,101 @@ function getHandlerName(expression: ts.Expression): string | null {
   return null
 }
 
+function resolveRouteObjectHandlerSubjectId(
+  routeObject: ts.ObjectLiteralExpression,
+  symbolByName: Map<string, SymbolNode>,
+  fallbackSubjectId: string,
+) {
+  for (const property of routeObject.properties) {
+    if (!ts.isPropertyAssignment(property) || !isNamedObjectProperty(property, ['handler'])) {
+      continue
+    }
+
+    const handlerName = getHandlerName(unwrapExpression(property.initializer))
+
+    if (!handlerName) {
+      continue
+    }
+
+    const symbol = symbolByName.get(handlerName)
+
+    if (symbol) {
+      return symbol.id
+    }
+  }
+
+  return fallbackSubjectId
+}
+
+function extractRouteObjectString(
+  routeObject: ts.ObjectLiteralExpression,
+  propertyNames: string[],
+) {
+  for (const property of routeObject.properties) {
+    if (!ts.isPropertyAssignment(property) || !isNamedObjectProperty(property, propertyNames)) {
+      continue
+    }
+
+    const value = extractUrlTemplate(property.initializer)
+
+    if (value) {
+      return value.pathTemplate
+    }
+  }
+
+  return null
+}
+
+function isNamedObjectProperty(
+  property: ts.PropertyAssignment,
+  propertyNames: string[],
+) {
+  const name = property.name
+
+  if (ts.isIdentifier(name) || ts.isStringLiteral(name)) {
+    return propertyNames.includes(name.text)
+  }
+
+  return false
+}
+
 function isLikelyServerRouterReceiver(expression: ts.Expression) {
+  const unwrappedExpression = unwrapExpression(expression)
+
+  if (isRouterFactoryExpression(unwrappedExpression)) {
+    return true
+  }
+
   const receiverText = getExpressionText(expression)
   const receiverName = receiverText.split('.').pop() ?? receiverText
 
-  return /^(app|server|route|routes|router)$/i.test(receiverName) ||
+  return /^(app|server|route|routes|router|fastify|hono)$/i.test(receiverName) ||
     /router$/i.test(receiverName) ||
-    /app$/i.test(receiverName)
+    /app$/i.test(receiverName) ||
+    /server$/i.test(receiverName)
+}
+
+function isRouterFactoryExpression(expression: ts.Expression) {
+  if (ts.isCallExpression(expression)) {
+    const callExpression = unwrapExpression(expression.expression)
+
+    if (ts.isIdentifier(callExpression) && callExpression.text === 'Router') {
+      return true
+    }
+
+    return (
+      ts.isPropertyAccessExpression(callExpression) &&
+      callExpression.name.text === 'Router'
+    )
+  }
+
+  if (ts.isNewExpression(expression)) {
+    const constructorExpression = unwrapExpression(expression.expression)
+
+    return ts.isIdentifier(constructorExpression) && constructorExpression.text === 'Router'
+  }
+
+  return false
 }
 
 function createHttpClientRequest(input: {
@@ -1497,6 +1740,27 @@ function findEnclosingSymbolContext(
   const column = position.character
   const candidates = symbolContexts.filter((symbolContext) =>
     rangeContainsPosition(symbolContext.symbolNode.range, line, column),
+  )
+
+  if (candidates.length === 0) {
+    return null
+  }
+
+  return candidates.sort((left, right) =>
+    getRangeSpan(left.symbolNode.range) - getRangeSpan(right.symbolNode.range),
+  )[0] ?? null
+}
+
+function findEnclosingSymbolContextByRange(
+  range: SourceRange,
+  symbolContexts: ExtractedSymbolContext[],
+) {
+  const candidates = symbolContexts.filter((symbolContext) =>
+    rangeContainsPosition(
+      symbolContext.symbolNode.range,
+      range.start.line,
+      range.start.column,
+    ),
   )
 
   if (candidates.length === 0) {
@@ -1705,6 +1969,26 @@ function createSymbolNode(
 function getSourceRange(node: ts.Node, sourceFile: ts.SourceFile): SourceRange {
   const start = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile))
   const end = sourceFile.getLineAndCharacterOfPosition(node.getEnd())
+
+  return {
+    start: {
+      line: start.line + 1,
+      column: start.character,
+    },
+    end: {
+      line: end.line + 1,
+      column: end.character,
+    },
+  }
+}
+
+function getSourceRangeFromOffsets(
+  sourceFile: ts.SourceFile,
+  startOffset: number,
+  endOffset: number,
+): SourceRange {
+  const start = sourceFile.getLineAndCharacterOfPosition(startOffset)
+  const end = sourceFile.getLineAndCharacterOfPosition(endOffset)
 
   return {
     start: {

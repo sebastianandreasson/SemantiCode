@@ -189,6 +189,91 @@ describe('API endpoint graph analysis', () => {
     }
   })
 
+  it('creates endpoint nodes for inline Express router factories', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'semanticode-express-router-factory-api-'))
+
+    try {
+      await mkdir(join(rootDir, 'api'), { recursive: true })
+      await writeFile(
+        join(rootDir, 'api', 'routes.mts'),
+        [
+          "import express from 'express'",
+          '',
+          "export const router = express.Router().get('/factory-health', health)",
+          '',
+          'function health(req: unknown, res: unknown) {',
+          '  return res',
+          '}',
+          '',
+        ].join('\n'),
+        'utf8',
+      )
+
+      const snapshot = await readProjectSnapshot({
+        rootDir,
+        analyzeCalls: false,
+        analyzeImports: true,
+        analyzeSymbols: true,
+      })
+      const endpoint = findEndpoint(snapshot, 'GET', '/factory-health')
+
+      expect(endpoint).toEqual(
+        expect.objectContaining({
+          facets: expect.arrayContaining(['api:endpoint', 'api:server-only']),
+          source: 'server',
+        }),
+      )
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('creates endpoint nodes for Fastify route objects', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'semanticode-fastify-api-'))
+
+    try {
+      await mkdir(join(rootDir, 'api'), { recursive: true })
+      await writeFile(
+        join(rootDir, 'api', 'server.ts'),
+        [
+          "import fastify from 'fastify'",
+          '',
+          'const app = fastify()',
+          '',
+          'app.route({',
+          "  method: 'POST',",
+          "  url: '/sessions',",
+          '  handler: createSession,',
+          '})',
+          '',
+          'function createSession() {',
+          '  return {}',
+          '}',
+          '',
+        ].join('\n'),
+        'utf8',
+      )
+
+      const snapshot = await readProjectSnapshot({
+        rootDir,
+        analyzeCalls: false,
+        analyzeImports: true,
+        analyzeSymbols: true,
+      })
+      const endpoint = findEndpoint(snapshot, 'POST', '/sessions')
+
+      expect(endpoint).toEqual(
+        expect.objectContaining({
+          facets: expect.arrayContaining(['api:endpoint', 'api:server-only']),
+          framework: 'fastify',
+          source: 'server',
+        }),
+      )
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
   it('links Flutter Dart HTTP requests to Express route handlers through endpoint nodes', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'semanticode-flutter-express-api-'))
 
@@ -303,6 +388,60 @@ describe('API endpoint graph analysis', () => {
     }
   })
 
+  it('marks Flask route handler functions as API handlers', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'semanticode-flask-upload-api-'))
+
+    try {
+      await mkdir(join(rootDir, 'api'), { recursive: true })
+      await writeFile(
+        join(rootDir, 'api', 'main.py'),
+        [
+          'from flask import Flask, jsonify, request',
+          '',
+          'app = Flask(__name__)',
+          '',
+          "@app.route('/simulate/upload', methods=['POST'])",
+          'def upload_files():',
+          '    print("Request files:", request.files)',
+          '    if "texture" not in request.files or "depth" not in request.files:',
+          '        return jsonify({"error": "Missing required files"}), 400',
+          '    return jsonify({"id": "simulation"}), 200',
+          '',
+        ].join('\n'),
+        'utf8',
+      )
+
+      const snapshot = await readProjectSnapshot({
+        rootDir,
+        analyzeCalls: false,
+        analyzeImports: true,
+        analyzeSymbols: true,
+      })
+      const endpoint = findEndpoint(snapshot, 'POST', '/simulate/upload')
+      const handlerSymbol = findSymbol(snapshot, 'upload_files', 'python')
+
+      expect(handlerSymbol.facets).toEqual(expect.arrayContaining(['api:handler']))
+      expect(endpoint).toEqual(
+        expect.objectContaining({
+          facets: expect.arrayContaining(['api:endpoint', 'api:server-only']),
+          framework: 'flask',
+          source: 'server',
+        }),
+      )
+      expect(snapshot.edges).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: 'handles',
+            source: endpoint.id,
+            target: handlerSymbol.id,
+          }),
+        ]),
+      )
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
   it('applies Python router prefixes to programmatic route registrations', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'semanticode-python-router-api-'))
 
@@ -342,6 +481,48 @@ describe('API endpoint graph analysis', () => {
             target: handlerSymbol.id,
           }),
         ]),
+      )
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('creates Python endpoint nodes for Flask-RESTful resources', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'semanticode-python-resource-api-'))
+
+    try {
+      await mkdir(join(rootDir, 'api'), { recursive: true })
+      await writeFile(
+        join(rootDir, 'api', 'main.py'),
+        [
+          'from flask_restful import Api, Resource',
+          '',
+          'api = Api()',
+          '',
+          'class Health(Resource):',
+          '    def get(self):',
+          '        return {"ok": True}',
+          '',
+          'api.add_resource(Health, "/health")',
+          '',
+        ].join('\n'),
+        'utf8',
+      )
+
+      const snapshot = await readProjectSnapshot({
+        rootDir,
+        analyzeCalls: false,
+        analyzeImports: true,
+        analyzeSymbols: true,
+      })
+      const endpoint = findEndpoint(snapshot, 'ANY', '/health')
+
+      expect(endpoint).toEqual(
+        expect.objectContaining({
+          facets: expect.arrayContaining(['api:endpoint', 'api:server-only']),
+          framework: 'flask-restful',
+          source: 'server',
+        }),
       )
     } finally {
       await rm(rootDir, { recursive: true, force: true })

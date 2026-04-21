@@ -15,6 +15,12 @@ const API_ENDPOINT_FACETS: ProjectFacetDefinition[] = [
     description: 'An HTTP, GraphQL, or RPC boundary exposed or consumed by the project.',
   },
   {
+    id: 'api:handler',
+    label: 'API Handler',
+    category: 'runtime',
+    description: 'A function or method that handles an HTTP route.',
+  },
+  {
     id: 'api:matched',
     label: 'Matched API',
     category: 'analysis',
@@ -130,8 +136,16 @@ export function buildApiEndpointGraph(
     }
 
     for (const serverRecord of serverRecords) {
-      if (!snapshot.nodes[serverRecord.subjectId]) {
+      const serverSubjectNode = nodes[serverRecord.subjectId] ?? snapshot.nodes[serverRecord.subjectId]
+
+      if (!serverSubjectNode) {
         continue
+      }
+
+      const apiHandlerNode = markApiHandlerNode(serverSubjectNode)
+
+      if (apiHandlerNode) {
+        nodes[apiHandlerNode.id] = apiHandlerNode
       }
 
       edges.push({
@@ -274,6 +288,17 @@ function createEndpointNode(
     framework: representative.framework,
     source,
     confidence: roundConfidence(confidence),
+  }
+}
+
+function markApiHandlerNode(node: ProjectNode) {
+  if (node.kind !== 'symbol') {
+    return null
+  }
+
+  return {
+    ...node,
+    facets: [...new Set([...node.facets, 'api:handler'])],
   }
 }
 

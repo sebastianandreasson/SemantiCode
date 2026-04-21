@@ -261,10 +261,6 @@ const piCodingAgentMock = vi.hoisted(() => {
         modelRegistry,
       }
     }),
-    createCodingTools: vi.fn(() => []),
-    createFindTool: vi.fn(() => ({ name: 'find' })),
-    createGrepTool: vi.fn(() => ({ name: 'grep' })),
-    createLsTool: vi.fn(() => ({ name: 'ls' })),
     getAgentDir: vi.fn(() => '/tmp/semanticode-agent'),
     session,
     setRestoredSessionMessages: (messages: Array<Record<string, unknown>>) => {
@@ -310,8 +306,6 @@ vi.mock('./PiAgentSettingsStore', () => ({
     'gpt-5.4-mini',
   ],
   PiAgentSettingsStore: class MockPiAgentSettingsStore {
-    async applyConfiguredApiKeys() {}
-
     async getStoredApiKeys() {
       return {}
     }
@@ -466,7 +460,14 @@ describe('PiAgentService brokered oauth integration', () => {
           expect.objectContaining({ name: 'readFileWindow' }),
           expect.objectContaining({ name: 'replaceFileWindow' }),
         ]),
-        tools: [],
+        tools: expect.arrayContaining([
+          'findSymbols',
+          'getSymbolOutline',
+          'readSymbolSlice',
+          'replaceSymbolRange',
+          'readFileWindow',
+          'replaceFileWindow',
+        ]),
       }),
     )
     expect(summary.capabilities).toMatchObject({
@@ -699,11 +700,16 @@ describe('PiAgentService brokered oauth integration', () => {
         customTools: expect.arrayContaining([
           expect.objectContaining({ name: 'findSymbols' }),
         ]),
-        tools: [
-          { name: 'grep' },
-          { name: 'find' },
-          { name: 'ls' },
-        ],
+        tools: expect.arrayContaining([
+          'findSymbols',
+          'read',
+          'bash',
+          'edit',
+          'write',
+          'grep',
+          'find',
+          'ls',
+        ]),
       }),
     )
 

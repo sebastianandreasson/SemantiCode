@@ -25,23 +25,30 @@ import {
 describe('flowModel extracted helpers', () => {
   it('groups the workspace outline by semantic facets before core symbol kinds', () => {
     const snapshot = buildSnapshot([
+      symbol('api', 'upload_files', 'api:handler', 'function', 1, 24),
       symbol('component', 'Dashboard', 'react:component', 'function', 1, 40),
       symbol('hook', 'useTodos', 'react:hook', 'function', 1, 12),
       symbol('class', 'TodoStore', null, 'class', 1, 18),
       symbol('smallComponent', 'Badge', 'react:component', 'function', 1, 8),
     ])
-    const layout = buildSymbolLayout(['component', 'hook', 'class', 'smallComponent'])
+    const layout = buildSymbolLayout(['api', 'component', 'hook', 'class', 'smallComponent'])
 
     const groups = buildWorkspaceSidebarGroups({ layout, snapshot })
 
     expect(groups.map((group) => group.id)).toEqual([
+      'api:handler',
       'react:component',
       'react:hook',
       'symbol:class',
     ])
-    expect(groups[0]?.items.map((item) => item.title)).toEqual(['Dashboard', 'Badge'])
-    expect(groups[0]?.items.map((item) => item.metric)).toEqual([40, 8])
-    expect(groups[0]?.items[0]?.badge).toBe('react')
+    expect(groups[0]?.label).toBe('API Handlers')
+    expect(groups[0]?.items[0]).toMatchObject({
+      badge: 'api',
+      title: 'upload_files',
+    })
+    expect(groups[1]?.items.map((item) => item.title)).toEqual(['Dashboard', 'Badge'])
+    expect(groups[1]?.items.map((item) => item.metric)).toEqual([40, 8])
+    expect(groups[1]?.items[0]?.badge).toBe('react')
   })
 
   it('applies selected, compare, heat, and dimming presentation to flow nodes', () => {

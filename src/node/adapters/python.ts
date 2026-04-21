@@ -306,11 +306,30 @@ function parseRouteDecorator(
     /^([A-Za-z_][A-Za-z0-9_]*)\.route\((.*)\)\s*$/,
   )
 
-  if (!routeDecoratorMatch) {
+  if (routeDecoratorMatch) {
+    const [, objectName = '', args = ''] = routeDecoratorMatch
+    const routePath = extractFirstString(args)
+
+    if (!routePath) {
+      return null
+    }
+
+    return {
+      framework: objectName === 'app' ? 'flask' : 'flask-blueprint',
+      methods: extractMethods(args, ['GET']),
+      routePattern: joinRoutePaths(objectPrefixes.get(objectName) ?? '', routePath),
+    }
+  }
+
+  const bareRouteDecoratorMatch = expression.match(
+    /^(get|post|put|patch|delete|head|options|route)\((.*)\)\s*$/,
+  )
+
+  if (!bareRouteDecoratorMatch) {
     return null
   }
 
-  const [, objectName = '', args = ''] = routeDecoratorMatch
+  const [, methodName = '', args = ''] = bareRouteDecoratorMatch
   const routePath = extractFirstString(args)
 
   if (!routePath) {
@@ -318,9 +337,12 @@ function parseRouteDecorator(
   }
 
   return {
-    framework: objectName === 'app' ? 'flask' : 'flask-blueprint',
-    methods: extractMethods(args, ['GET']),
-    routePattern: joinRoutePaths(objectPrefixes.get(objectName) ?? '', routePath),
+    framework: 'python-router',
+    methods:
+      methodName === 'route'
+        ? extractMethods(args, extractMethodKeyword(args, ['GET']))
+        : [methodName.toUpperCase()],
+    routePattern: routePath,
   }
 }
 
@@ -389,6 +411,67 @@ function collectPythonRouteRegistrations(
           line: lineIndex + 1,
           methods: ['ANY'],
           routePattern: joinRoutePaths('', routePath),
+        })
+      }
+      continue
+    }
+
+    const addResourceMatch = line.match(
+      /^\s*([A-Za-z_][A-Za-z0-9_]*)\.add_resource\((.*)\)\s*$/,
+    )
+
+    if (addResourceMatch) {
+      const objectName = addResourceMatch[1] ?? ''
+      const args = addResourceMatch[2] ?? ''
+      const routePath = extractSecondString(args) ?? extractFirstString(args)
+
+      if (routePath) {
+        registrations.push({
+          framework: 'flask-restful',
+          line: lineIndex + 1,
+          methods: extractMethods(args, ['ANY']),
+          routePattern: joinRoutePaths(objectPrefixes.get(objectName) ?? '', routePath),
+        })
+      }
+      continue
+    }
+
+    const addRouteMatch = line.match(
+      /^\s*([A-Za-z_][A-Za-z0-9_]*)\.add_route\((.*)\)\s*$/,
+    )
+
+    if (addRouteMatch) {
+      const objectName = addRouteMatch[1] ?? ''
+      const args = addRouteMatch[2] ?? ''
+      const routePath = extractFirstString(args)
+
+      if (routePath) {
+        registrations.push({
+          framework: 'python-router',
+          handlerName: extractSecondIdentifierArgument(args) ?? undefined,
+          line: lineIndex + 1,
+          methods: extractMethods(args, ['ANY']),
+          routePattern: joinRoutePaths(objectPrefixes.get(objectName) ?? '', routePath),
+        })
+      }
+      continue
+    }
+
+    const starletteRouteMatch = line.match(/^\s*Route\((.*)\)\s*,?\s*$/)
+
+    if (starletteRouteMatch) {
+      const args = starletteRouteMatch[1] ?? ''
+      const routePath = extractFirstString(args)
+
+      if (routePath) {
+        registrations.push({
+          framework: 'starlette',
+          handlerName: extractKeywordIdentifier(args, 'endpoint') ??
+            extractSecondIdentifierArgument(args) ??
+            undefined,
+          line: lineIndex + 1,
+          methods: extractMethods(args, ['GET']),
+          routePattern: routePath,
         })
       }
     }
@@ -524,10 +607,22 @@ function extractFirstString(value: string) {
   return match?.[1] ?? null
 }
 
+function extractSecondString(value: string) {
+  const matches = Array.from(value.matchAll(/["']([^"']+)["']/g))
+  return matches[1]?.[1] ?? null
+}
+
 function extractKeywordString(value: string, keyword: string) {
   const pattern = new RegExp(`${keyword}\\s*=\\s*["']([^"']+)["']`)
   const match = value.match(pattern)
   return match?.[1] ?? null
+}
+
+function extractMethodKeyword(value: string, fallback: string[] = []) {
+  const methodMatch = value.match(/method\s*=\s*["']([A-Za-z]+)["']/)
+  const method = methodMatch?.[1]?.toUpperCase()
+
+  return method && HTTP_METHODS.has(method) ? [method] : fallback
 }
 
 function extractMethods(value: string, fallback: string[] = []) {

@@ -2360,29 +2360,33 @@ function formatAgentFocusConfidenceLabel(confidence: string) {
 }
 
 export function getSymbolKindRank(symbol: SymbolNode) {
-  if (symbol.facets.includes('react:component')) {
+  if (symbol.facets.includes('api:handler')) {
     return 0
   }
 
-  if (symbol.facets.includes('react:hook')) {
+  if (symbol.facets.includes('react:component')) {
     return 1
+  }
+
+  if (symbol.facets.includes('react:hook')) {
+    return 2
   }
 
   switch (symbol.symbolKind) {
     case 'class':
-      return 2
-    case 'function':
       return 3
-    case 'method':
+    case 'function':
       return 4
-    case 'constant':
+    case 'method':
       return 5
-    case 'variable':
+    case 'constant':
       return 6
-    case 'module':
+    case 'variable':
       return 7
-    default:
+    case 'module':
       return 8
+    default:
+      return 9
   }
 }
 
@@ -2496,6 +2500,14 @@ function getWorkspaceSidebarSymbolIds(
 }
 
 function getSymbolSidebarSemanticGroup(symbol: SymbolNode) {
+  if (symbol.facets.includes('api:handler')) {
+    return {
+      id: 'api:handler',
+      label: 'API Handlers',
+      tone: '--cbv-kind-endpoint',
+    }
+  }
+
   if (symbol.facets.includes('react:component')) {
     return {
       id: 'react:component',
@@ -2555,28 +2567,34 @@ function getSymbolSidebarSemanticGroup(symbol: SymbolNode) {
 
 function getSidebarGroupRank(groupId: string) {
   switch (groupId) {
-    case 'react:component':
+    case 'api:handler':
       return 0
-    case 'react:hook':
+    case 'react:component':
       return 1
-    case 'symbol:class':
+    case 'react:hook':
       return 2
-    case 'symbol:function':
+    case 'symbol:class':
       return 3
-    case 'symbol:constant':
+    case 'symbol:function':
       return 4
-    case 'symbol:variable':
+    case 'symbol:constant':
       return 5
-    case 'symbol:module':
+    case 'symbol:variable':
       return 6
-    case 'symbol:unknown':
+    case 'symbol:module':
       return 7
+    case 'symbol:unknown':
+      return 8
     default:
       return 99
   }
 }
 
 function getSymbolSidebarBadge(symbol: SymbolNode) {
+  if (symbol.facets.includes('api:handler')) {
+    return 'api'
+  }
+
   if (symbol.facets.includes('react:client-component')) {
     return 'client'
   }

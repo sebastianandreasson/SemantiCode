@@ -3,7 +3,7 @@ import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 
 import { app, safeStorage } from 'electron'
-import { getModels, setApiKey, type KnownProvider } from '@mariozechner/pi-ai'
+import { getModels, type KnownProvider } from '@mariozechner/pi-ai'
 import {
   AuthStorage,
   getAgentDir,
@@ -129,7 +129,6 @@ export class PiAgentSettingsStore {
 
     if (input.clearApiKey) {
       delete nextSettings.apiKeys?.[provider]
-      setApiKey(provider, '')
     } else if (typeof input.apiKey === 'string' && input.apiKey.trim().length > 0) {
       nextSettings.apiKeys![provider] = this.serializeSecret(input.apiKey.trim())
     }
@@ -155,7 +154,6 @@ export class PiAgentSettingsStore {
     }
 
     await this.writePersistedSettings(nextSettings)
-    await this.applyConfiguredApiKeys()
     return this.getSettings()
   }
 
@@ -367,27 +365,6 @@ export class PiAgentSettingsStore {
     }
 
     return process.env.SEMANTICODE_OPENAI_OAUTH_CLIENT_SECRET?.trim() || ''
-  }
-
-  async applyConfiguredApiKeys() {
-    const persisted = await this.readPersistedSettings()
-    const providers = this.getAvailableProviders()
-
-    for (const provider of providers) {
-      setApiKey(provider, '')
-    }
-
-    const entries = Object.entries(persisted.apiKeys ?? {})
-
-    for (const [provider, secret] of entries) {
-      const apiKey = this.deserializeSecret(secret)
-
-      if (!apiKey) {
-        continue
-      }
-
-      setApiKey(provider, apiKey)
-    }
   }
 
   async getStoredApiKey(provider: string) {

@@ -164,6 +164,10 @@ export function getSymbolLoc(symbol: SymbolNode) {
 }
 
 export function getSymbolVisualKindClass(symbol: SymbolNode) {
+  if (symbol.facets.includes('api:handler')) {
+    return 'endpoint'
+  }
+
   if (symbol.facets.includes('react:hook')) {
     return 'hook'
   }
